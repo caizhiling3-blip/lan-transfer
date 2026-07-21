@@ -63,25 +63,43 @@ onBeforeUnmount(() => {
 <template>
   <el-container class="app-shell">
     <el-aside width="220px" class="sidebar">
-      <div class="brand">局域网互传</div>
-      <el-menu
-        v-model="activePage"
-        :default-active="activePage"
-        @select="activePage = $event as PageKey"
-      >
-        <el-menu-item index="home">首页</el-menu-item>
-        <el-menu-item index="transfer">传输</el-menu-item>
-        <el-menu-item index="history">历史记录</el-menu-item>
-        <el-menu-item index="settings">设置</el-menu-item>
-      </el-menu>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">LT</span>
+        <span class="brand-copy">
+          <strong>局域网互传</strong>
+          <small>安全、直接、无云端</small>
+        </span>
+      </div>
+      <nav class="sidebar-nav" aria-label="主菜单">
+        <p class="sidebar-label">功能</p>
+        <el-menu
+          v-model="activePage"
+          :default-active="activePage"
+          @select="activePage = $event as PageKey"
+        >
+          <el-menu-item index="home">首页</el-menu-item>
+          <el-menu-item index="transfer">传输</el-menu-item>
+          <el-menu-item index="history">历史记录</el-menu-item>
+          <el-menu-item index="settings">设置</el-menu-item>
+        </el-menu>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="security-indicator" aria-hidden="true"></span>
+        仅在局域网内通信
+      </div>
     </el-aside>
     <el-main class="main-content">
-      <h1>{{ currentTitle }}</h1>
-      <HomeView v-if="activePage === 'home'" />
-      <TransferView v-else-if="activePage === 'transfer'" />
-      <el-card v-else shadow="never">
-        <el-empty description="项目骨架已就绪，业务功能将在后续阶段逐步实现" />
-      </el-card>
+      <div class="content-container">
+        <header class="page-header">
+          <p>LAN TRANSFER</p>
+          <h1>{{ currentTitle }}</h1>
+        </header>
+        <HomeView v-if="activePage === 'home'" />
+        <TransferView v-else-if="activePage === 'transfer'" />
+        <el-card v-else shadow="never">
+          <el-empty description="项目骨架已就绪，业务功能将在后续阶段逐步实现" />
+        </el-card>
+      </div>
     </el-main>
   </el-container>
 </template>
