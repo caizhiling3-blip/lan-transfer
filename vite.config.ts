@@ -18,6 +18,11 @@ export default defineConfig({
               '@shared': sharedAlias,
             },
           },
+          build: {
+            rollupOptions: {
+              external: ['ws'],
+            },
+          },
         },
       },
       preload: {

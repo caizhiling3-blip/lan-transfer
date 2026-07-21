@@ -4,6 +4,8 @@
 
 第一版协议版本为 `1`。WebSocket 路径为 `/v1/ws`，负责握手、心跳、文字和文件控制消息；HTTP 负责文件流。文件内容不得转成 Base64 后通过 WebSocket 发送。
 
+阶段 5 提供 `GET /health`，返回 `{ "status": "ok", "protocolVersion": 1 }`。其他未注册 HTTP 路由返回 404。设备握手在阶段 6 实现前，`/v1/ws` Upgrade 会以 WebSocket close code 1013 关闭。
+
 所有消息使用统一 envelope：
 
 ```ts

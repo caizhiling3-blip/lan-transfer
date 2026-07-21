@@ -1,0 +1,149 @@
+import { createServer as createHttpServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+
+import WebSocket from 'ws'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { LocalServer } from '../../src/main/server/local-server'
+import { ServiceManager } from '../../src/main/server/service-manager'
+
+const runningServers: LocalServer[] = []
+
+afterEach(async () => {
+  await Promise.all(runningServers.splice(0).map((server) => server.stop()))
+})
+
+describe('LocalServer', () => {
+  it('serves only the health endpoint', async () => {
+    const server = new LocalServer()
+    runningServers.push(server)
+    const port = await server.start(0, '127.0.0.1')
+
+    const healthResponse = await fetch(`http://127.0.0.1:${String(port)}/health`)
+    expect(healthResponse.status).toBe(200)
+    expect(healthResponse.headers.get('cache-control')).toBe('no-store')
+    await expect(healthResponse.json()).resolves.toEqual({ status: 'ok', protocolVersion: 1 })
+
+    const unknownResponse = await fetch(`http://127.0.0.1:${String(port)}/unknown`)
+    expect(unknownResponse.status).toBe(404)
+    await expect(unknownResponse.json()).resolves.toEqual({ error: 'NOT_FOUND' })
+  })
+
+  it('accepts only the WebSocket path and closes until stage 6', async () => {
+    const server = new LocalServer()
+    runningServers.push(server)
+    const port = await server.start(0, '127.0.0.1')
+
+    const webSocket = new WebSocket(`ws://127.0.0.1:${String(port)}/v1/ws`)
+    const closeResult = await new Promise<{ readonly code: number; readonly reason: string }>(
+      (resolve, reject) => {
+        webSocket.once('close', (code, reason) => {
+          resolve({ code, reason: reason.toString() })
+        })
+        webSocket.once('error', reject)
+      },
+    )
+    expect(closeResult).toEqual({
+      code: 1013,
+      reason: 'Device connections are not available yet',
+    })
+
+    const invalidStatus = await new Promise<number>((resolve, reject) => {
+      const invalidWebSocket = new WebSocket(`ws://127.0.0.1:${String(port)}/invalid`)
+      invalidWebSocket.once('unexpected-response', (_request, response) => {
+        response.resume()
+        resolve(response.statusCode ?? 0)
+      })
+      invalidWebSocket.once('error', reject)
+    })
+    expect(invalidStatus).toBe(404)
+  })
+
+  it('releases the port when stopped', async () => {
+    const server = new LocalServer()
+    const port = await server.start(0, '127.0.0.1')
+    await server.stop()
+
+    await expect(fetch(`http://127.0.0.1:${String(port)}/health`)).rejects.toThrow()
+  })
+})
+
+describe('ServiceManager', () => {
+  it('maps an occupied port and emits state changes', async () => {
+    const occupiedServer = createHttpServer()
+    await new Promise<void>((resolve) => {
+      occupiedServer.listen(0, '127.0.0.1', resolve)
+    })
+    const address = occupiedServer.address() as AddressInfo
+    const manager = new ServiceManager(
+      address.port,
+      () => new LocalServer(),
+      () => ['192.168.1.20'],
+      '127.0.0.1',
+    )
+    const states: string[] = []
+    manager.subscribe((status) => states.push(status.state))
+
+    const status = await manager.start()
+
+    expect(status).toEqual({
+      state: 'error',
+      ipAddresses: ['192.168.1.20'],
+      port: address.port,
+      errorCode: 'PORT_IN_USE',
+    })
+    expect(states).toEqual(['starting', 'error'])
+
+    await new Promise<void>((resolve, reject) => {
+      occupiedServer.close((error) => {
+        if (error === undefined) resolve()
+        else reject(error)
+      })
+    })
+  })
+
+  it('restarts on a new port and stops the previous server', async () => {
+    const calls: string[] = []
+    let nextPort = 40_000
+    const manager = new ServiceManager(53_317, () => ({
+      start: async () => {
+        calls.push('start')
+        nextPort += 1
+        return nextPort
+      },
+      stop: async () => {
+        calls.push('stop')
+      },
+    }))
+
+    expect((await manager.start()).port).toBe(40_001)
+    expect((await manager.restart(54_000)).port).toBe(40_002)
+    expect(calls).toEqual(['start', 'stop', 'start'])
+    expect((await manager.stop()).state).toBe('stopped')
+  })
+
+  it('moves to an error state after a runtime server failure', async () => {
+    let runtimeErrorHandler: ((error: Error) => void) | undefined
+    const manager = new ServiceManager(
+      53_317,
+      () => ({
+        start: async () => 53_317,
+        stop: async () => undefined,
+        setErrorHandler: (handler) => {
+          runtimeErrorHandler = handler
+        },
+      }),
+      () => [],
+    )
+
+    await manager.start()
+    runtimeErrorHandler?.(Object.assign(new Error('network down'), { code: 'ENETDOWN' }))
+
+    expect(manager.getStatus()).toEqual({
+      state: 'error',
+      ipAddresses: [],
+      port: 53_317,
+      errorCode: 'NETWORK_UNREACHABLE',
+    })
+  })
+})

@@ -21,8 +21,10 @@ export const IPC_INVOKE_CHANNELS = [
   'settings:select-receive-directory',
 ] as const
 
+export const SERVICE_STATUS_CHANGED_EVENT_CHANNEL = 'service:status-changed' as const
+
 export const IPC_EVENT_CHANNELS = [
-  'service:status-changed',
+  SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   'connection:state-changed',
   'connection:incoming-request',
   'transfer:task-changed',

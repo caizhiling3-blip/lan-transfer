@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
+import HomeView from './views/HomeView.vue'
+
 type PageKey = 'home' | 'transfer' | 'history' | 'settings'
 
 const activePage = ref<PageKey>('home')
@@ -32,7 +34,8 @@ const currentTitle = computed(() => pageTitles[activePage.value])
     </el-aside>
     <el-main class="main-content">
       <h1>{{ currentTitle }}</h1>
-      <el-card shadow="never">
+      <HomeView v-if="activePage === 'home'" />
+      <el-card v-else shadow="never">
         <el-empty description="项目骨架已就绪，业务功能将在后续阶段逐步实现" />
       </el-card>
     </el-main>

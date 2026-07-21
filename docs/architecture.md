@@ -34,3 +34,17 @@ IPC handler 必须同时满足：
 - 返回值使用统一 `OperationResult`，异常细节不直接传给 renderer。
 
 阶段 4 只注册安全外链和剪贴板 handler。其他 Preload 方法保留稳定类型，但在对应业务阶段注册 handler 前默认不可调用。
+
+## 本地服务
+
+主进程的 `ServiceManager` 负责本地服务生命周期和 renderer 状态投影：
+
+- 默认监听 `0.0.0.0:53317`，HTTP 与 WebSocket 共用一个 TCP 端口；
+- Node HTTP server 只暴露健康检查和明确注册的路由，未知路由返回 404；
+- WebSocket 使用 no-server Upgrade 模式，只接受 `/v1/ws`，禁用压缩并限制 payload 为 128 KiB；
+- 阶段 5 尚未实现设备握手，Upgrade 成功后使用 1013 明确关闭，阶段 6 接管连接；
+- `ServiceManager` 维护 stopped、starting、running、error 状态，端口占用映射为 `PORT_IN_USE`；
+- 启动失败和监听后的运行时错误都会转成状态事件，不作为未处理异常退出应用；
+- 本机地址来自所有非 internal IPv4 网卡，不依赖 Windows 或 macOS 的固定网卡名称。
+
+应用启动后自动启动服务；退出前关闭 WebSocket 客户端和 HTTP listener。阶段 5 的端口重启只影响当前运行实例，持久化设置留到阶段 10。
