@@ -8,6 +8,7 @@ import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
+  TEXT_RECEIVED_EVENT_CHANNEL,
 } from '@shared/ipc'
 
 import { createMainWindow, DeviceIdentity } from './app'
@@ -16,8 +17,10 @@ import {
   registerFoundationIpcHandlers,
   registerRuntimeIpcHandlers,
   registerServiceIpcHandlers,
+  registerTextIpcHandlers,
 } from './ipc'
 import { ServiceManager } from './server'
+import { SessionHistory } from './storage'
 import { ConnectionManager } from './websocket'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
@@ -27,6 +30,7 @@ const deviceIdentity = new DeviceIdentity()
 const connectionManager = new ConnectionManager(() =>
   deviceIdentity.getDeviceInfo(serviceManager.getStatus()),
 )
+const sessionHistory = new SessionHistory()
 let unsubscribeFromService: (() => void) | null = null
 let connectionUnsubscribers: readonly (() => void)[] = []
 let isQuitting = false
@@ -50,6 +54,7 @@ void app.whenReady().then(() => {
   registerServiceIpcHandlers(() => mainWindow, serviceManager)
   registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, serviceManager)
   registerConnectionIpcHandlers(() => mainWindow, connectionManager)
+  registerTextIpcHandlers(() => mainWindow, connectionManager, sessionHistory)
   openMainWindow()
 
   unsubscribeFromService = serviceManager.subscribe((status) => {
@@ -66,6 +71,19 @@ void app.whenReady().then(() => {
     connectionManager.subscribeRequests((request) => {
       if (mainWindow !== null && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL, request)
+      }
+    }),
+    connectionManager.subscribeText((message) => {
+      sessionHistory.add({
+        direction: 'receive',
+        kind: message.contentType,
+        peer: message.peer,
+        status: 'completed',
+        textPreview: message.content,
+        createdAt: message.receivedAt,
+      })
+      if (mainWindow !== null && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(TEXT_RECEIVED_EVENT_CHANNEL, message)
       }
     }),
   ]

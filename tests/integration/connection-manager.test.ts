@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { LocalServer } from '../../src/main/server/local-server'
 import { ConnectionManager } from '../../src/main/websocket/connection-manager'
+import type { TextReceivedDto } from '@shared/ipc'
 import { deviceIdSchema } from '@shared/types'
 import type { DeviceInfo, IncomingConnectionRequestDto } from '@shared/types'
 
@@ -22,6 +23,14 @@ const waitForRequest = (manager: ConnectionManager): Promise<IncomingConnectionR
     const unsubscribe = manager.subscribeRequests((request) => {
       unsubscribe()
       resolve(request)
+    })
+  })
+
+const waitForText = (manager: ConnectionManager): Promise<TextReceivedDto> =>
+  new Promise((resolve) => {
+    const unsubscribe = manager.subscribeText((message) => {
+      unsubscribe()
+      resolve(message)
     })
   })
 
@@ -116,6 +125,39 @@ describe('ConnectionManager', () => {
 
     expect(sender.getStatus().state).toBe('disconnected')
     expect(receiver.getStatus().state).toBe('disconnected')
+  })
+
+  it('sends text to the approved peer and reports a completed task', async () => {
+    const { sender, receiver, serverPort } = await createPair()
+    const incomingRequestPromise = waitForRequest(receiver)
+    const connectionPromise = sender.connect('127.0.0.1', serverPort)
+    const incomingRequest = await incomingRequestPromise
+    receiver.respondToRequest(incomingRequest.requestId, 'accept')
+    await connectionPromise
+
+    const receivedPromise = waitForText(receiver)
+    const task = await sender.sendText('https://example.com/path', 'link')
+
+    await expect(receivedPromise).resolves.toMatchObject({
+      content: 'https://example.com/path',
+      contentType: 'link',
+      peer: { deviceName: 'Sender' },
+    })
+    expect(task).toMatchObject({
+      direction: 'send',
+      kind: 'link',
+      status: 'completed',
+      peer: { deviceName: 'Receiver' },
+    })
+  })
+
+  it('does not create a text task without an active connection', async () => {
+    const sender = new ConnectionManager(() =>
+      createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
+    )
+    managers.push(sender)
+
+    await expect(sender.sendText('not connected', 'text')).resolves.toBeNull()
   })
 
   it('maps a closed target port to a connection error', async () => {

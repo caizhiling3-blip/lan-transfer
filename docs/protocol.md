@@ -37,6 +37,8 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳。对象拒绝�
 
 `text:send` 包含非空 `content` 与 `text | link` 类型。链接分类仅用于 UI 展示；打开链接必须由用户主动触发并再次校验 URL scheme。
 
+阶段 7 已实现该消息。发送前 IPC 与协议 schema 都按 UTF-8 字节数执行 64 KiB 限制；接收端只接受当前已审批连接中 senderId 与对端设备 ID 一致的消息。`link` 只表示整个正文可解析为 `http:` 或 `https:` URL，不赋予自动打开或其他执行能力。
+
 ## 文件消息
 
 | type            | payload                                           |

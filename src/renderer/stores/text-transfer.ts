@@ -1,0 +1,94 @@
+import { defineStore } from 'pinia'
+
+import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
+import type { TextReceivedDto } from '@shared/ipc'
+import type { DeviceInfo, HistoryEntryDto, TransferDirection } from '@shared/types'
+import { classifyTextContent } from '@shared/utils'
+
+export interface TextMessageItem {
+  readonly id: string
+  readonly direction: TransferDirection
+  readonly peer: DeviceInfo
+  readonly content: string
+  readonly contentType: 'text' | 'link'
+  readonly createdAt: number
+  readonly status: 'completed' | 'failed'
+}
+
+const isTextHistoryEntry = (
+  entry: HistoryEntryDto,
+): entry is HistoryEntryDto & { readonly kind: 'text' | 'link'; readonly textPreview: string } =>
+  (entry.kind === 'text' || entry.kind === 'link') && entry.textPreview !== undefined
+
+const fromHistoryEntry = (
+  entry: HistoryEntryDto & { readonly kind: 'text' | 'link'; readonly textPreview: string },
+): TextMessageItem => ({
+  id: entry.id,
+  direction: entry.direction,
+  peer: entry.peer,
+  content: entry.textPreview,
+  contentType: entry.kind,
+  createdAt: entry.createdAt,
+  status: entry.status === 'completed' ? 'completed' : 'failed',
+})
+
+const fromReceivedMessage = (message: TextReceivedDto): TextMessageItem => ({
+  id: message.messageId,
+  direction: 'receive',
+  peer: message.peer,
+  content: message.content,
+  contentType: message.contentType,
+  createdAt: message.receivedAt,
+  status: 'completed',
+})
+
+export const useTextTransferStore = defineStore('textTransfer', {
+  state: () => ({
+    messages: [] as TextMessageItem[],
+    sending: false,
+    errorMessage: '',
+    unsubscribe: null as (() => void) | null,
+  }),
+  actions: {
+    async initialize(): Promise<void> {
+      this.dispose()
+      this.unsubscribe = window.lanTransfer.transfer.onTextReceived((message) => {
+        this.messages.push(fromReceivedMessage(message))
+      })
+      const result = await window.lanTransfer.history.list({ offset: 0, limit: 100 })
+      if (result.ok) {
+        this.messages = result.data.filter(isTextHistoryEntry).map(fromHistoryEntry).reverse()
+      } else {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+      }
+    },
+    async send(content: string): Promise<boolean> {
+      this.sending = true
+      this.errorMessage = ''
+      const contentType = classifyTextContent(content)
+      const result = await window.lanTransfer.transfer.sendText(content, contentType)
+      this.sending = false
+      if (!result.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+        return false
+      }
+      this.messages.push({
+        id: result.data.transferId,
+        direction: 'send',
+        peer: result.data.peer,
+        content,
+        contentType,
+        createdAt: result.data.createdAt,
+        status: result.data.status === 'completed' ? 'completed' : 'failed',
+      })
+      if (result.data.errorCode !== undefined) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.data.errorCode]
+      }
+      return result.data.status === 'completed'
+    },
+    dispose(): void {
+      this.unsubscribe?.()
+      this.unsubscribe = null
+    },
+  },
+})

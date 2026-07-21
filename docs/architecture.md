@@ -63,3 +63,11 @@ IPC handler 必须同时满足：
 连接、审批和握手分别有 10 秒超时。非法 JSON、错误消息类型或 connectionId 会关闭 socket。第二个入站 socket 使用 1013 拒绝，不替换当前连接。
 
 本机设备 ID 使用安全随机 UUID，并在单次应用进程内稳定；阶段 10 将其写入本地存储以实现跨重启稳定。主机名作为阶段 6 默认设备名称，设置页持久化名称同样留到阶段 10。
+
+## 文字传输
+
+`ConnectionManager` 是文字网络状态的事实来源。只有已完成握手的活动 socket 可以发送或接收 `text:send`；收到消息时还会核对 envelope 的 senderId 与当前对端设备 ID，避免连接内身份替换。主进程把接收事件和发送结果转换为只读 IPC DTO，renderer 不接触 WebSocket。
+
+阶段 7 使用有上限的 `SessionHistory` 保存当前应用进程内的文字摘要，并通过既有 history IPC 提供最近 100 条记录给传输页。应用重启后这些记录会消失；设备 ID、设置、最近设备和历史的可靠持久化仍属于阶段 10，不提前引入 electron-store。
+
+renderer 使用 Pinia 维护文字页投影：进入页面时读取会话历史并订阅接收事件，离开页面时取消订阅。链接分类只接受完整的 HTTP(S) URL；外部打开仍经过主进程 scheme 校验并要求用户点击。

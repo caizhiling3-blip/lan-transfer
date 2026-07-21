@@ -17,18 +17,27 @@ import {
   deviceHelloMessageSchema,
   deviceWelcomeMessageSchema,
   parseProtocolMessage,
+  textSendMessageSchema,
 } from '@shared/protocols'
-import { connectionIdSchema, messageIdSchema, requestIdSchema } from '@shared/types'
+import {
+  connectionIdSchema,
+  messageIdSchema,
+  requestIdSchema,
+  transferIdSchema,
+} from '@shared/types'
 import type {
   ConnectionId,
   ConnectionStatusDto,
   DeviceInfo,
   IncomingConnectionRequestDto,
   RequestId,
+  TransferTaskDto,
 } from '@shared/types'
+import type { TextReceivedDto } from '@shared/ipc'
 
 type StatusListener = (status: ConnectionStatusDto) => void
 type RequestListener = (request: IncomingConnectionRequestDto) => void
+type TextListener = (message: TextReceivedDto) => void
 
 interface PendingConnection {
   readonly requestId: RequestId
@@ -40,6 +49,7 @@ interface PendingConnection {
 const createMessageId = () => messageIdSchema.parse(randomUUID())
 const createConnectionId = () => connectionIdSchema.parse(randomUUID())
 const createRequestId = () => requestIdSchema.parse(randomUUID())
+const createTransferId = () => transferIdSchema.parse(randomUUID())
 
 const normalizeRemoteAddress = (address: string | undefined): string => {
   if (address === undefined) return '127.0.0.1'
@@ -63,6 +73,7 @@ export class ConnectionManager {
   private status: ConnectionStatusDto = { state: 'disconnected' }
   private readonly statusListeners = new Set<StatusListener>()
   private readonly requestListeners = new Set<RequestListener>()
+  private readonly textListeners = new Set<TextListener>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private connectionId: ConnectionId | null = null
@@ -84,6 +95,48 @@ export class ConnectionManager {
   public subscribeRequests(listener: RequestListener): () => void {
     this.requestListeners.add(listener)
     return () => this.requestListeners.delete(listener)
+  }
+
+  public subscribeText(listener: TextListener): () => void {
+    this.textListeners.add(listener)
+    return () => this.textListeners.delete(listener)
+  }
+
+  public async sendText(
+    content: string,
+    contentType: 'text' | 'link',
+  ): Promise<TransferTaskDto | null> {
+    const socket = this.socket
+    const peer = this.peer
+    if (socket === null || peer === null || socket.readyState !== WebSocket.OPEN) return null
+
+    const localDevice = this.getLocalDevice()
+    const now = Date.now()
+    const message = textSendMessageSchema.parse({
+      type: 'text:send',
+      messageId: createMessageId(),
+      senderId: localDevice.deviceId,
+      timestamp: now,
+      payload: { content, contentType },
+    })
+    const succeeded = await new Promise<boolean>((resolve) => {
+      socket.send(JSON.stringify(message), (error) => resolve(!error))
+    })
+
+    return {
+      transferId: createTransferId(),
+      direction: 'send',
+      kind: contentType,
+      peer,
+      status: succeeded ? 'completed' : 'failed',
+      files: [],
+      totalBytes: 0,
+      transferredBytes: 0,
+      bytesPerSecond: 0,
+      createdAt: now,
+      updatedAt: Date.now(),
+      ...(succeeded ? {} : { errorCode: 'TRANSFER_FAILED' }),
+    }
   }
 
   public acceptIncoming(socket: WebSocket, request: IncomingMessage): void {
@@ -285,12 +338,24 @@ export class ConnectionManager {
   private handleConnectedMessage(data: RawData): void {
     try {
       const message = parseProtocolMessage(JSON.parse(data.toString()))
+      if (this.peer === null || message.senderId !== this.peer.deviceId) {
+        throw new Error('Unexpected message sender')
+      }
       this.lastMessageAt = Date.now()
       if (message.type === 'device:heartbeat') {
         if (message.payload.connectionId !== this.connectionId) throw new Error('Wrong connection')
       } else if (message.type === 'device:disconnect') {
         this.socket?.close(1000, 'Peer disconnected')
         this.reset()
+      } else if (message.type === 'text:send') {
+        const received = {
+          messageId: message.messageId,
+          peer: this.peer,
+          content: message.payload.content,
+          contentType: message.payload.contentType,
+          receivedAt: Date.now(),
+        }
+        for (const listener of this.textListeners) listener(received)
       }
     } catch {
       this.socket?.close(1007, 'Invalid protocol message')

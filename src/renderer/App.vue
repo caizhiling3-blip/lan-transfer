@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 
 import HomeView from './views/HomeView.vue'
+import TransferView from './views/TransferView.vue'
 
 type PageKey = 'home' | 'transfer' | 'history' | 'settings'
 
@@ -35,6 +36,7 @@ const currentTitle = computed(() => pageTitles[activePage.value])
     <el-main class="main-content">
       <h1>{{ currentTitle }}</h1>
       <HomeView v-if="activePage === 'home'" />
+      <TransferView v-else-if="activePage === 'transfer'" />
       <el-card v-else shadow="never">
         <el-empty description="项目骨架已就绪，业务功能将在后续阶段逐步实现" />
       </el-card>
