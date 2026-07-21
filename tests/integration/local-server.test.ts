@@ -78,6 +78,45 @@ describe('LocalServer', () => {
 
     await expect(fetch(`http://127.0.0.1:${String(port)}/health`)).rejects.toThrow()
   })
+
+  it('rate limits repeated HTTP requests from one source', async () => {
+    const server = new LocalServer({ httpRequestsPerWindow: 2, rateLimitWindowMs: 60_000 })
+    runningServers.push(server)
+    const port = await server.start(0, '127.0.0.1')
+
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health`)).status).toBe(200)
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health`)).status).toBe(200)
+    const limited = await fetch(`http://127.0.0.1:${String(port)}/health`)
+    expect(limited.status).toBe(429)
+    await expect(limited.json()).resolves.toEqual({ error: 'RATE_LIMITED' })
+  })
+
+  it('rate limits repeated WebSocket upgrades from one source', async () => {
+    const server = new LocalServer({
+      rateLimitWindowMs: 60_000,
+      webSocketUpgradesPerWindow: 1,
+    })
+    runningServers.push(server)
+    const port = await server.start(0, '127.0.0.1')
+
+    const first = new WebSocket(`ws://127.0.0.1:${String(port)}/v1/ws`)
+    await expect(
+      new Promise<number>((resolve, reject) => {
+        first.once('close', resolve)
+        first.once('error', reject)
+      }),
+    ).resolves.toBe(1013)
+
+    const limitedStatus = await new Promise<number>((resolve, reject) => {
+      const limited = new WebSocket(`ws://127.0.0.1:${String(port)}/v1/ws`)
+      limited.once('unexpected-response', (_request, response) => {
+        response.resume()
+        resolve(response.statusCode ?? 0)
+      })
+      limited.once('error', reject)
+    })
+    expect(limitedStatus).toBe(429)
+  })
 })
 
 describe('ServiceManager', () => {

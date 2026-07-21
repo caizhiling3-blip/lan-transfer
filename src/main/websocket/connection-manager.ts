@@ -8,7 +8,9 @@ import {
   CONNECTION_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
+  MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
   PROTOCOL_VERSION,
+  RATE_LIMIT_WINDOW_MS,
 } from '@shared/constants'
 import type { ErrorCode } from '@shared/errors'
 import {
@@ -56,7 +58,12 @@ import type {
 } from '@shared/types'
 import type { TextReceivedDto } from '@shared/ipc'
 
-import { isConnectedProtocolMessage, MessageDeduplicator } from './protocol-state'
+import { FixedWindowRateLimiter } from '../security'
+import {
+  isConnectedProtocolMessage,
+  isMessageTimestampAllowed,
+  MessageDeduplicator,
+} from './protocol-state'
 
 type StatusListener = (status: ConnectionStatusDto) => void
 type RequestListener = (request: IncomingConnectionRequestDto) => void
@@ -120,6 +127,11 @@ export class ConnectionManager {
   private lastMessageAt = 0
   private readonly pendingTextAcknowledgements = new Map<MessageId, PendingTextAcknowledgement>()
   private readonly messageDeduplicator = new MessageDeduplicator()
+  private readonly incomingMessageRateLimiter = new FixedWindowRateLimiter(
+    MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
+    RATE_LIMIT_WINDOW_MS,
+    1,
+  )
 
   public constructor(private readonly getLocalDevice: () => DeviceInfo) {}
 
@@ -324,8 +336,9 @@ export class ConnectionManager {
     }, CONNECTION_TIMEOUT_MS)
     this.handshakeTimer = timeout
 
-    socket.once('message', (data) => {
+    socket.once('message', (data, isBinary) => {
       try {
+        if (isBinary) throw new Error('Binary protocol messages are forbidden')
         const message = parseProtocolMessage(JSON.parse(data.toString()))
         if (message.type !== 'device:hello') throw new Error('Expected device hello')
         if (message.senderId !== message.payload.device.deviceId) {
@@ -334,6 +347,7 @@ export class ConnectionManager {
         if (this.messageDeduplicator.isDuplicate(message.messageId)) {
           throw new Error('Duplicate device hello')
         }
+        if (!isMessageTimestampAllowed(message.timestamp)) throw new Error('Invalid timestamp')
         clearTimeout(timeout)
         this.handshakeTimer = null
         const peer = {
@@ -411,8 +425,9 @@ export class ConnectionManager {
         socket.send(JSON.stringify(hello))
       })
 
-      socket.once('message', (data) => {
+      socket.once('message', (data, isBinary) => {
         try {
+          if (isBinary) throw new Error('Binary protocol messages are forbidden')
           const message = parseProtocolMessage(JSON.parse(data.toString()))
           if (message.type !== 'device:welcome') throw new Error('Expected device welcome')
           if (
@@ -424,6 +439,7 @@ export class ConnectionManager {
           if (this.messageDeduplicator.isDuplicate(message.messageId)) {
             throw new Error('Duplicate device welcome')
           }
+          if (!isMessageTimestampAllowed(message.timestamp)) throw new Error('Invalid timestamp')
           clearTimeout(timeout)
           this.handshakeTimer = null
           this.activate(
@@ -523,14 +539,18 @@ export class ConnectionManager {
     this.heartbeatSequence = 0
     this.setStatus({ state: 'connected', connectionId, peer })
 
-    socket.on('message', (data) => this.handleConnectedMessage(data))
+    socket.on('message', (data, isBinary) => this.handleConnectedMessage(data, isBinary))
     socket.once('error', (error) => this.reset(mapConnectionError(error)))
     socket.once('close', () => this.reset())
     this.heartbeatTimer = setInterval(() => this.runHeartbeat(), HEARTBEAT_INTERVAL_MS)
   }
 
-  private handleConnectedMessage(data: RawData): void {
+  private handleConnectedMessage(data: RawData, isBinary: boolean): void {
     try {
+      if (isBinary) throw new Error('Binary protocol messages are forbidden')
+      if (!this.incomingMessageRateLimiter.allow('active-peer')) {
+        throw new Error('Message rate limit exceeded')
+      }
       const message = parseProtocolMessage(JSON.parse(data.toString()))
       if (this.peer === null || message.senderId !== this.peer.deviceId) {
         throw new Error('Unexpected message sender')
@@ -538,6 +558,7 @@ export class ConnectionManager {
       if (!isConnectedProtocolMessage(message)) {
         throw new Error('Message type is not allowed while connected')
       }
+      if (!isMessageTimestampAllowed(message.timestamp)) throw new Error('Invalid timestamp')
       if (this.messageDeduplicator.isDuplicate(message.messageId)) {
         if (message.type === 'text:send') this.sendTextAcknowledgement(message.messageId)
         return
@@ -624,6 +645,7 @@ export class ConnectionManager {
       acknowledgement.complete(false)
     }
     this.pendingTextAcknowledgements.clear()
+    this.incomingMessageRateLimiter.clear()
     this.handshakeTimer = null
     this.heartbeatTimer = null
     this.pendingConnection = null

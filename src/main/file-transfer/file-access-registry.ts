@@ -1,20 +1,30 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { access, stat } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import { basename, extname } from 'node:path'
+import { lstat, realpath } from 'node:fs/promises'
+import { basename, extname, isAbsolute } from 'node:path'
 
 import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
 
-import { MAX_FILE_SIZE_BYTES, MAX_FILES_PER_TRANSFER, UPLOAD_TOKEN_TTL_MS } from '@shared/constants'
+import {
+  MAX_AUTHORIZED_DIRECTORIES,
+  MAX_AUTHORIZED_FILE_SELECTIONS,
+  MAX_FILE_SIZE_BYTES,
+  MAX_FILES_PER_TRANSFER,
+  UPLOAD_TOKEN_TTL_MS,
+} from '@shared/constants'
 import { fileIdSchema } from '@shared/types'
 import type { SelectedDirectoryDto, SelectedFileDto } from '@shared/types'
 
-import { sanitizeFileName } from '../security'
+import { assertSafeReceiveDirectory, sanitizeFileName } from '../security'
 
 export interface AuthorizedSourceFile {
   readonly path: string
   readonly selection: SelectedFileDto
+  readonly identity?: {
+    readonly device: number
+    readonly inode: number
+    readonly modifiedAt: number
+  }
 }
 
 interface ExpiringValue<T> {
@@ -43,6 +53,7 @@ export class FileAccessRegistry {
   public constructor(
     private readonly getDefaultReceiveDirectory: () => string,
     private readonly getMaximumFileSize: () => number = () => MAX_FILE_SIZE_BYTES,
+    private readonly protectedDirectories: readonly string[] = [],
   ) {}
 
   public async selectFiles(
@@ -71,20 +82,32 @@ export class FileAccessRegistry {
       throw new Error('FILE_COUNT_EXCEEDED')
     }
 
+    this.pruneExpired()
     const authorizedFiles = await Promise.all(
       uniquePaths.map(async (filePath): Promise<AuthorizedSourceFile> => {
-        const metadata = await stat(filePath)
-        if (!metadata.isFile()) throw new Error('FILE_NOT_FOUND')
+        if (!isAbsolute(filePath)) throw new Error('FILE_NOT_FOUND')
+        const selectedMetadata = await lstat(filePath)
+        if (!selectedMetadata.isFile() || selectedMetadata.isSymbolicLink()) {
+          throw new Error('FILE_NOT_FOUND')
+        }
+        const canonicalPath = await realpath(filePath)
+        const metadata = await lstat(canonicalPath)
+        if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('FILE_NOT_FOUND')
         if (metadata.size > this.getMaximumFileSize()) throw new Error('FILE_TOO_LARGE')
 
         const selectionToken = createToken()
         const extension = extname(filePath).toLowerCase()
         return {
-          path: filePath,
+          path: canonicalPath,
+          identity: {
+            device: metadata.dev,
+            inode: metadata.ino,
+            modifiedAt: metadata.mtimeMs,
+          },
           selection: {
             selectionToken,
             fileId: fileIdSchema.parse(randomUUID()),
-            displayName: sanitizeFileName(basename(filePath)),
+            displayName: sanitizeFileName(basename(canonicalPath)),
             size: metadata.size,
             mimeType: MIME_TYPES[extension] ?? 'application/octet-stream',
           },
@@ -98,6 +121,7 @@ export class FileAccessRegistry {
         expiresAt,
       })
     }
+    this.enforceLimit(this.sourceFiles, MAX_AUTHORIZED_FILE_SELECTIONS)
     return authorizedFiles.map(({ selection }) => selection)
   }
 
@@ -109,6 +133,7 @@ export class FileAccessRegistry {
   }
 
   public async selectReceiveDirectory(window: BrowserWindow): Promise<SelectedDirectoryDto | null> {
+    this.pruneExpired()
     const result = await dialog.showOpenDialog(window, {
       defaultPath: this.getDefaultReceiveDirectory(),
       properties: ['openDirectory', 'createDirectory'],
@@ -116,13 +141,14 @@ export class FileAccessRegistry {
     })
     const directoryPath = result.filePaths[0]
     if (result.canceled || directoryPath === undefined) return null
-    await this.assertWritableDirectory(directoryPath)
+    const safeDirectoryPath = await this.assertWritableDirectory(directoryPath)
     const directoryToken = createToken()
     this.directories.set(directoryToken, {
-      value: directoryPath,
+      value: safeDirectoryPath,
       expiresAt: Date.now() + UPLOAD_TOKEN_TTL_MS,
     })
-    return { directoryToken, displayPath: directoryPath }
+    this.enforceLimit(this.directories, MAX_AUTHORIZED_DIRECTORIES)
+    return { directoryToken, displayPath: safeDirectoryPath }
   }
 
   public async resolveReceiveDirectory(directoryToken?: string): Promise<string> {
@@ -135,8 +161,7 @@ export class FileAccessRegistry {
       }
       directoryPath = entry.value
     }
-    await this.assertWritableDirectory(directoryPath)
-    return directoryPath
+    return this.assertWritableDirectory(directoryPath)
   }
 
   public async consumeDirectoryToken(directoryToken: string): Promise<string> {
@@ -145,13 +170,27 @@ export class FileAccessRegistry {
     if (entry === undefined || entry.expiresAt < Date.now()) {
       throw new Error('SAVE_DIRECTORY_INVALID')
     }
-    await this.assertWritableDirectory(entry.value)
-    return entry.value
+    return this.assertWritableDirectory(entry.value)
   }
 
-  private async assertWritableDirectory(directoryPath: string): Promise<void> {
-    const metadata = await stat(directoryPath)
-    if (!metadata.isDirectory()) throw new Error('SAVE_DIRECTORY_INVALID')
-    await access(directoryPath, constants.W_OK)
+  private assertWritableDirectory(directoryPath: string): Promise<string> {
+    return assertSafeReceiveDirectory(directoryPath, this.protectedDirectories)
+  }
+
+  private pruneExpired(now = Date.now()): void {
+    for (const [token, entry] of this.sourceFiles) {
+      if (entry.expiresAt < now) this.sourceFiles.delete(token)
+    }
+    for (const [token, entry] of this.directories) {
+      if (entry.expiresAt < now) this.directories.delete(token)
+    }
+  }
+
+  private enforceLimit<T>(values: Map<string, T>, maximumEntries: number): void {
+    while (values.size > maximumEntries) {
+      const oldestToken = values.keys().next().value
+      if (oldestToken === undefined) return
+      values.delete(oldestToken)
+    }
   }
 }

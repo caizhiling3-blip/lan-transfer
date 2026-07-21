@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      electron-log:
+        specifier: ^5.4.4
+        version: 5.4.4
       electron-store:
         specifier: ^11.0.2
         version: 11.0.2
@@ -815,6 +818,10 @@ packages:
   dot-prop@10.1.0:
     resolution: {integrity: sha512-MVUtAugQMOff5RnBy2d9N31iG0lNwg1qAoAOn7pOK5wf94WIaE3My2p3uwTQuvS2AcqchkcR3bHByjaM0mmi7Q==}
     engines: {node: '>=20'}
+
+  electron-log@5.4.4:
+    resolution: {integrity: sha512-istWgaXjBfURBSS8LWVW9C3jsc6+ac+tY1lXrQEOTp0lVj+a4OlO1Tmqb36GgnEUDv92DGC9VI1HNXwJinWpgA==}
+    engines: {node: '>= 14'}
 
   electron-store@11.0.2:
     resolution: {integrity: sha512-4VkNRdN+BImL2KcCi41WvAYbh6zLX5AUTi4so68yPqiItjbgTjqpEnGAqasgnG+lB6GuAyUltKwVopp6Uv+gwQ==}
@@ -2178,6 +2185,8 @@ snapshots:
   dot-prop@10.1.0:
     dependencies:
       type-fest: 5.8.0
+
+  electron-log@5.4.4: {}
 
   electron-store@11.0.2:
     dependencies:

@@ -15,7 +15,11 @@ import {
 } from '@shared/ipc'
 
 import { createMainWindow, DeviceIdentity } from './app'
-import { FileAccessRegistry, FileTransferCoordinator } from './file-transfer'
+import {
+  cleanupStaleTemporaryFiles,
+  FileAccessRegistry,
+  FileTransferCoordinator,
+} from './file-transfer'
 import {
   registerConnectionIpcHandlers,
   registerFoundationIpcHandlers,
@@ -26,6 +30,7 @@ import {
   registerTextIpcHandlers,
 } from './ipc'
 import { ServiceManager } from './server'
+import { initializeLogger, logger } from './logger'
 import { HistoryStore, RecentDevicesStore, SessionHistory, SettingsStore } from './storage'
 import { ConnectionManager } from './websocket'
 
@@ -56,6 +61,11 @@ const openMainWindow = (): void => {
   mainWindow.once('closed', () => {
     mainWindow = null
   })
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('renderer_process_gone', new Error(details.reason), {
+      exitCode: details.exitCode,
+    })
+  })
   mainWindow.webContents.once('did-finish-load', () => {
     if (fileTransferCoordinator === null) return
     for (const task of fileTransferCoordinator.getTasks()) {
@@ -67,6 +77,13 @@ const openMainWindow = (): void => {
 }
 
 void app.whenReady().then(() => {
+  initializeLogger()
+  logger.info('application_started', {
+    appVersion: app.getVersion(),
+    operatingSystem: process.platform,
+  })
+  process.on('uncaughtException', (error) => logger.error('uncaught_exception', error))
+  process.on('unhandledRejection', (error) => logger.error('unhandled_rejection', error))
   const settingsStore = new SettingsStore(
     app.getPath('userData'),
     hostname(),
@@ -87,6 +104,7 @@ void app.whenReady().then(() => {
   const fileAccessRegistry = new FileAccessRegistry(
     () => settingsStore.getReceiveDirectory(),
     () => settingsStore.getSettings().maxFileSizeBytes,
+    [app.getPath('userData'), app.getAppPath()],
   )
   const activeFileTransferCoordinator = new FileTransferCoordinator(
     activeConnectionManager,
@@ -117,18 +135,47 @@ void app.whenReady().then(() => {
   )
   openMainWindow()
 
+  void fileAccessRegistry
+    .resolveReceiveDirectory()
+    .then((directoryPath) => cleanupStaleTemporaryFiles(directoryPath))
+    .then((removedFiles) => {
+      if (removedFiles > 0) logger.info('stale_temporary_files_removed', { removedFiles })
+    })
+    .catch((error: unknown) => logger.error('temporary_file_cleanup_failed', error))
+
   unsubscribeFromService = activeServiceManager.subscribe((status) => {
+    if (status.state === 'running') {
+      logger.info('service_started', {
+        port: status.port,
+        listeningAddresses: status.ipAddresses,
+      })
+    } else if (status.state === 'error') {
+      logger.warn('service_failed', { port: status.port, errorCode: status.errorCode })
+    }
     sendToRenderer(SERVICE_STATUS_CHANGED_EVENT_CHANNEL, status)
   })
+  const loggedTaskStatuses = new Map<string, string>()
   applicationUnsubscribers = [
     settingsStore.subscribe((settings) => {
       sendToRenderer(SETTINGS_CHANGED_EVENT_CHANNEL, settings)
     }),
     activeConnectionManager.subscribeStatus((status) => {
       if (status.state === 'connected' && status.peer !== undefined) recentDevices.add(status.peer)
+      if (status.state === 'connected' && status.peer !== undefined) {
+        logger.info('device_connected', {
+          peerDeviceId: status.peer.deviceId,
+          peerAddress: status.peer.ipAddress,
+        })
+      } else if (status.state === 'disconnected') {
+        logger.info('device_disconnected', { errorCode: status.errorCode })
+      }
       sendToRenderer(CONNECTION_STATE_CHANGED_EVENT_CHANNEL, status)
     }),
     activeConnectionManager.subscribeRequests((request) => {
+      logger.info('device_connection_requested', {
+        peerDeviceId: request.peer.deviceId,
+        peerAddress: request.peer.ipAddress,
+      })
       sendToRenderer(CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL, request)
     }),
     activeConnectionManager.subscribeText((message) => {
@@ -143,9 +190,27 @@ void app.whenReady().then(() => {
       sendToRenderer(TEXT_RECEIVED_EVENT_CHANNEL, message)
     }),
     activeFileTransferCoordinator.subscribeTasks((task) => {
+      if (loggedTaskStatuses.get(task.transferId) !== task.status) {
+        loggedTaskStatuses.set(task.transferId, task.status)
+        logger.info('transfer_status_changed', {
+          transferId: task.transferId,
+          direction: task.direction,
+          kind: task.kind,
+          status: task.status,
+          totalBytes: task.totalBytes,
+          fileCount: task.files.length,
+          errorCode: task.errorCode,
+        })
+      }
       sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
     activeFileTransferCoordinator.subscribeOffers((offer) => {
+      logger.info('file_offer_received', {
+        transferId: offer.transferId,
+        peerDeviceId: offer.peer.deviceId,
+        fileCount: offer.files.length,
+        totalBytes: offer.files.reduce((total, file) => total + file.size, 0),
+      })
       sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
     }),
   ]
@@ -175,6 +240,7 @@ app.on('before-quit', (event) => {
 
   event.preventDefault()
   isQuitting = true
+  logger.info('application_stopping')
   connectionManager.disconnect('app_shutdown')
   void fileTransferCoordinator
     .shutdown()

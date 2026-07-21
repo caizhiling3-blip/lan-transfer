@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
-import { stat, unlink } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { lstat, open, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { request as createHttpRequest } from 'node:http'
 import { join } from 'node:path'
@@ -8,6 +8,9 @@ import { pipeline } from 'node:stream/promises'
 
 import {
   MAX_FILES_PER_TRANSFER,
+  MAX_IN_MEMORY_TRANSFER_TASKS,
+  TRANSFER_IDLE_TIMEOUT_MS,
+  TRANSFER_ID_RETENTION_MS,
   TRANSFER_PROGRESS_MESSAGE_INTERVAL_MS,
   TRANSFER_PROGRESS_UPDATE_INTERVAL_MS,
   TRANSFER_TIMEOUT_MS,
@@ -27,6 +30,7 @@ import type {
 } from '@shared/types'
 
 import type { SessionHistory } from '../storage'
+import { assertSafeReceiveDirectory, assertSufficientDiskSpace } from '../security'
 import type { ConnectionManager, FileControlMessage } from '../websocket'
 import type { AuthorizedSourceFile } from './file-access-registry'
 import { mapFileError, publishTemporaryFile } from './file-system'
@@ -50,11 +54,13 @@ interface OutgoingTransfer {
   task: TransferTaskDto
   readonly sources: readonly AuthorizedSourceFile[]
   readonly authorizations: Map<FileId, string>
+  readonly remoteProgress: Map<FileId, number>
   readonly cancelledFiles: Set<FileId>
   cancelAll: boolean
   activeFileId?: FileId
   abortUpload?: () => void
   queuePromise?: Promise<void>
+  offerTimeout?: ReturnType<typeof setTimeout>
 }
 
 interface IncomingFileState {
@@ -74,6 +80,7 @@ interface IncomingTransfer {
   readonly connectionId: ConnectionId
   directoryPath?: string
   cancelAll: boolean
+  offerTimeout?: ReturnType<typeof setTimeout>
 }
 
 type UploadOutcome = 'completed' | 'cancelled' | 'failed'
@@ -96,7 +103,7 @@ export class FileTransferCoordinator {
   private readonly incoming = new Map<TransferId, IncomingTransfer>()
   private readonly taskListeners = new Set<TaskListener>()
   private readonly offerListeners = new Set<OfferListener>()
-  private readonly recordedTransfers = new Set<TransferId>()
+  private readonly recordedTransfers = new Map<TransferId, number>()
   private readonly unsubscribeFromMessages: () => void
   private readonly unsubscribeFromConnection: () => void
 
@@ -158,6 +165,7 @@ export class FileTransferCoordinator {
   ): Promise<TransferTaskDto | null> {
     const transfer = this.incoming.get(transferId)
     if (transfer === undefined || transfer.task.status !== 'awaitingAcceptance') return null
+    this.clearOfferTimeout(transfer)
     if (decision === 'reject') {
       transfer.task = updateAllNonTerminalFiles(
         transfer.task,
@@ -172,6 +180,12 @@ export class FileTransferCoordinator {
 
     try {
       transfer.directoryPath = await this.fileAccess.resolveReceiveDirectory(directoryToken)
+      await assertSufficientDiskSpace(
+        transfer.directoryPath,
+        transfer.task.files
+          .filter((file) => file.status === 'pending')
+          .reduce((total, file) => total + file.size, 0),
+      )
       const authorizationStartedAt = Date.now()
       let authorizationIndex = 0
       const authorizations: FileAcceptMessage['payload']['files'] = []
@@ -235,6 +249,7 @@ export class FileTransferCoordinator {
     }
     const sources = previous.sources.map((source): AuthorizedSourceFile => ({
       path: source.path,
+      ...(source.identity === undefined ? {} : { identity: source.identity }),
       selection: {
         ...source.selection,
         selectionToken: `retry-${randomUUID()}`,
@@ -260,26 +275,36 @@ export class FileTransferCoordinator {
     const contentLength = Number(request.headers['content-length'])
     const remoteAddress = normalizeRemoteAddress(request.socket.remoteAddress)
     const connectionStatus = this.connectionManager.getStatus()
+    if (file?.tokenUsed === true) {
+      this.writeResponse(response, 409)
+      return true
+    }
     if (
       transfer === undefined ||
       file === undefined ||
       expectedFile?.fileId !== parsedFileId.data ||
       !['accepted', 'transferring'].includes(transfer.task.status) ||
       file.uploadToken === undefined ||
+      typeof authorization !== 'string' ||
       authorization !== `Bearer ${file.uploadToken}` ||
-      file.tokenUsed ||
       file.tokenExpiresAt === undefined ||
       file.tokenExpiresAt < Date.now() ||
       !Number.isSafeInteger(contentLength) ||
       contentLength !== file.metadata.size ||
       remoteAddress !== transfer.task.peer.ipAddress ||
       connectionStatus.state !== 'connected' ||
-      connectionStatus.connectionId !== transfer.connectionId
+      connectionStatus.connectionId !== transfer.connectionId ||
+      request.headers['transfer-encoding'] !== undefined ||
+      request.headers['content-type'] !== 'application/octet-stream'
     ) {
       this.writeResponse(response, 403)
       return true
     }
     file.tokenUsed = true
+    request.setTimeout(TRANSFER_IDLE_TIMEOUT_MS, () => {
+      file.failureOverride = 'TRANSFER_TIMEOUT'
+      request.destroy(new Error('TRANSFER_TIMEOUT'))
+    })
     file.abortUpload = () => request.destroy(new Error('Transfer interrupted'))
     const uploadPromise = this.receiveUpload(transfer, file, request, response)
     file.uploadPromise = uploadPromise
@@ -300,8 +325,12 @@ export class FileTransferCoordinator {
     sources: readonly AuthorizedSourceFile[],
   ): Promise<TransferTaskDto | null> {
     const peer = this.connectionManager.getPeer()
+    const hasActiveOutgoing = [...this.outgoing.values()].some(
+      (transfer) => !TERMINAL_TASK_STATUSES.includes(transfer.task.status),
+    )
     if (peer === null || sources.length === 0 || sources.length > MAX_FILES_PER_TRANSFER)
       return null
+    if (hasActiveOutgoing) return null
     const transferId = transferIdSchema.parse(randomUUID())
     const files = sources.map(({ selection }): FileMetadata => ({
       fileId: selection.fileId,
@@ -313,10 +342,18 @@ export class FileTransferCoordinator {
       sources,
       task: createTask(transferId, 'send', peer, files),
       authorizations: new Map(),
+      remoteProgress: new Map(),
       cancelledFiles: new Set(),
       cancelAll: false,
     }
     this.outgoing.set(transferId, transfer)
+    transfer.offerTimeout = this.createOfferTimeout(() => {
+      this.failWholeOutgoing(transfer, 'TRANSFER_TIMEOUT')
+      const firstFile = transfer.task.files[0]
+      if (firstFile !== undefined) {
+        void this.connectionManager.sendFileError(transferId, firstFile.fileId, 'TRANSFER_TIMEOUT')
+      }
+    })
     if (!(await this.connectionManager.sendFileOffer(transferId, files))) {
       transfer.task = updateAllNonTerminalFiles(
         transfer.task,
@@ -361,11 +398,13 @@ export class FileTransferCoordinator {
       if (
         current === undefined ||
         current.status !== 'transferring' ||
+        message.payload.transferredBytes < (outgoing.remoteProgress.get(current.fileId) ?? 0) ||
         message.payload.transferredBytes > current.size
       ) {
         this.failOutgoingFile(outgoing, message.payload.fileId, 'PROTOCOL_INVALID')
         return
       }
+      outgoing.remoteProgress.set(current.fileId, message.payload.transferredBytes)
       outgoing.task = updateFile(
         outgoing.task,
         current.fileId,
@@ -377,7 +416,11 @@ export class FileTransferCoordinator {
       this.emitTask(outgoing.task)
     } else if (message.type === 'file:complete') {
       const current = outgoing.task.files.find((file) => file.fileId === message.payload.fileId)
-      if (current === undefined || message.payload.size !== current.size) {
+      if (
+        current === undefined ||
+        current.status !== 'transferring' ||
+        message.payload.size !== current.size
+      ) {
         this.failOutgoingFile(outgoing, message.payload.fileId, 'PROTOCOL_INVALID')
         return
       }
@@ -393,6 +436,14 @@ export class FileTransferCoordinator {
     const peer = this.connectionManager.getPeer()
     const connectionId = this.connectionManager.getStatus().connectionId
     if (peer === null || connectionId === undefined || files.length === 0) return
+    this.pruneRecordedTransfers()
+    if (this.recordedTransfers.has(transferId)) {
+      const firstFile = files[0]
+      if (firstFile !== undefined) {
+        void this.connectionManager.sendFileError(transferId, firstFile.fileId, 'PROTOCOL_INVALID')
+      }
+      return
+    }
     const oversizedFile = files.find((file) => file.size > this.getMaximumFileSize())
     if (oversizedFile !== undefined) {
       const rejectedTask = updateAllNonTerminalFiles(
@@ -433,6 +484,19 @@ export class FileTransferCoordinator {
       cancelAll: false,
     }
     this.incoming.set(transferId, transfer)
+    transfer.offerTimeout = this.createOfferTimeout(() => {
+      transfer.task = updateAllNonTerminalFiles(
+        transfer.task,
+        'failed',
+        'failed',
+        'TRANSFER_TIMEOUT',
+      )
+      this.finishTask(transfer.task)
+      const firstFile = transfer.task.files[0]
+      if (firstFile !== undefined) {
+        void this.connectionManager.sendFileError(transferId, firstFile.fileId, 'TRANSFER_TIMEOUT')
+      }
+    })
     this.emitTask(transfer.task)
     const offer = { transferId, peer, files, receivedAt: Date.now() }
     for (const listener of this.offerListeners) listener(offer)
@@ -442,6 +506,7 @@ export class FileTransferCoordinator {
     transfer: OutgoingTransfer,
     authorizations: FileAcceptMessage['payload']['files'],
   ): void {
+    this.clearOfferTimeout(transfer)
     const expectedIds = new Set(
       transfer.sources
         .map(({ selection }) => selection.fileId)
@@ -501,17 +566,35 @@ export class FileTransferCoordinator {
     transfer.activeFileId = fileId
     transfer.task = updateFile(transfer.task, fileId, 'transferring', 0, 0, 'transferring')
     this.emitTask(transfer.task)
+    let sourceHandle: Awaited<ReturnType<typeof open>> | null = null
     try {
       if (transfer.cancelAll || transfer.cancelledFiles.has(fileId)) {
         throw new Error('TRANSFER_CANCELLED')
       }
-      const sourceMetadata = await stat(sourceFile.path)
-      if (!sourceMetadata.isFile() || sourceMetadata.size !== sourceFile.selection.size) {
+      const pathMetadata = await lstat(sourceFile.path)
+      if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink()) {
+        throw new Error('FILE_NOT_FOUND')
+      }
+      sourceHandle = await open(sourceFile.path, 'r')
+      const sourceMetadata = await sourceHandle.stat()
+      const identityChanged =
+        sourceFile.identity !== undefined &&
+        (sourceMetadata.dev !== sourceFile.identity.device ||
+          sourceMetadata.ino !== sourceFile.identity.inode ||
+          sourceMetadata.mtimeMs !== sourceFile.identity.modifiedAt)
+      if (
+        !sourceMetadata.isFile() ||
+        sourceMetadata.dev !== pathMetadata.dev ||
+        sourceMetadata.ino !== pathMetadata.ino ||
+        sourceMetadata.size !== sourceFile.selection.size ||
+        identityChanged
+      ) {
         throw new Error('FILE_NOT_FOUND')
       }
       if (transfer.cancelAll || transfer.cancelledFiles.has(fileId)) {
         throw new Error('TRANSFER_CANCELLED')
       }
+      const activeSourceHandle = sourceHandle
       await new Promise<void>((resolveResponse, rejectResponse) => {
         let uploadedBytes = 0
         let lastUpdateAt = 0
@@ -536,8 +619,11 @@ export class FileTransferCoordinator {
           },
         )
         transfer.abortUpload = () => uploadRequest.destroy(new Error('Transfer interrupted'))
+        uploadRequest.setTimeout(TRANSFER_IDLE_TIMEOUT_MS, () => {
+          uploadRequest.destroy(new Error('TRANSFER_TIMEOUT'))
+        })
         uploadRequest.once('error', rejectResponse)
-        const source = createReadStream(sourceFile.path)
+        const source = activeSourceHandle.createReadStream()
         source.on('data', (chunk) => {
           uploadedBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength
           const current = transfer.task.files.find((file) => file.fileId === fileId)
@@ -571,6 +657,7 @@ export class FileTransferCoordinator {
       await this.connectionManager.sendFileError(transfer.task.transferId, fileId, errorCode)
       return 'failed'
     } finally {
+      await sourceHandle?.close().catch(() => undefined)
       delete transfer.activeFileId
       delete transfer.abortUpload
     }
@@ -594,12 +681,19 @@ export class FileTransferCoordinator {
     transfer.task = updateFile(transfer.task, fileId, 'transferring', 0, 0, 'transferring')
     this.emitTask(transfer.task)
     try {
-      const output = createWriteStream(temporaryPath, { flags: 'wx' })
+      const safeDirectoryPath = await assertSafeReceiveDirectory(directoryPath)
+      await assertSufficientDiskSpace(safeDirectoryPath, file.metadata.size)
+      const output = createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 })
       let receivedBytes = 0
       let lastUpdateAt = 0
       let lastProgressMessageAt = 0
       request.on('data', (chunk: Buffer) => {
         receivedBytes += chunk.byteLength
+        if (receivedBytes > file.metadata.size) {
+          file.failureOverride = 'PROTOCOL_INVALID'
+          request.destroy(new Error('Received more bytes than offered'))
+          return
+        }
         const elapsedSeconds = Math.max((Date.now() - startedAt) / 1_000, 0.001)
         transfer.task = updateFile(
           transfer.task,
@@ -699,12 +793,16 @@ export class FileTransferCoordinator {
     errorCode: ErrorCode,
   ): void {
     const target =
-      transfer.task.files.find((file) => file.fileId === fileId) ??
-      transfer.task.files.find((file) => file.status === 'transferring')
-    if (target === undefined) {
+      transfer.task.files.find(
+        (file) =>
+          file.fileId === fileId &&
+          !['completed', 'failed', 'cancelled', 'rejected'].includes(file.status),
+      ) ?? transfer.task.files.find((file) => file.status === 'transferring')
+    if (target === undefined && !TERMINAL_TASK_STATUSES.includes(transfer.task.status)) {
       this.failWholeOutgoing(transfer, errorCode)
       return
     }
+    if (target === undefined) return
     transfer.task = updateFile(
       transfer.task,
       target.fileId,
@@ -731,8 +829,11 @@ export class FileTransferCoordinator {
     errorCode: ErrorCode,
   ): void {
     const target =
-      transfer.task.files.find((file) => file.fileId === fileId) ??
-      transfer.task.files.find((file) => file.status === 'transferring')
+      transfer.task.files.find(
+        (file) =>
+          file.fileId === fileId &&
+          !['completed', 'failed', 'cancelled', 'rejected'].includes(file.status),
+      ) ?? transfer.task.files.find((file) => file.status === 'transferring')
     if (target === undefined) return
     const state = transfer.files.get(target.fileId)
     if (state?.abortUpload !== undefined) {
@@ -885,8 +986,11 @@ export class FileTransferCoordinator {
   }
 
   private finishTask(task: TransferTaskDto): void {
+    const transfer = this.outgoing.get(task.transferId) ?? this.incoming.get(task.transferId)
+    if (transfer !== undefined) this.clearOfferTimeout(transfer)
     this.emitTask(task)
     this.recordHistory(task)
+    this.pruneTransfers()
   }
 
   private emitTask(task: TransferTaskDto): void {
@@ -894,6 +998,7 @@ export class FileTransferCoordinator {
   }
 
   private recordHistory(task: TransferTaskDto): void {
+    this.pruneRecordedTransfers()
     if (this.recordedTransfers.has(task.transferId)) return
     const firstFile = task.files[0]
     if (firstFile === undefined) return
@@ -913,7 +1018,45 @@ export class FileTransferCoordinator {
       ...(task.errorCode === undefined ? {} : { errorCode: task.errorCode }),
     }
     this.history.add(entry)
-    this.recordedTransfers.add(task.transferId)
+    this.recordedTransfers.set(task.transferId, Date.now())
+    this.pruneTransfers()
+  }
+
+  private createOfferTimeout(onTimeout: () => void): ReturnType<typeof setTimeout> {
+    const timeout = setTimeout(onTimeout, TRANSFER_TIMEOUT_MS)
+    timeout.unref()
+    return timeout
+  }
+
+  private clearOfferTimeout(transfer: OutgoingTransfer | IncomingTransfer): void {
+    if (transfer.offerTimeout !== undefined) clearTimeout(transfer.offerTimeout)
+    delete transfer.offerTimeout
+  }
+
+  private pruneRecordedTransfers(now = Date.now()): void {
+    for (const [transferId, recordedAt] of this.recordedTransfers) {
+      if (now - recordedAt > TRANSFER_ID_RETENTION_MS) this.recordedTransfers.delete(transferId)
+    }
+    while (this.recordedTransfers.size > MAX_IN_MEMORY_TRANSFER_TASKS * 2) {
+      const oldest = this.recordedTransfers.keys().next().value
+      if (oldest === undefined) return
+      this.recordedTransfers.delete(oldest)
+    }
+  }
+
+  private pruneTransfers(): void {
+    const prune = <T extends { task: TransferTaskDto }>(transfers: Map<TransferId, T>): void => {
+      const terminal = [...transfers.entries()]
+        .filter(([, transfer]) => TERMINAL_TASK_STATUSES.includes(transfer.task.status))
+        .sort((left, right) => left[1].task.updatedAt - right[1].task.updatedAt)
+      while (transfers.size > MAX_IN_MEMORY_TRANSFER_TASKS) {
+        const oldest = terminal.shift()
+        if (oldest === undefined) return
+        transfers.delete(oldest[0])
+      }
+    }
+    prune(this.outgoing)
+    prune(this.incoming)
   }
 
   private writeResponse(response: ServerResponse, statusCode: number): void {

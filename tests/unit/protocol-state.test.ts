@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   isConnectedProtocolMessage,
+  isMessageTimestampAllowed,
   MessageDeduplicator,
 } from '../../src/main/websocket/protocol-state'
 import { parseProtocolMessage } from '@shared/protocols'
@@ -70,5 +71,15 @@ describe('connected message whitelist', () => {
     })
 
     expect(isConnectedProtocolMessage(offer)).toBe(true)
+  })
+})
+
+describe('message timestamp policy', () => {
+  it('accepts bounded clock skew and rejects stale or future messages', () => {
+    const now = 1_700_000_000_000
+    expect(isMessageTimestampAllowed(now, now)).toBe(true)
+    expect(isMessageTimestampAllowed(now - 5 * 60_000, now)).toBe(true)
+    expect(isMessageTimestampAllowed(now - 5 * 60_000 - 1, now)).toBe(false)
+    expect(isMessageTimestampAllowed(now + 5 * 60_000 + 1, now)).toBe(false)
   })
 })

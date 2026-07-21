@@ -18,7 +18,7 @@ interface BaseMessage<TType extends string, TPayload> {
 }
 ```
 
-ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳。对象拒绝未知字段，WebSocket 单条消息最大 128 KiB，文字正文最大 64 KiB（按 UTF-8 字节计算）。
+ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳，并且只能处于接收端当前时间前后 5 分钟。对象拒绝未知字段，WebSocket 只接受文本 JSON 控制消息，单条消息最大 128 KiB，文字正文最大 64 KiB（按 UTF-8 字节计算）。连接内消息和新建 WebSocket Upgrade 均有限速。
 
 ## 设备消息
 
@@ -53,7 +53,7 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳。对象拒绝�
 
 文件元数据只包含 fileId、展示名、大小和 MIME type，不包含发送方路径或接收方保存路径。展示名必须是 Windows/macOS 可移植的单个路径段：不得使用 Windows 保留名、非法字符或尾随点/空格，UTF-8 编码不得超过 255 字节。0 字节文件合法，单文件最大 2 GiB。MIME type 仅用于展示，不作为安全判断依据。
 
-结构 schema 验证单条消息。主进程使用有界时间窗口拒绝重复 messageId；协调器进一步校验 offer/accept 文件集合、逐文件顺序、fileId、进度上限、完成大小和任务归属。多文件严格串行上传，接收端只接受当前队首的 HTTP 请求。
+结构 schema 验证单条消息。主进程使用有界时间窗口拒绝重复 messageId；协调器进一步校验 offer/accept 文件集合、逐文件顺序、fileId、进度单调性与上限、完成消息状态、完成大小和任务归属。transferId 完成后仍在有界时间内保留，使用新 messageId 重放旧 offer 同样会被拒绝。多文件严格串行上传，接收端只接受当前队首的 HTTP 请求；同一方向一次只允许一个活动文件任务。
 
 ## HTTP 上传
 
@@ -66,7 +66,9 @@ Content-Type: application/octet-stream
 Content-Length: <accepted-file-size>
 ```
 
-文件名和保存路径不出现在 URL。服务端核对一次性 token、来源 IP、connectionId、transferId、fileId、精确 Content-Length 和过期时间。上传写入接收目录内随机 `.part` 文件，完整关闭并核对大小后才以不覆盖方式发布最终文件；失败响应不会返回本机路径或内部错误详情。
+文件名和保存路径不出现在 URL。服务端核对一次性 token、来源 IP、connectionId、transferId、fileId、精确 Content-Length、固定 Content-Type 和过期时间，不接受 `Transfer-Encoding`。token 在第一次合法上传尝试时立即消费，重复上传返回 HTTP 409。上传双方使用 30 秒空闲超时。
+
+接收方接受前检查目录和可用空间，上传写入接收目录内以 `0600` 独占创建的随机 `.part` 文件；收到超过 offer 的字节数会立即中止。完整关闭并核对大小后才以不覆盖方式发布最终文件；失败响应不会返回本机路径或内部错误详情。HTTP 请求与 WebSocket Upgrade 按来源进行有界限流，触发 HTTP 限流时返回 429。
 
 `file:cancel` 不带 fileId 时取消整个任务，携带 fileId 时只取消该文件。已完成文件不回滚。重试不是协议内恢复操作，而是发送方创建全新的 `file:offer`，不得复用原 transferId、fileId 或 upload token。
 

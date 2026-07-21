@@ -6,10 +6,16 @@ import type { WebSocket } from 'ws'
 import { WebSocketServer } from 'ws'
 
 import {
+  MAX_HTTP_REQUESTS_PER_WINDOW,
+  MAX_SERVER_CONNECTIONS,
+  MAX_WEBSOCKET_UPGRADES_PER_WINDOW,
   MAX_WEBSOCKET_MESSAGE_BYTES,
   PROTOCOL_VERSION,
+  RATE_LIMIT_WINDOW_MS,
   TRANSFER_TIMEOUT_MS,
 } from '@shared/constants'
+
+import { FixedWindowRateLimiter } from '../security'
 
 const HEALTH_PATH = '/health'
 const WEBSOCKET_PATH = '/v1/ws'
@@ -28,6 +34,17 @@ const writeJson = (response: ServerResponse, statusCode: number, body: unknown):
 
 export type HttpRequestHandler = (request: IncomingMessage, response: ServerResponse) => boolean
 
+export interface LocalServerOptions {
+  readonly httpRequestsPerWindow?: number
+  readonly webSocketUpgradesPerWindow?: number
+  readonly rateLimitWindowMs?: number
+}
+
+const getRemoteIdentity = (request: IncomingMessage): string => {
+  const address = request.socket.remoteAddress ?? 'unknown'
+  return address.startsWith('::ffff:') ? address.slice(7) : address
+}
+
 const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string): void => {
   socket.end(
     `HTTP/1.1 ${String(statusCode)} ${statusText}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
@@ -43,6 +60,20 @@ export class LocalServer {
     webSocket,
   ) => {
     webSocket.close(1013, 'Device connection handler is unavailable')
+  }
+  private readonly httpRateLimiter: FixedWindowRateLimiter
+  private readonly upgradeRateLimiter: FixedWindowRateLimiter
+
+  public constructor(options: LocalServerOptions = {}) {
+    const windowMs = options.rateLimitWindowMs ?? RATE_LIMIT_WINDOW_MS
+    this.httpRateLimiter = new FixedWindowRateLimiter(
+      options.httpRequestsPerWindow ?? MAX_HTTP_REQUESTS_PER_WINDOW,
+      windowMs,
+    )
+    this.upgradeRateLimiter = new FixedWindowRateLimiter(
+      options.webSocketUpgradesPerWindow ?? MAX_WEBSOCKET_UPGRADES_PER_WINDOW,
+      windowMs,
+    )
   }
 
   public setErrorHandler(handler: (error: Error) => void): void {
@@ -64,14 +95,28 @@ export class LocalServer {
       throw new Error('Local server is already running')
     }
 
-    const httpServer = createServer((request, response) => {
-      if (request.method === 'GET' && request.url === HEALTH_PATH) {
-        writeJson(response, 200, { status: 'ok', protocolVersion: PROTOCOL_VERSION })
-        return
-      }
-      if (this.requestHandler(request, response)) return
-      writeJson(response, 404, { error: 'NOT_FOUND' })
-    })
+    const httpServer = createServer(
+      { insecureHTTPParser: false, maxHeaderSize: 16 * 1_024, requireHostHeader: true },
+      (request, response) => {
+        if (!this.httpRateLimiter.allow(getRemoteIdentity(request))) {
+          writeJson(response, 429, { error: 'RATE_LIMITED' })
+          return
+        }
+        if (
+          request.headers['transfer-encoding'] !== undefined &&
+          request.headers['content-length'] !== undefined
+        ) {
+          writeJson(response, 400, { error: 'BAD_REQUEST' })
+          return
+        }
+        if (request.method === 'GET' && request.url === HEALTH_PATH) {
+          writeJson(response, 200, { status: 'ok', protocolVersion: PROTOCOL_VERSION })
+          return
+        }
+        if (this.requestHandler(request, response)) return
+        writeJson(response, 404, { error: 'NOT_FOUND' })
+      },
+    )
     const webSocketServer = new WebSocketServer({
       noServer: true,
       maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
@@ -82,8 +127,13 @@ export class LocalServer {
     httpServer.requestTimeout = TRANSFER_TIMEOUT_MS
     httpServer.keepAliveTimeout = 1_000
     httpServer.maxHeadersCount = 50
+    httpServer.maxConnections = MAX_SERVER_CONNECTIONS
 
     httpServer.on('upgrade', (request, socket, head) => {
+      if (!this.upgradeRateLimiter.allow(getRemoteIdentity(request))) {
+        rejectUpgrade(socket, 429, 'Too Many Requests')
+        return
+      }
       let url: URL
       try {
         url = new URL(request.url ?? '', 'http://localhost')
@@ -105,6 +155,11 @@ export class LocalServer {
       webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
         webSocketServer.emit('connection', webSocket, request)
       })
+    })
+
+    httpServer.on('clientError', (_error, socket) => {
+      if (!socket.writable) return
+      rejectUpgrade(socket, 400, 'Bad Request')
     })
 
     webSocketServer.on('connection', (webSocket, request) => {
@@ -145,6 +200,8 @@ export class LocalServer {
     const webSocketServer = this.webSocketServer
     this.httpServer = null
     this.webSocketServer = null
+    this.httpRateLimiter.clear()
+    this.upgradeRateLimiter.clear()
 
     if (httpServer === null || webSocketServer === null) {
       return

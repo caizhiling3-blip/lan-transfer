@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -266,6 +266,46 @@ describe('single file transfer', () => {
     await senderCoordinator.offerFiles([source.selection.selectionToken])
     const offer = await offerPromise
     await writeFile(sourcePath, 'new content with a different size')
+    await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
+
+    await expect(senderFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
+    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
+  })
+
+  it('rejects a selected source that is replaced or modified without changing size', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const sourcePath = join(sourceDirectory, 'same-size.txt')
+    await writeFile(sourcePath, 'old!')
+    const metadata = await stat(sourcePath)
+    const source: AuthorizedSourceFile = {
+      path: sourcePath,
+      identity: {
+        device: metadata.dev,
+        inode: metadata.ino,
+        modifiedAt: metadata.mtimeMs,
+      },
+      selection: {
+        selectionToken: 'j'.repeat(43),
+        fileId: fileIdSchema.parse('ffffffff-ffff-4fff-8fff-ffffffffffff'),
+        displayName: 'same-size.txt',
+        size: 4,
+        mimeType: 'text/plain',
+      },
+    }
+    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
+      source,
+      receiveDirectory,
+    )
+    const offerPromise = waitForOffer(receiverCoordinator)
+    const senderFailed = waitForStatus(senderCoordinator, 'failed')
+    const receiverFailed = waitForStatus(receiverCoordinator, 'failed')
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
+    const offer = await offerPromise
+    await writeFile(sourcePath, 'new!')
+    const future = new Date(Date.now() + 2_000)
+    await utimes(sourcePath, future, future)
     await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
 
     await expect(senderFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })

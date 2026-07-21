@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -28,7 +28,9 @@ describe('FileAccessRegistry dropped files', () => {
 
     expect(selections).toHaveLength(2)
     expect(selections.map(({ displayName }) => displayName)).toEqual(['first.txt', '第二个.txt'])
-    expect(registry.consumeSource(selections[0]!.selectionToken)?.path).toBe(firstPath)
+    expect(registry.consumeSource(selections[0]!.selectionToken)?.path).toBe(
+      await realpath(firstPath),
+    )
     expect(registry.consumeSource(selections[0]!.selectionToken)).toBeNull()
   })
 
@@ -38,5 +40,17 @@ describe('FileAccessRegistry dropped files', () => {
     const registry = new FileAccessRegistry(() => directory)
 
     await expect(registry.registerDroppedFiles([directory])).rejects.toThrow('FILE_NOT_FOUND')
+  })
+
+  it('rejects symbolic links instead of following them', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'lan-transfer-drop-'))
+    temporaryDirectories.push(directory)
+    const targetPath = join(directory, 'target.txt')
+    const linkPath = join(directory, 'link.txt')
+    await writeFile(targetPath, 'content')
+    await symlink(targetPath, linkPath)
+    const registry = new FileAccessRegistry(() => directory)
+
+    await expect(registry.registerDroppedFiles([linkPath])).rejects.toThrow('FILE_NOT_FOUND')
   })
 })

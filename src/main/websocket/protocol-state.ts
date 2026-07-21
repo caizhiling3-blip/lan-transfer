@@ -1,4 +1,8 @@
-import { MESSAGE_DEDUPLICATION_LIMIT, MESSAGE_DEDUPLICATION_TTL_MS } from '@shared/constants'
+import {
+  MESSAGE_CLOCK_SKEW_MS,
+  MESSAGE_DEDUPLICATION_LIMIT,
+  MESSAGE_DEDUPLICATION_TTL_MS,
+} from '@shared/constants'
 import type {
   DeviceDisconnectMessage,
   DeviceHeartbeatMessage,
@@ -48,6 +52,9 @@ export const isConnectedProtocolMessage = (
       return false
   }
 }
+
+export const isMessageTimestampAllowed = (timestamp: number, now = Date.now()): boolean =>
+  Math.abs(now - timestamp) <= MESSAGE_CLOCK_SKEW_MS
 
 export class MessageDeduplicator {
   private readonly seenAtByMessageId = new Map<MessageId, number>()

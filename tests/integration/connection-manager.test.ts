@@ -297,4 +297,41 @@ describe('ConnectionManager', () => {
       errorCode: 'PROTOCOL_INVALID',
     })
   })
+
+  it('rejects stale and binary handshake messages', async () => {
+    const { receiver, serverPort } = await createPair()
+    const staleSocket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
+    staleSocket.once('open', () => {
+      const device = createDevice('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Stale sender', 54_000)
+      staleSocket.send(
+        JSON.stringify({
+          type: 'device:hello',
+          messageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          senderId: device.deviceId,
+          timestamp: Date.now() - 6 * 60_000,
+          payload: { protocolVersion: 1, device, connectionNonce: 'n'.repeat(32) },
+        }),
+      )
+    })
+    await expect(
+      new Promise<number>((resolve, reject) => {
+        staleSocket.once('close', resolve)
+        staleSocket.once('error', reject)
+      }),
+    ).resolves.toBe(1007)
+
+    expect(receiver.getStatus().state).toBe('disconnected')
+    const binarySocket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
+    binarySocket.once('open', () => binarySocket.send(Buffer.from('{}')))
+    await expect(
+      new Promise<number>((resolve, reject) => {
+        binarySocket.once('close', resolve)
+        binarySocket.once('error', reject)
+      }),
+    ).resolves.toBe(1007)
+    expect(receiver.getStatus()).toMatchObject({
+      state: 'disconnected',
+      errorCode: 'PROTOCOL_INVALID',
+    })
+  })
 })
