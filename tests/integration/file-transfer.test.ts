@@ -19,13 +19,17 @@ import type {
 
 class TestFileAccess implements FileAccessAdapter {
   public constructor(
-    private source: AuthorizedSourceFile | null,
+    sources: readonly AuthorizedSourceFile[],
     private readonly receiveDirectory: string,
-  ) {}
+  ) {
+    this.sources = new Map(sources.map((source) => [source.selection.selectionToken, source]))
+  }
 
-  public consumeSource(): AuthorizedSourceFile | null {
-    const source = this.source
-    this.source = null
+  private readonly sources: Map<string, AuthorizedSourceFile>
+
+  public consumeSource(selectionToken: string): AuthorizedSourceFile | null {
+    const source = this.sources.get(selectionToken) ?? null
+    this.sources.delete(selectionToken)
     return source
   }
 
@@ -75,8 +79,21 @@ const waitForStatus = (
     })
   })
 
+const waitForFileStatus = (
+  coordinator: FileTransferCoordinator,
+  fileId: TransferTaskDto['files'][number]['fileId'],
+  status: TransferTaskDto['files'][number]['status'],
+): Promise<TransferTaskDto> =>
+  new Promise((resolve) => {
+    const unsubscribe = coordinator.subscribeTasks((task) => {
+      if (task.files.find((file) => file.fileId === fileId)?.status !== status) return
+      unsubscribe()
+      resolve(task)
+    })
+  })
+
 const createConnectedTransferPair = async (
-  source: AuthorizedSourceFile,
+  source: AuthorizedSourceFile | readonly AuthorizedSourceFile[],
   receiveDirectory: string,
 ) => {
   const server = new LocalServer()
@@ -91,12 +108,12 @@ const createConnectedTransferPair = async (
   managers.push(sender, receiver)
   const senderCoordinator = new FileTransferCoordinator(
     sender,
-    new TestFileAccess(source, receiveDirectory),
+    new TestFileAccess(Array.isArray(source) ? source : [source], receiveDirectory),
     new SessionHistory(),
   )
   const receiverCoordinator = new FileTransferCoordinator(
     receiver,
-    new TestFileAccess(null, receiveDirectory),
+    new TestFileAccess([], receiveDirectory),
     new SessionHistory(),
   )
   coordinators.push(senderCoordinator, receiverCoordinator)
@@ -147,7 +164,7 @@ describe('single file transfer', () => {
     const offerPromise = waitForOffer(receiverCoordinator)
     const senderCompleted = waitForStatus(senderCoordinator, 'completed')
     const receiverCompleted = waitForStatus(receiverCoordinator, 'completed')
-    await senderCoordinator.offerFile(source.selection.selectionToken)
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
     const offer = await offerPromise
     await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
 
@@ -183,7 +200,7 @@ describe('single file transfer', () => {
     )
     const offerPromise = waitForOffer(receiverCoordinator)
     const senderRejected = waitForStatus(senderCoordinator, 'rejected')
-    await senderCoordinator.offerFile(source.selection.selectionToken)
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
     const offer = await offerPromise
     await receiverCoordinator.respondToOffer(offer.transferId, 'reject')
 
@@ -215,7 +232,7 @@ describe('single file transfer', () => {
     )
     const offerPromise = waitForOffer(receiverCoordinator)
     const senderCompleted = waitForStatus(senderCoordinator, 'completed')
-    await senderCoordinator.offerFile(source.selection.selectionToken)
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
     const offer = await offerPromise
     await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
 
@@ -246,12 +263,236 @@ describe('single file transfer', () => {
     const offerPromise = waitForOffer(receiverCoordinator)
     const senderFailed = waitForStatus(senderCoordinator, 'failed')
     const receiverFailed = waitForStatus(receiverCoordinator, 'failed')
-    await senderCoordinator.offerFile(source.selection.selectionToken)
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
     const offer = await offerPromise
     await writeFile(sourcePath, 'new content with a different size')
     await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
 
     await expect(senderFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
     await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
+  })
+})
+
+describe('multiple file transfer', () => {
+  it('uploads files serially and aggregates task progress', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const definitions = [
+      ['first.txt', 'first', '77777777-7777-4777-8777-777777777777'],
+      ['第二个.txt', 'second', '88888888-8888-4888-8888-888888888888'],
+      ['third file.txt', 'third', '99999999-9999-4999-8999-999999999999'],
+    ] as const
+    const sources: AuthorizedSourceFile[] = []
+    for (const [name, content, id] of definitions) {
+      const path = join(sourceDirectory, name)
+      await writeFile(path, content)
+      sources.push({
+        path,
+        selection: {
+          selectionToken: id,
+          fileId: fileIdSchema.parse(id),
+          displayName: name,
+          size: Buffer.byteLength(content),
+          mimeType: 'text/plain',
+        },
+      })
+    }
+    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
+      sources,
+      receiveDirectory,
+    )
+    const offerPromise = waitForOffer(receiverCoordinator)
+    const senderCompleted = waitForStatus(senderCoordinator, 'completed')
+    const receiverCompleted = waitForStatus(receiverCoordinator, 'completed')
+    await senderCoordinator.offerFiles(sources.map(({ selection }) => selection.selectionToken))
+    const offer = await offerPromise
+    expect(offer.files).toHaveLength(3)
+    await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
+
+    const senderTask = await senderCompleted
+    await receiverCompleted
+    expect(senderTask.files.map(({ status }) => status)).toEqual([
+      'completed',
+      'completed',
+      'completed',
+    ])
+    expect(senderTask.transferredBytes).toBe(senderTask.totalBytes)
+    for (const [name, content] of definitions) {
+      await expect(readFile(join(receiveDirectory, name), 'utf8')).resolves.toBe(content)
+    }
+  })
+
+  it('cancels a pending file while allowing completed files to remain', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const firstPath = join(sourceDirectory, 'keep.txt')
+    const secondPath = join(sourceDirectory, 'cancel.txt')
+    await writeFile(firstPath, Buffer.alloc(2 * 1_024 * 1_024, 1))
+    await writeFile(secondPath, 'cancel me')
+    const sources: AuthorizedSourceFile[] = [
+      {
+        path: firstPath,
+        selection: {
+          selectionToken: 'e'.repeat(43),
+          fileId: fileIdSchema.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+          displayName: 'keep.txt',
+          size: 2 * 1_024 * 1_024,
+          mimeType: 'text/plain',
+        },
+      },
+      {
+        path: secondPath,
+        selection: {
+          selectionToken: 'f'.repeat(43),
+          fileId: fileIdSchema.parse('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+          displayName: 'cancel.txt',
+          size: Buffer.byteLength('cancel me'),
+          mimeType: 'text/plain',
+        },
+      },
+    ]
+    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
+      sources,
+      receiveDirectory,
+    )
+    const offerPromise = waitForOffer(receiverCoordinator)
+    const senderCancelled = waitForStatus(senderCoordinator, 'cancelled')
+    const receiverCancelled = waitForStatus(receiverCoordinator, 'cancelled')
+    const offered = await senderCoordinator.offerFiles(
+      sources.map(({ selection }) => selection.selectionToken),
+    )
+    const offer = await offerPromise
+    const receiverFileCancelled = waitForFileStatus(
+      receiverCoordinator,
+      sources[1]!.selection.fileId,
+      'cancelled',
+    )
+    await senderCoordinator.cancel(offer.transferId, sources[1]?.selection.fileId)
+    await receiverFileCancelled
+    await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
+
+    const senderTask = await senderCancelled
+    const receiverTask = await receiverCancelled
+    expect(senderTask.files.map(({ status }) => status)).toEqual(['completed', 'cancelled'])
+    expect(receiverTask.files.map(({ status }) => status)).toEqual(['completed', 'cancelled'])
+    expect(offered?.transferId).toBe(offer.transferId)
+    await expect(readFile(join(receiveDirectory, 'keep.txt'))).resolves.toHaveLength(
+      2 * 1_024 * 1_024,
+    )
+    await expect(readFile(join(receiveDirectory, 'cancel.txt'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('retries a rejected task with new transfer and file identifiers', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const sourcePath = join(sourceDirectory, 'retry.txt')
+    await writeFile(sourcePath, 'retry content')
+    const source: AuthorizedSourceFile = {
+      path: sourcePath,
+      selection: {
+        selectionToken: 'g'.repeat(43),
+        fileId: fileIdSchema.parse('cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+        displayName: 'retry.txt',
+        size: Buffer.byteLength('retry content'),
+        mimeType: 'text/plain',
+      },
+    }
+    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
+      source,
+      receiveDirectory,
+    )
+    const firstOfferPromise = waitForOffer(receiverCoordinator)
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
+    const firstOffer = await firstOfferPromise
+    const rejectedPromise = waitForStatus(senderCoordinator, 'rejected')
+    await receiverCoordinator.respondToOffer(firstOffer.transferId, 'reject')
+    await rejectedPromise
+
+    const retryOfferPromise = waitForOffer(receiverCoordinator)
+    const retriedTask = await senderCoordinator.retry(firstOffer.transferId)
+    const retryOffer = await retryOfferPromise
+    expect(retryOffer.transferId).not.toBe(firstOffer.transferId)
+    expect(retryOffer.files[0]?.fileId).not.toBe(firstOffer.files[0]?.fileId)
+    const completedPromise = waitForStatus(senderCoordinator, 'completed')
+    await receiverCoordinator.respondToOffer(retryOffer.transferId, 'accept')
+
+    await expect(completedPromise).resolves.toMatchObject({ transferId: retriedTask?.transferId })
+    await expect(readFile(join(receiveDirectory, 'retry.txt'), 'utf8')).resolves.toBe(
+      'retry content',
+    )
+  })
+
+  it('cancels an active whole task and does not publish the file', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const sourcePath = join(sourceDirectory, 'cancel-active.bin')
+    await writeFile(sourcePath, Buffer.alloc(4 * 1_024 * 1_024, 7))
+    const source: AuthorizedSourceFile = {
+      path: sourcePath,
+      selection: {
+        selectionToken: 'h'.repeat(43),
+        fileId: fileIdSchema.parse('dddddddd-dddd-4ddd-8ddd-dddddddddddd'),
+        displayName: 'cancel-active.bin',
+        size: 4 * 1_024 * 1_024,
+        mimeType: 'application/octet-stream',
+      },
+    }
+    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
+      source,
+      receiveDirectory,
+    )
+    const offerPromise = waitForOffer(receiverCoordinator)
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
+    const offer = await offerPromise
+    const started = waitForFileStatus(senderCoordinator, source.selection.fileId, 'transferring')
+    const senderCancelled = waitForStatus(senderCoordinator, 'cancelled')
+    const receiverCancelled = waitForStatus(receiverCoordinator, 'cancelled')
+    await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
+    await started
+    await senderCoordinator.cancel(offer.transferId)
+
+    await expect(senderCancelled).resolves.toMatchObject({ errorCode: 'TRANSFER_CANCELLED' })
+    await expect(receiverCancelled).resolves.toMatchObject({ errorCode: 'TRANSFER_CANCELLED' })
+    await expect(readFile(join(receiveDirectory, 'cancel-active.bin'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('finishes a one-file offer when that pending file is cancelled', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const sourcePath = join(sourceDirectory, 'cancel-pending.txt')
+    await writeFile(sourcePath, 'pending')
+    const source: AuthorizedSourceFile = {
+      path: sourcePath,
+      selection: {
+        selectionToken: 'i'.repeat(43),
+        fileId: fileIdSchema.parse('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'),
+        displayName: 'cancel-pending.txt',
+        size: Buffer.byteLength('pending'),
+        mimeType: 'text/plain',
+      },
+    }
+    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
+      source,
+      receiveDirectory,
+    )
+    const offerPromise = waitForOffer(receiverCoordinator)
+    const senderCancelled = waitForStatus(senderCoordinator, 'cancelled')
+    const receiverCancelled = waitForStatus(receiverCoordinator, 'cancelled')
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
+    const offer = await offerPromise
+    await senderCoordinator.cancel(offer.transferId, source.selection.fileId)
+
+    await expect(senderCancelled).resolves.toMatchObject({ status: 'cancelled' })
+    await expect(receiverCancelled).resolves.toMatchObject({ status: 'cancelled' })
+    await expect(receiverCoordinator.respondToOffer(offer.transferId, 'accept')).resolves.toBeNull()
   })
 })

@@ -10,6 +10,7 @@ export const IPC_INVOKE_CHANNELS = [
   'clipboard:read-text',
   'clipboard:write-text',
   'transfer:select-files',
+  'transfer:register-dropped-files',
   'transfer:send-text',
   'transfer:offer-files',
   'transfer:respond-to-offer',

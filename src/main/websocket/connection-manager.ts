@@ -17,6 +17,7 @@ import {
   deviceHelloMessageSchema,
   deviceWelcomeMessageSchema,
   fileAcceptMessageSchema,
+  fileCancelMessageSchema,
   fileCompleteMessageSchema,
   fileErrorMessageSchema,
   fileOfferMessageSchema,
@@ -208,6 +209,23 @@ export class ConnectionManager {
         senderId: localDevice.deviceId,
         timestamp: Date.now(),
         payload: { transferId, fileId, transferredBytes },
+      }),
+    )
+  }
+
+  public sendFileCancel(transferId: TransferId, fileId?: FileId): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      fileCancelMessageSchema.parse({
+        type: 'file:cancel',
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload: {
+          transferId,
+          ...(fileId === undefined ? {} : { fileId }),
+          reason: 'user_cancelled',
+        },
       }),
     )
   }

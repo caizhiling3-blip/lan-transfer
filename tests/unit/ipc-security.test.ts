@@ -109,6 +109,27 @@ describe('IPC request schemas', () => {
     ).toThrow()
   })
 
+  it('bounds and deduplicates preload-only dropped file paths', () => {
+    expect(() =>
+      parseIpcInvokeRequest('transfer:register-dropped-files', {
+        paths: ['/tmp/one.txt', '/tmp/two.txt'],
+      }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('transfer:register-dropped-files', {
+        paths: ['/tmp/one.txt', '/tmp/one.txt'],
+      }),
+    ).toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('transfer:register-dropped-files', {
+        paths: Array.from(
+          { length: MAX_FILES_PER_TRANSFER + 1 },
+          (_, index) => `/tmp/${String(index)}.txt`,
+        ),
+      }),
+    ).toThrow()
+  })
+
   it('does not allow a directory token on rejection', () => {
     expect(() =>
       parseIpcInvokeRequest('transfer:respond-to-offer', {

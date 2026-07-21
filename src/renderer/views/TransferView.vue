@@ -14,6 +14,7 @@ const textTransferStore = useTextTransferStore()
 const fileTransferStore = useFileTransferStore()
 const content = ref('')
 const messageList = ref<HTMLElement | null>(null)
+const isDraggingFiles = ref(false)
 
 const contentBytes = computed(() => getUtf8ByteLength(content.value))
 const isConnected = computed(() => connectionStore.status.state === 'connected')
@@ -73,6 +74,16 @@ const statusLabels: Readonly<Record<string, string>> = {
   rejected: '已拒绝',
   cancelled: '已取消',
   pending: '等待中',
+}
+const isTaskActive = (status: string): boolean =>
+  ['awaitingAcceptance', 'accepted', 'transferring', 'pending'].includes(status)
+const isFileActive = (status: string): boolean => status === 'pending' || status === 'transferring'
+
+const handleDrop = (event: DragEvent): void => {
+  isDraggingFiles.value = false
+  const files = event.dataTransfer?.files
+  if (files === undefined || files.length === 0) return
+  void fileTransferStore.registerDroppedFiles(Array.from(files))
 }
 
 onMounted(() => {
@@ -171,17 +182,38 @@ onBeforeUnmount(() => {
     <el-card shadow="never">
       <template #header>
         <div class="transfer-header">
-          <span>单文件传输</span>
-          <el-button
-            type="primary"
-            :loading="fileTransferStore.selecting"
-            :disabled="!isConnected"
-            @click="fileTransferStore.selectAndOffer()"
-          >
-            选择文件发送
-          </el-button>
+          <span>文件传输</span>
+          <div>
+            <el-button
+              :loading="fileTransferStore.selecting"
+              :disabled="!isConnected"
+              @click="fileTransferStore.selectAndOffer(false)"
+            >
+              选择单个文件
+            </el-button>
+            <el-button
+              type="primary"
+              :loading="fileTransferStore.selecting"
+              :disabled="!isConnected"
+              @click="fileTransferStore.selectAndOffer(true)"
+            >
+              选择多个文件
+            </el-button>
+          </div>
         </div>
       </template>
+
+      <div
+        class="file-drop-zone"
+        :class="{ active: isDraggingFiles }"
+        @dragenter.prevent="isDraggingFiles = true"
+        @dragover.prevent="isDraggingFiles = true"
+        @dragleave.prevent="isDraggingFiles = false"
+        @drop.prevent="handleDrop"
+      >
+        <strong>拖拽文件到这里发送</strong>
+        <span>最多 20 个文件，不支持文件夹</span>
+      </div>
 
       <el-alert
         v-if="fileTransferStore.incomingOffer"
@@ -192,7 +224,11 @@ onBeforeUnmount(() => {
         <template #title>
           {{ fileTransferStore.incomingOffer.peer.deviceName }} 请求发送文件
         </template>
-        <div v-for="file in fileTransferStore.incomingOffer.files" :key="file.fileId">
+        <div
+          v-for="file in fileTransferStore.incomingOffer.files"
+          :key="file.fileId"
+          class="offer-file"
+        >
           <strong>{{ file.displayName }}</strong>
           <span class="file-detail">{{ formatBytes(file.size) }} · {{ file.mimeType }}</span>
         </div>
@@ -226,7 +262,10 @@ onBeforeUnmount(() => {
         <article v-for="task in fileTransferStore.tasks" :key="task.transferId" class="file-task">
           <div class="task-heading">
             <div>
-              <strong>{{ task.files[0]?.displayName ?? '未知文件' }}</strong>
+              <strong>
+                {{ task.files[0]?.displayName ?? '未知文件' }}
+                <template v-if="task.files.length > 1">等 {{ task.files.length }} 个文件</template>
+              </strong>
               <p>
                 {{ task.direction === 'send' ? '发送给' : '接收自' }} {{ task.peer.deviceName }}
               </p>
@@ -264,6 +303,62 @@ onBeforeUnmount(() => {
               >{{ formatBytes(task.transferredBytes) }} / {{ formatBytes(task.totalBytes) }}</span
             >
             <span>{{ formatBytes(task.bytesPerSecond) }}/s</span>
+          </div>
+          <div class="task-actions">
+            <el-button
+              v-if="isTaskActive(task.status)"
+              size="small"
+              type="danger"
+              plain
+              @click="fileTransferStore.cancel(task.transferId)"
+            >
+              取消任务
+            </el-button>
+            <el-button
+              v-if="
+                task.direction === 'send' &&
+                ['failed', 'cancelled', 'rejected'].includes(task.status)
+              "
+              size="small"
+              type="primary"
+              plain
+              @click="fileTransferStore.retry(task.transferId)"
+            >
+              重试
+            </el-button>
+          </div>
+          <div class="task-files">
+            <div v-for="file in task.files" :key="file.fileId" class="task-file-row">
+              <div class="file-row-heading">
+                <span>{{ file.displayName }}</span>
+                <el-tag size="small" effect="plain">{{
+                  statusLabels[file.status] ?? file.status
+                }}</el-tag>
+              </div>
+              <el-progress
+                :stroke-width="6"
+                :show-text="false"
+                :percentage="
+                  file.size === 0
+                    ? file.status === 'completed'
+                      ? 100
+                      : 0
+                    : Math.min(100, Math.round((file.transferredBytes / file.size) * 100))
+                "
+              />
+              <div class="file-row-footer">
+                <span>{{ formatBytes(file.transferredBytes) }} / {{ formatBytes(file.size) }}</span>
+                <el-button
+                  v-if="isFileActive(file.status)"
+                  text
+                  type="danger"
+                  size="small"
+                  @click="fileTransferStore.cancel(task.transferId, file.fileId)"
+                >
+                  取消此文件
+                </el-button>
+              </div>
+            </div>
           </div>
         </article>
       </div>
@@ -352,6 +447,28 @@ onBeforeUnmount(() => {
   margin-bottom: 20px;
 }
 
+.file-drop-zone {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  margin-bottom: 20px;
+  padding: 24px;
+  border: 2px dashed #cbd5e1;
+  border-radius: 12px;
+  color: #64748b;
+  transition: 0.2s ease;
+}
+
+.file-drop-zone.active {
+  border-color: #409eff;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.offer-file + .offer-file {
+  margin-top: 6px;
+}
+
 .file-detail {
   margin-left: 12px;
   color: #64748b;
@@ -388,6 +505,44 @@ onBeforeUnmount(() => {
 
 .task-stats {
   margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.task-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.task-files {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.task-file-row {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.file-row-heading,
+.file-row-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.file-row-heading {
+  margin-bottom: 7px;
+}
+
+.file-row-footer {
+  margin-top: 4px;
   color: #64748b;
   font-size: 12px;
 }

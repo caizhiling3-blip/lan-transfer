@@ -103,6 +103,10 @@ export const ipcInvokeRequestSchemas = {
   'clipboard:read-text': noRequestSchema,
   'clipboard:write-text': z.object({ text: textSchema }).strict(),
   'transfer:select-files': selectFilesRequestSchema,
+  'transfer:register-dropped-files': z
+    .object({ paths: z.array(z.string().min(1).max(32_768)).min(1).max(MAX_FILES_PER_TRANSFER) })
+    .strict()
+    .refine(({ paths }) => new Set(paths).size === paths.length, 'Paths must be unique'),
   'transfer:send-text': z
     .object({ content: textSchema, contentType: z.enum(['text', 'link']) })
     .strict(),

@@ -6,7 +6,7 @@ import { basename, extname } from 'node:path'
 import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
 
-import { MAX_FILE_SIZE_BYTES, UPLOAD_TOKEN_TTL_MS } from '@shared/constants'
+import { MAX_FILE_SIZE_BYTES, MAX_FILES_PER_TRANSFER, UPLOAD_TOKEN_TTL_MS } from '@shared/constants'
 import { fileIdSchema } from '@shared/types'
 import type { SelectedDirectoryDto, SelectedFileDto } from '@shared/types'
 
@@ -42,32 +42,60 @@ export class FileAccessRegistry {
 
   public constructor(private readonly getDefaultReceiveDirectory: () => string) {}
 
-  public async selectSingleFile(window: BrowserWindow): Promise<readonly SelectedFileDto[]> {
+  public async selectFiles(
+    window: BrowserWindow,
+    multiple: boolean,
+  ): Promise<readonly SelectedFileDto[]> {
     const result = await dialog.showOpenDialog(window, {
-      properties: ['openFile'],
+      properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
       title: '选择要发送的文件',
     })
-    const filePath = result.filePaths[0]
-    if (result.canceled || filePath === undefined) return []
+    if (result.canceled) return []
+    return this.registerFilePaths(result.filePaths)
+  }
 
-    const metadata = await stat(filePath)
-    if (!metadata.isFile()) throw new Error('FILE_NOT_FOUND')
-    if (metadata.size > MAX_FILE_SIZE_BYTES) throw new Error('FILE_TOO_LARGE')
+  public async registerDroppedFiles(
+    filePaths: readonly string[],
+  ): Promise<readonly SelectedFileDto[]> {
+    return this.registerFilePaths(filePaths)
+  }
 
-    const selectionToken = createToken()
-    const extension = extname(filePath).toLowerCase()
-    const selection: SelectedFileDto = {
-      selectionToken,
-      fileId: fileIdSchema.parse(randomUUID()),
-      displayName: sanitizeFileName(basename(filePath)),
-      size: metadata.size,
-      mimeType: MIME_TYPES[extension] ?? 'application/octet-stream',
+  private async registerFilePaths(
+    filePaths: readonly string[],
+  ): Promise<readonly SelectedFileDto[]> {
+    const uniquePaths = [...new Set(filePaths)]
+    if (uniquePaths.length === 0 || uniquePaths.length > MAX_FILES_PER_TRANSFER) {
+      throw new Error('FILE_COUNT_EXCEEDED')
     }
-    this.sourceFiles.set(selectionToken, {
-      value: { path: filePath, selection },
-      expiresAt: Date.now() + UPLOAD_TOKEN_TTL_MS,
-    })
-    return [selection]
+
+    const authorizedFiles = await Promise.all(
+      uniquePaths.map(async (filePath): Promise<AuthorizedSourceFile> => {
+        const metadata = await stat(filePath)
+        if (!metadata.isFile()) throw new Error('FILE_NOT_FOUND')
+        if (metadata.size > MAX_FILE_SIZE_BYTES) throw new Error('FILE_TOO_LARGE')
+
+        const selectionToken = createToken()
+        const extension = extname(filePath).toLowerCase()
+        return {
+          path: filePath,
+          selection: {
+            selectionToken,
+            fileId: fileIdSchema.parse(randomUUID()),
+            displayName: sanitizeFileName(basename(filePath)),
+            size: metadata.size,
+            mimeType: MIME_TYPES[extension] ?? 'application/octet-stream',
+          },
+        }
+      }),
+    )
+    const expiresAt = Date.now() + UPLOAD_TOKEN_TTL_MS
+    for (const authorizedFile of authorizedFiles) {
+      this.sourceFiles.set(authorizedFile.selection.selectionToken, {
+        value: authorizedFile,
+        expiresAt,
+      })
+    }
+    return authorizedFiles.map(({ selection }) => selection)
   }
 
   public consumeSource(selectionToken: string): AuthorizedSourceFile | null {

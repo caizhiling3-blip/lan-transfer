@@ -81,15 +81,19 @@ hello 的 envelope senderId 必须与 deviceId 一致，welcome 必须回显本�
 
 renderer 使用 Pinia 维护文字页投影：进入页面时读取会话历史并订阅接收事件，离开页面时取消订阅。链接分类只接受完整的 HTTP(S) URL；外部打开仍经过主进程 scheme 校验并要求用户点击。
 
-## 单文件传输
+## 文件传输
 
-阶段 8 的 `FileTransferCoordinator` 维护发送和接收任务，renderer 只接收任务 DTO：
+`FileTransferCoordinator` 维护发送和接收任务，renderer 只接收任务 DTO：
 
 1. Electron 系统文件选择器在主进程读取文件元数据，把真实路径绑定到一分钟有效、单次消费的 selection token；
-2. 协调器通过 WebSocket 发送只含文件元数据的 offer；接收方必须拒绝、接受到默认 Downloads，或通过系统目录选择器为本次授权目录；
+2. 协调器通过 WebSocket 发送包含 1–20 个文件元数据的 offer；接收方必须拒绝、接受到默认 Downloads，或通过系统目录选择器为本次授权目录；
 3. 接受后生成与 transferId、fileId、当前 connectionId、对端 IP、长度和期限共同校验的一次性 upload token；
 4. 发送方使用 Node HTTP 流上传，renderer 不读取文件内容或路径；
 5. 接收方独占创建随机 `.part` 文件，流结束且字节数吻合后创建不覆盖的最终硬链接，再删除临时名称；同名文件使用 `name (1).ext` 递增；
 6. 失败、断线或退出会终止活动流并清理临时文件，磁盘和权限错误映射为稳定错误码。
 
-HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。上传要求固定 Content-Length，不接受远端文件名或保存路径；任务进度事件和 WebSocket 进度消息分别节流。阶段 8 只允许一个文件，多个 selection token 会被 IPC 拒绝。
+HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。上传要求固定 Content-Length，不接受远端文件名或保存路径；任务进度事件和 WebSocket 进度消息分别节流。
+
+阶段 9 在同一任务内严格按 offer 顺序逐文件上传，接收端拒绝并行或乱序请求。任务总进度由所有文件累计，每个文件单独记录状态、字节数和速度。串行授权的截止时间按队列位置递增，每个文件保留一个传输超时窗口，避免后续文件尚未开始 token 就失效。取消整个任务会终止当前流并取消未开始文件；取消某个当前或待传文件不会回滚已成功文件，其余队列继续。发送方重试失败、拒绝或取消任务时会生成新的 transferId、fileId、offer 和授权，旧 token 永不复用。
+
+拖拽使用 Electron `webUtils.getPathForFile`，该调用封装在 Preload 内。renderer 只能把浏览器 `File` 对象交给具名 API，不能提交字符串路径；主进程重新执行数量、普通文件、大小和名称检查后才签发 selection token。文件夹拖入会被拒绝。

@@ -25,27 +25,46 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       this.unsubscribers = [
         window.lanTransfer.transfer.onTaskChanged((task) => {
           this.tasks = upsertTask(this.tasks, task)
+          if (
+            this.incomingOffer?.transferId === task.transferId &&
+            ['completed', 'failed', 'cancelled', 'rejected'].includes(task.status)
+          ) {
+            this.incomingOffer = null
+          }
         }),
         window.lanTransfer.transfer.onOfferReceived((offer) => {
           this.incomingOffer = offer
         }),
       ]
     },
-    async selectAndOffer(): Promise<void> {
+    async selectAndOffer(multiple: boolean): Promise<void> {
       this.selecting = true
       this.errorMessage = ''
-      const selectionResult = await window.lanTransfer.transfer.selectFiles(false)
+      const selectionResult = await window.lanTransfer.transfer.selectFiles(multiple)
       if (!selectionResult.ok) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN[selectionResult.error.code]
         this.selecting = false
         return
       }
-      const selected = selectionResult.data[0]
-      if (selected === undefined) {
+      if (selectionResult.data.length === 0) {
         this.selecting = false
         return
       }
-      const offerResult = await window.lanTransfer.transfer.offerFiles([selected.selectionToken])
+      await this.offerSelections(selectionResult.data.map(({ selectionToken }) => selectionToken))
+    },
+    async registerDroppedFiles(files: readonly File[]): Promise<void> {
+      this.selecting = true
+      this.errorMessage = ''
+      const selectionResult = await window.lanTransfer.transfer.registerDroppedFiles(files)
+      if (!selectionResult.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[selectionResult.error.code]
+        this.selecting = false
+        return
+      }
+      await this.offerSelections(selectionResult.data.map(({ selectionToken }) => selectionToken))
+    },
+    async offerSelections(selectionTokens: readonly string[]): Promise<void> {
+      const offerResult = await window.lanTransfer.transfer.offerFiles(selectionTokens)
       this.selecting = false
       if (!offerResult.ok) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN[offerResult.error.code]
@@ -80,6 +99,25 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       }
       this.tasks = upsertTask(this.tasks, result.data)
       this.incomingOffer = null
+    },
+    async cancel(
+      transferId: TransferTaskDto['transferId'],
+      fileId?: TransferTaskDto['files'][number]['fileId'],
+    ): Promise<void> {
+      const result = await window.lanTransfer.transfer.cancel(transferId, fileId)
+      if (!result.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+        return
+      }
+      this.tasks = upsertTask(this.tasks, result.data)
+    },
+    async retry(transferId: TransferTaskDto['transferId']): Promise<void> {
+      const result = await window.lanTransfer.transfer.retry(transferId)
+      if (!result.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+        return
+      }
+      this.tasks = upsertTask(this.tasks, result.data)
     },
     dispose(): void {
       for (const unsubscribe of this.unsubscribers) unsubscribe()

@@ -12,6 +12,7 @@ const mapError = (error: unknown): ErrorCode => {
   if (error instanceof Error) {
     if (error.message === 'FILE_NOT_FOUND') return 'FILE_NOT_FOUND'
     if (error.message === 'FILE_TOO_LARGE') return 'FILE_TOO_LARGE'
+    if (error.message === 'FILE_COUNT_EXCEEDED') return 'FILE_COUNT_EXCEEDED'
     if (error.message === 'SAVE_DIRECTORY_INVALID') return 'SAVE_DIRECTORY_INVALID'
   }
   return 'TRANSFER_FAILED'
@@ -23,15 +24,22 @@ export const registerFileTransferIpcHandlers = (
   coordinator: FileTransferCoordinator,
 ): void => {
   registerIpcHandler('transfer:select-files', getWindow, async ({ multiple }) => {
-    if (multiple) {
-      return { ok: false, error: { code: 'FILE_COUNT_EXCEEDED' } }
-    }
     const window = getWindow()
     if (window === null || window.isDestroyed()) {
       return { ok: false, error: { code: 'MESSAGE_INVALID' } }
     }
     try {
-      return { ok: true, data: await fileAccess.selectSingleFile(window) }
+      return { ok: true, data: await fileAccess.selectFiles(window, multiple) }
+    } catch (error) {
+      return { ok: false, error: { code: mapError(error) } } satisfies OperationResult<
+        readonly SelectedFileDto[]
+      >
+    }
+  })
+
+  registerIpcHandler('transfer:register-dropped-files', getWindow, async ({ paths }) => {
+    try {
+      return { ok: true, data: await fileAccess.registerDroppedFiles(paths) }
     } catch (error) {
       return { ok: false, error: { code: mapError(error) } } satisfies OperationResult<
         readonly SelectedFileDto[]
@@ -40,10 +48,7 @@ export const registerFileTransferIpcHandlers = (
   })
 
   registerIpcHandler('transfer:offer-files', getWindow, async ({ selectionTokens }) => {
-    if (selectionTokens.length !== 1) {
-      return { ok: false, error: { code: 'FILE_COUNT_EXCEEDED' } }
-    }
-    const task = await coordinator.offerFile(selectionTokens[0] ?? '')
+    const task = await coordinator.offerFiles(selectionTokens)
     return task === null
       ? { ok: false, error: { code: 'FILE_NOT_FOUND' } }
       : { ok: true, data: task }
@@ -59,6 +64,20 @@ export const registerFileTransferIpcHandlers = (
         : { ok: true, data: task }
     },
   )
+
+  registerIpcHandler('transfer:cancel', getWindow, async ({ transferId, fileId }) => {
+    const task = await coordinator.cancel(transferId, fileId)
+    return task === null
+      ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
+      : { ok: true, data: task }
+  })
+
+  registerIpcHandler('transfer:retry', getWindow, async ({ transferId }) => {
+    const task = await coordinator.retry(transferId)
+    return task === null
+      ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
+      : { ok: true, data: task }
+  })
 
   registerIpcHandler('settings:select-receive-directory', getWindow, async () => {
     const window = getWindow()
