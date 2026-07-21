@@ -20,10 +20,18 @@ Vite 启动渲染进程开发服务器，Electron 主进程和 Preload 由 `vite
 pnpm typecheck
 pnpm lint
 pnpm format:check
+pnpm test
 pnpm build
 ```
 
 项目使用 TypeScript strict 模式，并额外开启 `noUncheckedIndexedAccess` 和 `exactOptionalPropertyTypes`。代码风格由 ESLint 与 Prettier 管理。
+
+协议输入使用 Zod 做运行时校验，静态类型优先由 schema 推导。纯 shared 单元测试使用 Vitest：
+
+```bash
+pnpm test
+pnpm test:watch
+```
 
 ## 阶段
 

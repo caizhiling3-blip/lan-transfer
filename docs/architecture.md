@@ -10,3 +10,12 @@
 安全窗口配置固定为 `contextIsolation: true`、`nodeIntegration: false` 和 `sandbox: true`。
 
 HTTP 与 WebSocket 服务、状态机及安全边界将在对应阶段补充为实现级文档。
+
+## 共享契约
+
+`src/shared` 是跨进程类型、协议、错误码和常量的唯一来源，并且不依赖 Electron、Node.js 或 Vue。
+
+- 网络消息使用严格 Zod schema 做无状态结构校验，TypeScript 类型由 schema 推导。
+- 时间偏差、消息去重、消息顺序、连接状态和传输状态属于有状态校验，由后续主进程协调器负责。
+- IPC 使用固定 channel 列表及 request/response/event 映射；Preload 和主进程不得重复声明契约。
+- 网络协议内部的一次性上传 token 不进入渲染进程 DTO。

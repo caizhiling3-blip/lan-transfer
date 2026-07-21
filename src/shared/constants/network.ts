@@ -1,0 +1,23 @@
+export const PROTOCOL_VERSION = 1 as const
+
+export const DEFAULT_SERVICE_PORT = 53_317
+export const MIN_SERVICE_PORT = 1_024
+export const MAX_SERVICE_PORT = 65_535
+
+export const MAX_TEXT_BYTES = 64 * 1_024
+export const MAX_WEBSOCKET_MESSAGE_BYTES = 128 * 1_024
+export const MAX_FILE_SIZE_BYTES = 2 * 1_024 * 1_024 * 1_024
+export const MAX_FILES_PER_TRANSFER = 20
+
+export const HEARTBEAT_INTERVAL_MS = 10_000
+export const HEARTBEAT_TIMEOUT_MS = 30_000
+export const CONNECTION_TIMEOUT_MS = 10_000
+export const TRANSFER_TIMEOUT_MS = 5 * 60_000
+export const UPLOAD_TOKEN_TTL_MS = 60_000
+
+export const MESSAGE_DEDUPLICATION_LIMIT = 2_000
+export const MESSAGE_DEDUPLICATION_TTL_MS = 10 * 60_000
+
+export const DEFAULT_HISTORY_LIMIT = 1_000
+export const MIN_HISTORY_LIMIT = 100
+export const MAX_HISTORY_LIMIT = 10_000

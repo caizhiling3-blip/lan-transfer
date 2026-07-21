@@ -27,7 +27,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/main/**/*.ts', 'src/preload/**/*.ts', '*.config.{js,ts}', 'eslint.config.js'],
+    files: [
+      'src/main/**/*.ts',
+      'src/preload/**/*.ts',
+      'tests/**/*.ts',
+      '*.config.{js,ts}',
+      'eslint.config.js',
+    ],
     languageOptions: {
       globals: globals.node,
     },
