@@ -1,0 +1,166 @@
+<script setup lang="ts">
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { onMounted } from 'vue'
+
+import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
+import type { HistoryEntryDto, TransferStatus } from '@shared/types'
+
+import { useHistoryStore } from '../stores/history'
+
+const store = useHistoryStore()
+
+const statusLabels: Readonly<Record<TransferStatus, string>> = {
+  pending: '等待中',
+  awaitingAcceptance: '等待接受',
+  accepted: '已接受',
+  transferring: '传输中',
+  completed: '成功',
+  failed: '失败',
+  cancelled: '已取消',
+  rejected: '已拒绝',
+}
+
+const formatSize = (size: number | undefined): string => {
+  if (size === undefined) return '-'
+  if (size < 1_024) return `${String(size)} B`
+  if (size < 1_024 * 1_024) return `${(size / 1_024).toFixed(1)} KiB`
+  return `${(size / 1_024 / 1_024).toFixed(1)} MiB`
+}
+
+const getSummary = (entry: HistoryEntryDto): string =>
+  entry.kind === 'file' ? (entry.displayName ?? '-') : (entry.textPreview ?? '-')
+
+const clearHistory = async (): Promise<void> => {
+  await ElMessageBox.confirm('清空后无法恢复，确定清空全部传输历史吗？', '清空历史', {
+    type: 'warning',
+    confirmButtonText: '清空',
+    cancelButtonText: '取消',
+  })
+  if (await store.clear()) ElMessage.success('历史记录已清空')
+}
+
+onMounted(() => void store.load(true))
+</script>
+
+<template>
+  <el-card shadow="never">
+    <div class="history-toolbar">
+      <div class="history-filters">
+        <el-select v-model="store.filters.direction" aria-label="方向" @change="store.load(true)">
+          <el-option label="全部方向" value="" />
+          <el-option label="发送" value="send" />
+          <el-option label="接收" value="receive" />
+        </el-select>
+        <el-select v-model="store.filters.kind" aria-label="类型" @change="store.load(true)">
+          <el-option label="全部类型" value="" />
+          <el-option label="文字" value="text" />
+          <el-option label="链接" value="link" />
+          <el-option label="文件" value="file" />
+        </el-select>
+        <el-select v-model="store.filters.status" aria-label="状态" @change="store.load(true)">
+          <el-option label="全部状态" value="" />
+          <el-option
+            v-for="(label, status) in statusLabels"
+            :key="status"
+            :label="label"
+            :value="status"
+          />
+        </el-select>
+      </div>
+      <el-button type="danger" plain :disabled="store.entries.length === 0" @click="clearHistory">
+        清空历史
+      </el-button>
+    </div>
+
+    <el-alert
+      v-if="store.errorMessage"
+      class="history-error"
+      :title="store.errorMessage"
+      type="error"
+      :closable="false"
+    />
+
+    <el-table v-loading="store.loading" :data="store.entries" empty-text="暂无历史记录">
+      <el-table-column label="方向" width="80">
+        <template #default="{ row }: { row: HistoryEntryDto }">
+          {{ row.direction === 'send' ? '发送' : '接收' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="类型" width="80">
+        <template #default="{ row }: { row: HistoryEntryDto }">
+          {{ row.kind === 'file' ? '文件' : row.kind === 'link' ? '链接' : '文字' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="内容" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }: { row: HistoryEntryDto }">{{ getSummary(row) }}</template>
+      </el-table-column>
+      <el-table-column label="对方设备" min-width="150">
+        <template #default="{ row }: { row: HistoryEntryDto }">{{ row.peer.deviceName }}</template>
+      </el-table-column>
+      <el-table-column label="大小" width="100">
+        <template #default="{ row }: { row: HistoryEntryDto }">{{ formatSize(row.size) }}</template>
+      </el-table-column>
+      <el-table-column label="状态" width="110">
+        <template #default="{ row }: { row: HistoryEntryDto }">
+          {{ statusLabels[row.status] }}
+          <el-tooltip v-if="row.errorCode" :content="ERROR_MESSAGES_ZH_CN[row.errorCode]">
+            <span class="error-mark">!</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
+      <el-table-column label="时间" width="180">
+        <template #default="{ row }: { row: HistoryEntryDto }">
+          {{ new Date(row.createdAt).toLocaleString() }}
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <div class="history-pagination">
+      <el-button :disabled="store.page <= 1" @click="store.previousPage">上一页</el-button>
+      <span>第 {{ store.page }} 页</span>
+      <el-button :disabled="!store.hasNextPage" @click="store.nextPage">下一页</el-button>
+    </div>
+  </el-card>
+</template>
+
+<style scoped>
+.history-toolbar,
+.history-filters,
+.history-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.history-toolbar {
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.history-filters .el-select {
+  width: 132px;
+}
+
+.history-error {
+  margin-bottom: 16px;
+}
+
+.error-mark {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  place-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #ef4444;
+  font-size: 11px;
+}
+
+.history-pagination {
+  justify-content: center;
+  margin-top: 18px;
+  color: #64748b;
+  font-size: 13px;
+}
+</style>

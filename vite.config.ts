@@ -20,7 +20,7 @@ export default defineConfig({
           },
           build: {
             rollupOptions: {
-              external: ['ws'],
+              external: ['electron-store', 'ws'],
             },
           },
         },

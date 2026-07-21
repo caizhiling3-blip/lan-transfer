@@ -5,6 +5,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useConnectionStore } from './stores/connection'
 import { useFileTransferStore } from './stores/file-transfer'
 import HomeView from './views/HomeView.vue'
+import HistoryView from './views/HistoryView.vue'
+import SettingsView from './views/SettingsView.vue'
 import TransferView from './views/TransferView.vue'
 
 type PageKey = 'home' | 'transfer' | 'history' | 'settings'
@@ -107,9 +109,8 @@ onBeforeUnmount(() => {
         </header>
         <HomeView v-if="activePage === 'home'" />
         <TransferView v-else-if="activePage === 'transfer'" />
-        <el-card v-else shadow="never">
-          <el-empty description="项目骨架已就绪，业务功能将在后续阶段逐步实现" />
-        </el-card>
+        <HistoryView v-else-if="activePage === 'history'" />
+        <SettingsView v-else />
       </div>
     </el-main>
   </el-container>

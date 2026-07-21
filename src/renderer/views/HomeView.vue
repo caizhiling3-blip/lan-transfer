@@ -79,6 +79,13 @@ onMounted(() => {
       localOperatingSystem.value = result.data.platform === 'windows' ? 'Windows' : 'macOS'
     }
   })
+  void window.lanTransfer.connection.listRecentDevices().then((result) => {
+    const recent = result.ok ? result.data[0] : undefined
+    if (recent !== undefined && peerIp.value === '') {
+      peerIp.value = recent.device.ipAddress
+      peerPort.value = recent.device.servicePort
+    }
+  })
 })
 
 onBeforeUnmount(() => {

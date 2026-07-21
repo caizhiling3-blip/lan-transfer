@@ -60,6 +60,7 @@ export const createLanTransferApi = (): LanTransferApi => {
       disconnect: () => invoke('connection:disconnect', undefined),
       respondToRequest: (requestId, decision) =>
         invoke('connection:respond-to-request', { requestId, decision }),
+      listRecentDevices: () => invoke('connection:list-recent-devices', undefined),
       onStateChanged: (listener) => subscribe('connection:state-changed', listener),
       onIncomingRequest: (listener) => subscribe('connection:incoming-request', listener),
     }),

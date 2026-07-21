@@ -104,6 +104,7 @@ export class FileTransferCoordinator {
     private readonly connectionManager: ConnectionManager,
     private readonly fileAccess: FileAccessAdapter,
     private readonly history: SessionHistory,
+    private readonly getMaximumFileSize: () => number = () => Number.MAX_SAFE_INTEGER,
   ) {
     this.unsubscribeFromMessages = connectionManager.subscribeFileMessages((message) => {
       this.handleControlMessage(message)
@@ -392,6 +393,19 @@ export class FileTransferCoordinator {
     const peer = this.connectionManager.getPeer()
     const connectionId = this.connectionManager.getStatus().connectionId
     if (peer === null || connectionId === undefined || files.length === 0) return
+    const oversizedFile = files.find((file) => file.size > this.getMaximumFileSize())
+    if (oversizedFile !== undefined) {
+      const rejectedTask = updateAllNonTerminalFiles(
+        createTask(transferId, 'receive', peer, files),
+        'failed',
+        'failed',
+        'FILE_TOO_LARGE',
+      )
+      this.emitTask(rejectedTask)
+      this.recordHistory(rejectedTask)
+      void this.connectionManager.sendFileError(transferId, oversizedFile.fileId, 'FILE_TOO_LARGE')
+      return
+    }
     const hasActiveIncoming = [...this.incoming.values()].some(
       (transfer) => !TERMINAL_TASK_STATUSES.includes(transfer.task.status),
     )

@@ -40,7 +40,10 @@ export class FileAccessRegistry {
   private readonly sourceFiles = new Map<string, ExpiringValue<AuthorizedSourceFile>>()
   private readonly directories = new Map<string, ExpiringValue<string>>()
 
-  public constructor(private readonly getDefaultReceiveDirectory: () => string) {}
+  public constructor(
+    private readonly getDefaultReceiveDirectory: () => string,
+    private readonly getMaximumFileSize: () => number = () => MAX_FILE_SIZE_BYTES,
+  ) {}
 
   public async selectFiles(
     window: BrowserWindow,
@@ -72,7 +75,7 @@ export class FileAccessRegistry {
       uniquePaths.map(async (filePath): Promise<AuthorizedSourceFile> => {
         const metadata = await stat(filePath)
         if (!metadata.isFile()) throw new Error('FILE_NOT_FOUND')
-        if (metadata.size > MAX_FILE_SIZE_BYTES) throw new Error('FILE_TOO_LARGE')
+        if (metadata.size > this.getMaximumFileSize()) throw new Error('FILE_TOO_LARGE')
 
         const selectionToken = createToken()
         const extension = extname(filePath).toLowerCase()
@@ -134,6 +137,16 @@ export class FileAccessRegistry {
     }
     await this.assertWritableDirectory(directoryPath)
     return directoryPath
+  }
+
+  public async consumeDirectoryToken(directoryToken: string): Promise<string> {
+    const entry = this.directories.get(directoryToken)
+    this.directories.delete(directoryToken)
+    if (entry === undefined || entry.expiresAt < Date.now()) {
+      throw new Error('SAVE_DIRECTORY_INVALID')
+    }
+    await this.assertWritableDirectory(entry.value)
+    return entry.value
   }
 
   private async assertWritableDirectory(directoryPath: string): Promise<void> {

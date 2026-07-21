@@ -100,6 +100,7 @@ export const ipcInvokeRequestSchemas = {
   'connection:connect': connectRequestSchema,
   'connection:disconnect': noRequestSchema,
   'connection:respond-to-request': respondToConnectionRequestSchema,
+  'connection:list-recent-devices': noRequestSchema,
   'clipboard:read-text': noRequestSchema,
   'clipboard:write-text': z.object({ text: textSchema }).strict(),
   'transfer:select-files': selectFilesRequestSchema,

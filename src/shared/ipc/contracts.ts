@@ -10,6 +10,7 @@ import type {
   MessageId,
   OperationResult,
   RequestId,
+  RecentDeviceDto,
   RuntimeInfoDto,
   SelectedDirectoryDto,
   SelectedFileDto,
@@ -38,6 +39,7 @@ export interface IpcInvokeMap {
     { readonly requestId: RequestId; readonly decision: 'accept' | 'reject' },
     ConnectionStatusDto
   >
+  readonly 'connection:list-recent-devices': InvokeContract<undefined, readonly RecentDeviceDto[]>
   readonly 'clipboard:read-text': InvokeContract<undefined, string>
   readonly 'clipboard:write-text': InvokeContract<{ readonly text: string }, undefined>
   readonly 'transfer:select-files': InvokeContract<

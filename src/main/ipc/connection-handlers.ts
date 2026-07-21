@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 
 import type { ConnectionManager } from '../websocket'
+import type { RecentDevicesStore } from '../storage'
 import { registerIpcHandler } from './register-handler'
 
 type WindowProvider = () => BrowserWindow | null
@@ -8,6 +9,7 @@ type WindowProvider = () => BrowserWindow | null
 export const registerConnectionIpcHandlers = (
   getWindow: WindowProvider,
   connectionManager: ConnectionManager,
+  recentDevices: RecentDevicesStore,
 ): void => {
   registerIpcHandler('connection:get-status', getWindow, () => ({
     ok: true,
@@ -24,5 +26,9 @@ export const registerConnectionIpcHandlers = (
   registerIpcHandler('connection:respond-to-request', getWindow, ({ requestId, decision }) => ({
     ok: true,
     data: connectionManager.respondToRequest(requestId, decision),
+  }))
+  registerIpcHandler('connection:list-recent-devices', getWindow, () => ({
+    ok: true,
+    data: recentDevices.list(),
   }))
 }

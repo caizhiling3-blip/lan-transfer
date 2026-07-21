@@ -32,6 +32,7 @@ export interface LanTransferApi {
       requestId: RequestId,
       decision: 'accept' | 'reject',
     ): Promise<IpcInvokeResponse<'connection:respond-to-request'>>
+    listRecentDevices(): Promise<IpcInvokeResponse<'connection:list-recent-devices'>>
     onStateChanged(listener: EventListener<'connection:state-changed'>): Unsubscribe
     onIncomingRequest(listener: EventListener<'connection:incoming-request'>): Unsubscribe
   }

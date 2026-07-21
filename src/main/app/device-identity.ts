@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto'
-import { hostname } from 'node:os'
+import type { DeviceInfo, OperatingSystem, ServiceStatusDto } from '@shared/types'
 
-import { deviceIdSchema } from '@shared/types'
-import type { DeviceId, DeviceInfo, OperatingSystem, ServiceStatusDto } from '@shared/types'
+import type { SettingsStore } from '../storage'
 
 const getOperatingSystem = (): OperatingSystem => {
   if (process.platform === 'win32') return 'windows'
@@ -11,14 +9,14 @@ const getOperatingSystem = (): OperatingSystem => {
 }
 
 export class DeviceIdentity {
-  private readonly deviceId: DeviceId = deviceIdSchema.parse(randomUUID())
-  private readonly deviceName = hostname().trim().slice(0, 128) || 'LAN Transfer Device'
   private readonly operatingSystem = getOperatingSystem()
+
+  public constructor(private readonly settings: SettingsStore) {}
 
   public getDeviceInfo(serviceStatus: ServiceStatusDto): DeviceInfo {
     return {
-      deviceId: this.deviceId,
-      deviceName: this.deviceName,
+      deviceId: this.settings.getDeviceId(),
+      deviceName: this.settings.getSettings().deviceName,
       operatingSystem: this.operatingSystem,
       ipAddress: serviceStatus.ipAddresses[0] ?? '127.0.0.1',
       servicePort: serviceStatus.port,

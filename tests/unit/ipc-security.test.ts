@@ -144,4 +144,9 @@ describe('IPC request schemas', () => {
     expect(() => parseIpcInvokeRequest('settings:update', {})).toThrow()
     expect(() => parseIpcInvokeRequest('settings:update', { servicePort: 53_317 })).not.toThrow()
   })
+
+  it('does not accept parameters when listing recent devices', () => {
+    expect(() => parseIpcInvokeRequest('connection:list-recent-devices', undefined)).not.toThrow()
+    expect(() => parseIpcInvokeRequest('connection:list-recent-devices', {})).toThrow()
+  })
 })

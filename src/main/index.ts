@@ -1,14 +1,15 @@
+import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { app, BrowserWindow } from 'electron'
 
-import { DEFAULT_SERVICE_PORT } from '@shared/constants'
 import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
   FILE_OFFER_RECEIVED_EVENT_CHANNEL,
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
+  SETTINGS_CHANGED_EVENT_CHANNEL,
   TEXT_RECEIVED_EVENT_CHANNEL,
   TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
 } from '@shared/ipc'
@@ -21,29 +22,27 @@ import {
   registerFileTransferIpcHandlers,
   registerRuntimeIpcHandlers,
   registerServiceIpcHandlers,
+  registerSettingsIpcHandlers,
   registerTextIpcHandlers,
 } from './ipc'
 import { ServiceManager } from './server'
-import { SessionHistory } from './storage'
+import { HistoryStore, RecentDevicesStore, SessionHistory, SettingsStore } from './storage'
 import { ConnectionManager } from './websocket'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
-const serviceManager = new ServiceManager(DEFAULT_SERVICE_PORT)
-const deviceIdentity = new DeviceIdentity()
-const connectionManager = new ConnectionManager(() =>
-  deviceIdentity.getDeviceInfo(serviceManager.getStatus()),
-)
-const sessionHistory = new SessionHistory()
-const fileAccessRegistry = new FileAccessRegistry(() => app.getPath('downloads'))
-const fileTransferCoordinator = new FileTransferCoordinator(
-  connectionManager,
-  fileAccessRegistry,
-  sessionHistory,
-)
+let serviceManager: ServiceManager | null = null
+let connectionManager: ConnectionManager | null = null
+let fileTransferCoordinator: FileTransferCoordinator | null = null
 let unsubscribeFromService: (() => void) | null = null
-let connectionUnsubscribers: readonly (() => void)[] = []
+let applicationUnsubscribers: readonly (() => void)[] = []
 let isQuitting = false
+
+const sendToRenderer = (channel: string, payload: unknown): void => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload)
+  }
+}
 
 const openMainWindow = (): void => {
   mainWindow = createMainWindow({
@@ -58,43 +57,81 @@ const openMainWindow = (): void => {
     mainWindow = null
   })
   mainWindow.webContents.once('did-finish-load', () => {
-    if (mainWindow === null || mainWindow.isDestroyed()) return
+    if (fileTransferCoordinator === null) return
     for (const task of fileTransferCoordinator.getTasks()) {
-      mainWindow.webContents.send(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
+      sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }
     const pendingOffer = fileTransferCoordinator.getPendingOffer()
-    if (pendingOffer !== null) {
-      mainWindow.webContents.send(FILE_OFFER_RECEIVED_EVENT_CHANNEL, pendingOffer)
-    }
+    if (pendingOffer !== null) sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, pendingOffer)
   })
 }
 
 void app.whenReady().then(() => {
+  const settingsStore = new SettingsStore(
+    app.getPath('userData'),
+    hostname(),
+    app.getPath('downloads'),
+  )
+  const historyStore = new HistoryStore(app.getPath('userData'))
+  const recentDevices = new RecentDevicesStore(app.getPath('userData'))
+  const sessionHistory = new SessionHistory(
+    () => settingsStore.getSettings().historyLimit,
+    historyStore.load(),
+    (entries) => historyStore.save(entries),
+  )
+  const deviceIdentity = new DeviceIdentity(settingsStore)
+  const activeServiceManager = new ServiceManager(settingsStore.getSettings().servicePort)
+  const activeConnectionManager = new ConnectionManager(() =>
+    deviceIdentity.getDeviceInfo(activeServiceManager.getStatus()),
+  )
+  const fileAccessRegistry = new FileAccessRegistry(
+    () => settingsStore.getReceiveDirectory(),
+    () => settingsStore.getSettings().maxFileSizeBytes,
+  )
+  const activeFileTransferCoordinator = new FileTransferCoordinator(
+    activeConnectionManager,
+    fileAccessRegistry,
+    sessionHistory,
+    () => settingsStore.getSettings().maxFileSizeBytes,
+  )
+  serviceManager = activeServiceManager
+  connectionManager = activeConnectionManager
+  fileTransferCoordinator = activeFileTransferCoordinator
+
   registerFoundationIpcHandlers(() => mainWindow)
-  registerServiceIpcHandlers(() => mainWindow, serviceManager)
-  registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, serviceManager)
-  registerConnectionIpcHandlers(() => mainWindow, connectionManager)
-  registerTextIpcHandlers(() => mainWindow, connectionManager, sessionHistory)
-  registerFileTransferIpcHandlers(() => mainWindow, fileAccessRegistry, fileTransferCoordinator)
+  registerServiceIpcHandlers(() => mainWindow, activeServiceManager, settingsStore)
+  registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, activeServiceManager)
+  registerConnectionIpcHandlers(() => mainWindow, activeConnectionManager, recentDevices)
+  registerTextIpcHandlers(() => mainWindow, activeConnectionManager, sessionHistory)
+  registerFileTransferIpcHandlers(
+    () => mainWindow,
+    fileAccessRegistry,
+    activeFileTransferCoordinator,
+  )
+  registerSettingsIpcHandlers(
+    () => mainWindow,
+    settingsStore,
+    activeServiceManager,
+    fileAccessRegistry,
+    sessionHistory,
+  )
   openMainWindow()
 
-  unsubscribeFromService = serviceManager.subscribe((status) => {
-    if (mainWindow !== null && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(SERVICE_STATUS_CHANGED_EVENT_CHANNEL, status)
-    }
+  unsubscribeFromService = activeServiceManager.subscribe((status) => {
+    sendToRenderer(SERVICE_STATUS_CHANGED_EVENT_CHANNEL, status)
   })
-  connectionUnsubscribers = [
-    connectionManager.subscribeStatus((status) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(CONNECTION_STATE_CHANGED_EVENT_CHANNEL, status)
-      }
+  applicationUnsubscribers = [
+    settingsStore.subscribe((settings) => {
+      sendToRenderer(SETTINGS_CHANGED_EVENT_CHANNEL, settings)
     }),
-    connectionManager.subscribeRequests((request) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL, request)
-      }
+    activeConnectionManager.subscribeStatus((status) => {
+      if (status.state === 'connected' && status.peer !== undefined) recentDevices.add(status.peer)
+      sendToRenderer(CONNECTION_STATE_CHANGED_EVENT_CHANNEL, status)
     }),
-    connectionManager.subscribeText((message) => {
+    activeConnectionManager.subscribeRequests((request) => {
+      sendToRenderer(CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL, request)
+    }),
+    activeConnectionManager.subscribeText((message) => {
       sessionHistory.add({
         direction: 'receive',
         kind: message.contentType,
@@ -103,61 +140,52 @@ void app.whenReady().then(() => {
         textPreview: message.content,
         createdAt: message.receivedAt,
       })
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(TEXT_RECEIVED_EVENT_CHANNEL, message)
-      }
+      sendToRenderer(TEXT_RECEIVED_EVENT_CHANNEL, message)
     }),
-    fileTransferCoordinator.subscribeTasks((task) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
-      }
+    activeFileTransferCoordinator.subscribeTasks((task) => {
+      sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
-    fileTransferCoordinator.subscribeOffers((offer) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
-      }
+    activeFileTransferCoordinator.subscribeOffers((offer) => {
+      sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
     }),
   ]
-  serviceManager.setConnectionHandler((webSocket, request) => {
-    connectionManager.acceptIncoming(webSocket, request)
+  activeServiceManager.setConnectionHandler((webSocket, request) => {
+    activeConnectionManager.acceptIncoming(webSocket, request)
   })
-  serviceManager.setRequestHandler((request, response) =>
-    fileTransferCoordinator.handleHttpRequest(request, response),
+  activeServiceManager.setRequestHandler((request, response) =>
+    activeFileTransferCoordinator.handleHttpRequest(request, response),
   )
-  void serviceManager.start()
+  void activeServiceManager.start()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      openMainWindow()
-    }
+    if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
   })
 })
 
 app.on('before-quit', (event) => {
+  if (serviceManager === null || fileTransferCoordinator === null || connectionManager === null) {
+    return
+  }
   if (serviceManager.getStatus().state === 'stopped') {
     unsubscribeFromService?.()
-    for (const unsubscribe of connectionUnsubscribers) unsubscribe()
+    for (const unsubscribe of applicationUnsubscribers) unsubscribe()
     return
   }
-  if (isQuitting) {
-    return
-  }
+  if (isQuitting) return
 
   event.preventDefault()
   isQuitting = true
   connectionManager.disconnect('app_shutdown')
   void fileTransferCoordinator
     .shutdown()
-    .then(() => serviceManager.stop())
+    .then(() => serviceManager?.stop())
     .finally(() => {
       unsubscribeFromService?.()
-      for (const unsubscribe of connectionUnsubscribers) unsubscribe()
+      for (const unsubscribe of applicationUnsubscribers) unsubscribe()
       app.quit()
     })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })

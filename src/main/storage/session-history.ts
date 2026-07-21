@@ -1,19 +1,33 @@
 import { randomUUID } from 'node:crypto'
 
-import { DEFAULT_HISTORY_LIMIT } from '@shared/constants'
+import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_TEXT_PREVIEW_LENGTH } from '@shared/constants'
 import type { HistoryEntryDto, HistoryFilterDto } from '@shared/types'
 
 export class SessionHistory {
   private entries: HistoryEntryDto[] = []
 
-  public constructor(private readonly maximumEntries = DEFAULT_HISTORY_LIMIT) {}
+  public constructor(
+    private readonly maximumEntries: number | (() => number) = DEFAULT_HISTORY_LIMIT,
+    initialEntries: readonly HistoryEntryDto[] = [],
+    private readonly persist: (entries: readonly HistoryEntryDto[]) => void = () => undefined,
+  ) {
+    this.entries = [...initialEntries]
+    const initialLength = this.entries.length
+    this.enforceLimit()
+    if (this.entries.length !== initialLength) this.persist(this.entries)
+  }
 
   public add(entry: Omit<HistoryEntryDto, 'id'>): HistoryEntryDto {
-    const stored = { ...entry, id: randomUUID() }
-    this.entries.unshift(stored)
-    if (this.entries.length > this.maximumEntries) {
-      this.entries.length = this.maximumEntries
+    const stored = {
+      ...entry,
+      id: randomUUID(),
+      ...(entry.textPreview === undefined
+        ? {}
+        : { textPreview: entry.textPreview.slice(0, MAX_HISTORY_TEXT_PREVIEW_LENGTH) }),
     }
+    this.entries.unshift(stored)
+    this.enforceLimit()
+    this.persist(this.entries)
     return stored
   }
 
@@ -29,5 +43,17 @@ export class SessionHistory {
 
   public clear(): void {
     this.entries = []
+    this.persist(this.entries)
+  }
+
+  public trimToLimit(): void {
+    this.enforceLimit()
+    this.persist(this.entries)
+  }
+
+  private enforceLimit(): void {
+    const limit =
+      typeof this.maximumEntries === 'function' ? this.maximumEntries() : this.maximumEntries
+    if (this.entries.length > limit) this.entries.length = limit
   }
 }

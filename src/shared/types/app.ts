@@ -72,3 +72,8 @@ export interface HistoryFilterDto {
   readonly offset: number
   readonly limit: number
 }
+
+export interface RecentDeviceDto {
+  readonly device: DeviceInfo
+  readonly lastConnectedAt: number
+}
