@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 
+import { MAX_FILES_PER_TRANSFER } from '@shared/constants'
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
 import type { FileOfferReceivedDto } from '@shared/ipc'
-import type { TransferTaskDto } from '@shared/types'
+import type { SelectedFileDto, TransferTaskDto } from '@shared/types'
 
 const upsertTask = (tasks: TransferTaskDto[], task: TransferTaskDto): TransferTaskDto[] => {
   const index = tasks.findIndex((candidate) => candidate.transferId === task.transferId)
@@ -13,8 +14,10 @@ const upsertTask = (tasks: TransferTaskDto[], task: TransferTaskDto): TransferTa
 export const useFileTransferStore = defineStore('fileTransfer', {
   state: () => ({
     tasks: [] as TransferTaskDto[],
+    pendingFiles: [] as SelectedFileDto[],
     incomingOffer: null as FileOfferReceivedDto | null,
     selecting: false,
+    offering: false,
     responding: false,
     errorMessage: '',
     unsubscribers: [] as (() => void)[],
@@ -37,40 +40,55 @@ export const useFileTransferStore = defineStore('fileTransfer', {
         }),
       ]
     },
-    async selectAndOffer(multiple: boolean): Promise<void> {
+    async selectFiles(): Promise<void> {
       this.selecting = true
       this.errorMessage = ''
-      const selectionResult = await window.lanTransfer.transfer.selectFiles(multiple)
+      const selectionResult = await window.lanTransfer.transfer.selectFiles(true)
+      this.selecting = false
       if (!selectionResult.ok) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN[selectionResult.error.code]
-        this.selecting = false
         return
       }
-      if (selectionResult.data.length === 0) {
-        this.selecting = false
-        return
-      }
-      await this.offerSelections(selectionResult.data.map(({ selectionToken }) => selectionToken))
+      this.addPendingFiles(selectionResult.data)
     },
     async registerDroppedFiles(files: readonly File[]): Promise<void> {
       this.selecting = true
       this.errorMessage = ''
       const selectionResult = await window.lanTransfer.transfer.registerDroppedFiles(files)
+      this.selecting = false
       if (!selectionResult.ok) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN[selectionResult.error.code]
-        this.selecting = false
         return
       }
-      await this.offerSelections(selectionResult.data.map(({ selectionToken }) => selectionToken))
+      this.addPendingFiles(selectionResult.data)
     },
-    async offerSelections(selectionTokens: readonly string[]): Promise<void> {
+    addPendingFiles(selections: readonly SelectedFileDto[]): void {
+      if (this.pendingFiles.length + selections.length > MAX_FILES_PER_TRANSFER) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
+        return
+      }
+      this.pendingFiles = [...this.pendingFiles, ...selections]
+    },
+    removePendingFile(fileId: SelectedFileDto['fileId']): void {
+      this.pendingFiles = this.pendingFiles.filter((file) => file.fileId !== fileId)
+    },
+    clearPendingFiles(): void {
+      this.pendingFiles = []
+    },
+    async sendPendingFiles(): Promise<boolean> {
+      if (this.pendingFiles.length === 0 || this.offering) return false
+      this.offering = true
+      this.errorMessage = ''
+      const selectionTokens = this.pendingFiles.map(({ selectionToken }) => selectionToken)
       const offerResult = await window.lanTransfer.transfer.offerFiles(selectionTokens)
-      this.selecting = false
+      this.offering = false
       if (!offerResult.ok) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN[offerResult.error.code]
-        return
+        return false
       }
       this.tasks = upsertTask(this.tasks, offerResult.data)
+      this.pendingFiles = []
+      return true
     },
     async respond(decision: 'accept' | 'reject', chooseDirectory = false): Promise<void> {
       const offer = this.incomingOffer

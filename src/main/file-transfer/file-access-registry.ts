@@ -6,11 +6,12 @@ import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
 
 import {
+  DIRECTORY_SELECTION_TOKEN_TTL_MS,
+  FILE_SELECTION_TOKEN_TTL_MS,
   MAX_AUTHORIZED_DIRECTORIES,
   MAX_AUTHORIZED_FILE_SELECTIONS,
   MAX_FILE_SIZE_BYTES,
   MAX_FILES_PER_TRANSFER,
-  UPLOAD_TOKEN_TTL_MS,
 } from '@shared/constants'
 import { fileIdSchema } from '@shared/types'
 import type { SelectedDirectoryDto, SelectedFileDto } from '@shared/types'
@@ -114,7 +115,7 @@ export class FileAccessRegistry {
         }
       }),
     )
-    const expiresAt = Date.now() + UPLOAD_TOKEN_TTL_MS
+    const expiresAt = Date.now() + FILE_SELECTION_TOKEN_TTL_MS
     for (const authorizedFile of authorizedFiles) {
       this.sourceFiles.set(authorizedFile.selection.selectionToken, {
         value: authorizedFile,
@@ -145,7 +146,7 @@ export class FileAccessRegistry {
     const directoryToken = createToken()
     this.directories.set(directoryToken, {
       value: safeDirectoryPath,
-      expiresAt: Date.now() + UPLOAD_TOKEN_TTL_MS,
+      expiresAt: Date.now() + DIRECTORY_SELECTION_TOKEN_TTL_MS,
     })
     this.enforceLimit(this.directories, MAX_AUTHORIZED_DIRECTORIES)
     return { directoryToken, displayPath: safeDirectoryPath }

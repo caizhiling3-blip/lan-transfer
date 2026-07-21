@@ -2,18 +2,10 @@ import { defineStore } from 'pinia'
 
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
 import type { TextReceivedDto } from '@shared/ipc'
-import type { DeviceInfo, HistoryEntryDto, TransferDirection } from '@shared/types'
+import type { HistoryEntryDto } from '@shared/types'
 import { classifyTextContent } from '@shared/utils'
 
-export interface TextMessageItem {
-  readonly id: string
-  readonly direction: TransferDirection
-  readonly peer: DeviceInfo
-  readonly content: string
-  readonly contentType: 'text' | 'link'
-  readonly createdAt: number
-  readonly status: 'completed' | 'failed'
-}
+import type { TextMessageItem } from '../types/transfer-activity'
 
 const isTextHistoryEntry = (
   entry: HistoryEntryDto,
