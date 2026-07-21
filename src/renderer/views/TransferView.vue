@@ -58,12 +58,10 @@ const openLink = async (url: string): Promise<void> => {
 const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleString()
 
 onMounted(() => {
-  void connectionStore.initialize()
   void textTransferStore.initialize()
 })
 
 onBeforeUnmount(() => {
-  connectionStore.dispose()
   textTransferStore.dispose()
 })
 </script>

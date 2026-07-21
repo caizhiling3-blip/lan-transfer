@@ -57,6 +57,18 @@ describe('LocalServer', () => {
       invalidWebSocket.once('error', reject)
     })
     expect(invalidStatus).toBe(404)
+
+    const forbiddenOriginStatus = await new Promise<number>((resolve, reject) => {
+      const browserLikeWebSocket = new WebSocket(`ws://127.0.0.1:${String(port)}/v1/ws`, {
+        origin: 'https://untrusted.example',
+      })
+      browserLikeWebSocket.once('unexpected-response', (_request, response) => {
+        response.resume()
+        resolve(response.statusCode ?? 0)
+      })
+      browserLikeWebSocket.once('error', reject)
+    })
+    expect(forbiddenOriginStatus).toBe(403)
   })
 
   it('releases the port when stopped', async () => {
@@ -122,6 +134,33 @@ describe('ServiceManager', () => {
     expect((await manager.stop()).state).toBe('stopped')
   })
 
+  it('serializes overlapping lifecycle operations', async () => {
+    let activeStarts = 0
+    let maximumActiveStarts = 0
+    let stopCalls = 0
+    const manager = new ServiceManager(53_317, () => ({
+      start: async (port) => {
+        activeStarts += 1
+        maximumActiveStarts = Math.max(maximumActiveStarts, activeStarts)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        activeStarts -= 1
+        return port
+      },
+      stop: async () => {
+        stopCalls += 1
+      },
+    }))
+
+    const initialStart = manager.start()
+    const restart = manager.restart(54_000)
+    await Promise.all([initialStart, restart])
+
+    expect(maximumActiveStarts).toBe(1)
+    expect(stopCalls).toBe(1)
+    expect(manager.getStatus()).toMatchObject({ state: 'running', port: 54_000 })
+    await manager.stop()
+  })
+
   it('moves to an error state after a runtime server failure', async () => {
     let runtimeErrorHandler: ((error: Error) => void) | undefined
     const manager = new ServiceManager(
@@ -139,11 +178,13 @@ describe('ServiceManager', () => {
     await manager.start()
     runtimeErrorHandler?.(Object.assign(new Error('network down'), { code: 'ENETDOWN' }))
 
-    expect(manager.getStatus()).toEqual({
-      state: 'error',
-      ipAddresses: [],
-      port: 53_317,
-      errorCode: 'NETWORK_UNREACHABLE',
-    })
+    await expect
+      .poll(() => manager.getStatus())
+      .toEqual({
+        state: 'error',
+        ipAddresses: [],
+        port: 53_317,
+        errorCode: 'NETWORK_UNREACHABLE',
+      })
   })
 })

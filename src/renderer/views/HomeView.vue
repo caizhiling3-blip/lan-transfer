@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { DEFAULT_SERVICE_PORT } from '@shared/constants'
 import type { ServiceState } from '@shared/types'
@@ -30,31 +29,8 @@ const statusPresentations: Readonly<
 const statusPresentation = computed(() => statusPresentations[serviceStore.status.state])
 const isConnected = computed(() => connectionStore.status.state === 'connected')
 
-watch(
-  () => connectionStore.incomingRequest,
-  (request) => {
-    if (request === null) return
-    const description =
-      request.peer.deviceName +
-      '（' +
-      request.peer.ipAddress +
-      ':' +
-      String(request.peer.servicePort) +
-      '）请求连接'
-    void ElMessageBox.confirm(description, '设备连接请求', {
-      confirmButtonText: '允许',
-      cancelButtonText: '拒绝',
-      type: 'warning',
-      distinguishCancelAndClose: true,
-    })
-      .then(() => connectionStore.respondToIncoming('accept'))
-      .catch(() => connectionStore.respondToIncoming('reject'))
-  },
-)
-
 onMounted(() => {
   void serviceStore.initialize()
-  void connectionStore.initialize()
   void window.lanTransfer.app.getRuntimeInfo().then((result) => {
     if (result.ok) {
       localDeviceName.value = result.data.localDevice.deviceName
@@ -65,7 +41,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   serviceStore.dispose()
-  connectionStore.dispose()
 })
 </script>
 

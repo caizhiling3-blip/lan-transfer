@@ -50,6 +50,7 @@ const validMessages: readonly Record<string, unknown>[] = [
     payload: {
       protocolVersion: 1,
       device,
+      connectionNonce: 'n'.repeat(32),
       connectionId: CONNECTION_ID,
       heartbeatIntervalMs: 10_000,
       heartbeatTimeoutMs: 30_000,
@@ -69,6 +70,11 @@ const validMessages: readonly Record<string, unknown>[] = [
     type: 'text:send',
     ...baseMessage,
     payload: { content: 'https://example.com', contentType: 'link' },
+  },
+  {
+    type: 'text:ack',
+    ...baseMessage,
+    payload: { messageId: MESSAGE_ID },
   },
   {
     type: 'file:offer',
@@ -173,6 +179,11 @@ describe('file messages', () => {
     createOffer([{ ...file, fileId: 'invalid' }]),
     createOffer([{ ...file, mimeType: 'invalid' }]),
     createOffer([{ ...file, displayName: '../unsafe.txt' }]),
+    createOffer([{ ...file, displayName: 'report:final.txt' }]),
+    createOffer([{ ...file, displayName: 'CON.txt' }]),
+    createOffer([{ ...file, displayName: 'trailing.' }]),
+    createOffer([{ ...file, displayName: 'trailing ' }]),
+    createOffer([{ ...file, displayName: '你'.repeat(86) }]),
   ])('rejects invalid file offers', (message) => {
     expect(fileOfferMessageSchema.safeParse(message).success).toBe(false)
   })

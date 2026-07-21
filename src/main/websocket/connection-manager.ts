@@ -17,6 +17,7 @@ import {
   deviceHelloMessageSchema,
   deviceWelcomeMessageSchema,
   parseProtocolMessage,
+  textAcknowledgementMessageSchema,
   textSendMessageSchema,
 } from '@shared/protocols'
 import {
@@ -30,10 +31,13 @@ import type {
   ConnectionStatusDto,
   DeviceInfo,
   IncomingConnectionRequestDto,
+  MessageId,
   RequestId,
   TransferTaskDto,
 } from '@shared/types'
 import type { TextReceivedDto } from '@shared/ipc'
+
+import { isConnectedProtocolMessage, MessageDeduplicator } from './protocol-state'
 
 type StatusListener = (status: ConnectionStatusDto) => void
 type RequestListener = (request: IncomingConnectionRequestDto) => void
@@ -43,7 +47,12 @@ interface PendingConnection {
   readonly requestId: RequestId
   readonly socket: WebSocket
   readonly peer: DeviceInfo
+  readonly connectionNonce: string
   readonly timeout: ReturnType<typeof setTimeout>
+}
+
+interface PendingTextAcknowledgement {
+  readonly complete: (succeeded: boolean) => void
 }
 
 const createMessageId = () => messageIdSchema.parse(randomUUID())
@@ -80,6 +89,8 @@ export class ConnectionManager {
   private peer: DeviceInfo | null = null
   private heartbeatSequence = 0
   private lastMessageAt = 0
+  private readonly pendingTextAcknowledgements = new Map<MessageId, PendingTextAcknowledgement>()
+  private readonly messageDeduplicator = new MessageDeduplicator()
 
   public constructor(private readonly getLocalDevice: () => DeviceInfo) {}
 
@@ -112,15 +123,28 @@ export class ConnectionManager {
 
     const localDevice = this.getLocalDevice()
     const now = Date.now()
+    const messageId = createMessageId()
     const message = textSendMessageSchema.parse({
       type: 'text:send',
-      messageId: createMessageId(),
+      messageId,
       senderId: localDevice.deviceId,
       timestamp: now,
       payload: { content, contentType },
     })
     const succeeded = await new Promise<boolean>((resolve) => {
-      socket.send(JSON.stringify(message), (error) => resolve(!error))
+      let settled = false
+      const complete = (delivered: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        this.pendingTextAcknowledgements.delete(messageId)
+        resolve(delivered)
+      }
+      const timeout = setTimeout(() => complete(false), CONNECTION_TIMEOUT_MS)
+      this.pendingTextAcknowledgements.set(messageId, { complete })
+      socket.send(JSON.stringify(message), (error) => {
+        if (error) complete(false)
+      })
     })
 
     return {
@@ -157,6 +181,12 @@ export class ConnectionManager {
       try {
         const message = parseProtocolMessage(JSON.parse(data.toString()))
         if (message.type !== 'device:hello') throw new Error('Expected device hello')
+        if (message.senderId !== message.payload.device.deviceId) {
+          throw new Error('Device hello sender mismatch')
+        }
+        if (this.messageDeduplicator.isDuplicate(message.messageId)) {
+          throw new Error('Duplicate device hello')
+        }
         clearTimeout(timeout)
         this.handshakeTimer = null
         const peer = {
@@ -169,9 +199,15 @@ export class ConnectionManager {
           this.pendingConnection = null
           this.reset('CONNECTION_TIMEOUT')
         }, CONNECTION_TIMEOUT_MS)
-        this.pendingConnection = { requestId, socket, peer, timeout: approvalTimeout }
-        this.setStatus({ state: 'awaitingApproval', peer })
         const incomingRequest = { requestId, peer, receivedAt: Date.now() }
+        this.pendingConnection = {
+          requestId,
+          socket,
+          peer,
+          connectionNonce: message.payload.connectionNonce,
+          timeout: approvalTimeout,
+        }
+        this.setStatus({ state: 'awaitingApproval', peer, pendingRequest: incomingRequest })
         for (const listener of this.requestListeners) listener(incomingRequest)
       } catch {
         socket.close(1007, 'Invalid protocol message')
@@ -195,6 +231,7 @@ export class ConnectionManager {
       perMessageDeflate: false,
     })
     this.socket = socket
+    const connectionNonce = randomBytes(24).toString('base64url')
 
     return new Promise((resolve) => {
       let settled = false
@@ -221,7 +258,7 @@ export class ConnectionManager {
           payload: {
             protocolVersion: PROTOCOL_VERSION,
             device: localDevice,
-            connectionNonce: randomBytes(24).toString('base64url'),
+            connectionNonce,
           },
         })
         socket.send(JSON.stringify(hello))
@@ -231,6 +268,15 @@ export class ConnectionManager {
         try {
           const message = parseProtocolMessage(JSON.parse(data.toString()))
           if (message.type !== 'device:welcome') throw new Error('Expected device welcome')
+          if (
+            message.senderId !== message.payload.device.deviceId ||
+            message.payload.connectionNonce !== connectionNonce
+          ) {
+            throw new Error('Device welcome does not match the handshake')
+          }
+          if (this.messageDeduplicator.isDuplicate(message.messageId)) {
+            throw new Error('Duplicate device welcome')
+          }
           clearTimeout(timeout)
           this.handshakeTimer = null
           this.activate(
@@ -286,6 +332,7 @@ export class ConnectionManager {
       payload: {
         protocolVersion: PROTOCOL_VERSION,
         device: localDevice,
+        connectionNonce: pending.connectionNonce,
         connectionId,
         heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
         heartbeatTimeoutMs: HEARTBEAT_TIMEOUT_MS,
@@ -341,10 +388,18 @@ export class ConnectionManager {
       if (this.peer === null || message.senderId !== this.peer.deviceId) {
         throw new Error('Unexpected message sender')
       }
+      if (!isConnectedProtocolMessage(message)) {
+        throw new Error('Message type is not allowed while connected')
+      }
+      if (this.messageDeduplicator.isDuplicate(message.messageId)) {
+        if (message.type === 'text:send') this.sendTextAcknowledgement(message.messageId)
+        return
+      }
       this.lastMessageAt = Date.now()
       if (message.type === 'device:heartbeat') {
         if (message.payload.connectionId !== this.connectionId) throw new Error('Wrong connection')
       } else if (message.type === 'device:disconnect') {
+        if (message.payload.connectionId !== this.connectionId) throw new Error('Wrong connection')
         this.socket?.close(1000, 'Peer disconnected')
         this.reset()
       } else if (message.type === 'text:send') {
@@ -356,6 +411,9 @@ export class ConnectionManager {
           receivedAt: Date.now(),
         }
         for (const listener of this.textListeners) listener(received)
+        this.sendTextAcknowledgement(message.messageId)
+      } else if (message.type === 'text:ack') {
+        this.pendingTextAcknowledgements.get(message.payload.messageId)?.complete(true)
       }
     } catch {
       this.socket?.close(1007, 'Invalid protocol message')
@@ -385,10 +443,30 @@ export class ConnectionManager {
     )
   }
 
+  private sendTextAcknowledgement(messageId: MessageId): void {
+    if (this.socket === null || this.socket.readyState !== WebSocket.OPEN) return
+    const localDevice = this.getLocalDevice()
+    this.socket.send(
+      JSON.stringify(
+        textAcknowledgementMessageSchema.parse({
+          type: 'text:ack',
+          messageId: createMessageId(),
+          senderId: localDevice.deviceId,
+          timestamp: Date.now(),
+          payload: { messageId },
+        }),
+      ),
+    )
+  }
+
   private reset(errorCode?: ErrorCode): void {
     if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer)
     if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer)
     if (this.pendingConnection !== null) clearTimeout(this.pendingConnection.timeout)
+    for (const acknowledgement of this.pendingTextAcknowledgements.values()) {
+      acknowledgement.complete(false)
+    }
+    this.pendingTextAcknowledgements.clear()
     this.handshakeTimer = null
     this.heartbeatTimer = null
     this.pendingConnection = null

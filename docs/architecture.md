@@ -16,13 +16,15 @@ HTTP 与 WebSocket 服务、状态机及安全边界将在对应阶段补充为�
 `src/shared` 是跨进程类型、协议、错误码和常量的唯一来源，并且不依赖 Electron、Node.js 或 Vue。
 
 - 网络消息使用严格 Zod schema 做无状态结构校验，TypeScript 类型由 schema 推导。
-- 时间偏差、消息去重、消息顺序、连接状态和传输状态属于有状态校验，由后续主进程协调器负责。
+- 主进程 `protocol-state` 负责有界 messageId 去重和当前连接状态的消息类型白名单；时间偏差、文件消息顺序和传输状态由后续文件协调器继续补充。
 - IPC 使用固定 channel 列表及 request/response/event 映射；Preload 和主进程不得重复声明契约。
 - 网络协议内部的一次性上传 token 不进入渲染进程 DTO。
 
 ## Electron 安全边界
 
 主窗口固定启用 `contextIsolation`、sandbox 和 `webSecurity`，关闭 Node integration、不安全混合内容及 webview。renderer 发起的页面导航、新窗口和权限请求默认拒绝，外部 HTTP/HTTPS 链接只能通过经过校验的主进程 handler 打开。
+
+本地 WebSocket 服务拒绝带有浏览器 `Origin` 的 Upgrade 请求，避免任意网页跨站调用固定本地端口；桌面端设备连接使用不携带 `Origin` 的主进程 WebSocket 客户端。
 
 Preload 暴露冻结的 `window.lanTransfer` 分域 API，不暴露 `ipcRenderer`、通用 `send`、通用 `invoke` 或 Electron event。事件订阅只传 DTO，并返回明确的取消订阅函数。
 
@@ -45,6 +47,7 @@ IPC handler 必须同时满足：
 - `/v1/ws` Upgrade 交给 ConnectionManager 完成设备握手；未安装连接处理器时使用 1013 关闭；
 - `ServiceManager` 维护 stopped、starting、running、error 状态，端口占用映射为 `PORT_IN_USE`；
 - 启动失败和监听后的运行时错误都会转成状态事件，不作为未处理异常退出应用；
+- start、stop 和 restart 通过同一生命周期队列串行执行，启动中的退出或重复重启不会遗留 listener；
 - 本机地址来自所有非 internal IPv4 网卡，不依赖 Windows 或 macOS 的固定网卡名称。
 
 应用启动后自动启动服务；退出前关闭 WebSocket 客户端和 HTTP listener。阶段 5 的端口重启只影响当前运行实例，持久化设置留到阶段 10。
@@ -62,11 +65,17 @@ IPC handler 必须同时满足：
 
 连接、审批和握手分别有 10 秒超时。非法 JSON、错误消息类型或 connectionId 会关闭 socket。第二个入站 socket 使用 1013 拒绝，不替换当前连接。
 
+hello 的 envelope senderId 必须与 deviceId 一致，welcome 必须回显本次 hello 的 connection nonce，避免把不属于当前握手的响应激活为连接。待审批请求同时保存在连接状态快照中；renderer 在应用根层订阅连接状态，因此页面切换或窗口重建后仍能恢复审批。
+
+握手和连接态入站消息使用 10 分钟、最多 2000 条的 messageId 窗口去重。当前阶段只允许 heartbeat、disconnect、text:send 和 text:ack 出现在已连接状态；提前到达的文件消息按协议错误关闭，阶段 8 接入文件协调器时再扩展白名单。重复文字不会再次投影到历史，但会重发 ACK，允许发送方安全重试确认。
+
 本机设备 ID 使用安全随机 UUID，并在单次应用进程内稳定；阶段 10 将其写入本地存储以实现跨重启稳定。主机名作为阶段 6 默认设备名称，设置页持久化名称同样留到阶段 10。
 
 ## 文字传输
 
-`ConnectionManager` 是文字网络状态的事实来源。只有已完成握手的活动 socket 可以发送或接收 `text:send`；收到消息时还会核对 envelope 的 senderId 与当前对端设备 ID，避免连接内身份替换。主进程把接收事件和发送结果转换为只读 IPC DTO，renderer 不接触 WebSocket。
+`ConnectionManager` 是文字网络状态的事实来源。只有已完成握手的活动 socket 可以发送或接收 `text:send`；收到消息时还会核对 envelope 的 senderId 与当前对端设备 ID，避免连接内身份替换。接收方把文字投影到本地后返回 `text:ack`，发送方只有收到对应 messageId 的确认才把任务标记为 completed，连接关闭或确认超时则标记为 failed。主进程把接收事件和发送结果转换为只读 IPC DTO，renderer 不接触 WebSocket。
+
+文件协议中的 displayName 必须是 Windows 和 macOS 都可安全表示的单个路径段，拒绝 Windows 保留名、非法字符、尾随点/空格以及超过 255 UTF-8 字节的名称。阶段 8 落盘时仍需独立处理目录内重名，不能直接把远端名称拼接为未校验路径。
 
 阶段 7 使用有上限的 `SessionHistory` 保存当前应用进程内的文字摘要，并通过既有 history IPC 提供最近 100 条记录给传输页。应用重启后这些记录会消失；设备 ID、设置、最近设备和历史的可靠持久化仍属于阶段 10，不提前引入 electron-store。
 

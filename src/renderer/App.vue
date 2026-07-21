@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { useConnectionStore } from './stores/connection'
 import HomeView from './views/HomeView.vue'
 import TransferView from './views/TransferView.vue'
 
 type PageKey = 'home' | 'transfer' | 'history' | 'settings'
 
 const activePage = ref<PageKey>('home')
+const connectionStore = useConnectionStore()
+const activeApprovalRequestId = ref<string | null>(null)
 
 const pageTitles: Readonly<Record<PageKey, string>> = {
   home: '首页',
@@ -16,6 +20,44 @@ const pageTitles: Readonly<Record<PageKey, string>> = {
 }
 
 const currentTitle = computed(() => pageTitles[activePage.value])
+
+watch(
+  () => connectionStore.incomingRequest,
+  (request) => {
+    if (request === null) {
+      if (activeApprovalRequestId.value !== null) {
+        ElMessageBox.close()
+        activeApprovalRequestId.value = null
+      }
+      return
+    }
+    if (activeApprovalRequestId.value === request.requestId) return
+    if (activeApprovalRequestId.value !== null) ElMessageBox.close()
+    activeApprovalRequestId.value = request.requestId
+    const description = `${request.peer.deviceName}（${request.peer.ipAddress}:${String(request.peer.servicePort)}）请求连接`
+    void ElMessageBox.confirm(description, '设备连接请求', {
+      confirmButtonText: '允许',
+      cancelButtonText: '拒绝',
+      type: 'warning',
+      distinguishCancelAndClose: true,
+    })
+      .then(() => connectionStore.respondToIncoming(request.requestId, 'accept'))
+      .catch(() => connectionStore.respondToIncoming(request.requestId, 'reject'))
+      .finally(() => {
+        if (activeApprovalRequestId.value === request.requestId) {
+          activeApprovalRequestId.value = null
+        }
+      })
+  },
+)
+
+onMounted(() => {
+  void connectionStore.initialize()
+})
+
+onBeforeUnmount(() => {
+  connectionStore.dispose()
+})
 </script>
 
 <template>

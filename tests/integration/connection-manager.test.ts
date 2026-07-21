@@ -1,9 +1,11 @@
 import WebSocket from 'ws'
+import type { RawData } from 'ws'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { LocalServer } from '../../src/main/server/local-server'
 import { ConnectionManager } from '../../src/main/websocket/connection-manager'
 import type { TextReceivedDto } from '@shared/ipc'
+import { parseProtocolMessage } from '@shared/protocols'
 import { deviceIdSchema } from '@shared/types'
 import type { DeviceInfo, IncomingConnectionRequestDto } from '@shared/types'
 
@@ -65,6 +67,7 @@ describe('ConnectionManager', () => {
     expect(receiver.getStatus()).toMatchObject({
       state: 'awaitingApproval',
       peer: { deviceName: 'Sender' },
+      pendingRequest: { requestId: incomingRequest.requestId, peer: { deviceName: 'Sender' } },
     })
     receiver.respondToRequest(incomingRequest.requestId, 'accept')
 
@@ -151,6 +154,78 @@ describe('ConnectionManager', () => {
     })
   })
 
+  it('does not project a duplicate text message but acknowledges it again', async () => {
+    const { receiver, serverPort } = await createPair()
+    const requestPromise = waitForRequest(receiver)
+    const socket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve)
+      socket.once('error', reject)
+    })
+
+    const rawDevice = createDevice('66666666-6666-4666-8666-666666666666', 'Raw sender', 54_000)
+    socket.send(
+      JSON.stringify({
+        type: 'device:hello',
+        messageId: '77777777-7777-4777-8777-777777777777',
+        senderId: rawDevice.deviceId,
+        timestamp: Date.now(),
+        payload: { protocolVersion: 1, device: rawDevice, connectionNonce: 'n'.repeat(32) },
+      }),
+    )
+    const request = await requestPromise
+    const welcomePromise = new Promise<void>((resolve, reject) => {
+      const handleMessage = (data: RawData): void => {
+        const message = parseProtocolMessage(JSON.parse(data.toString()))
+        if (message.type !== 'device:welcome') return
+        socket.off('message', handleMessage)
+        resolve()
+      }
+      socket.on('message', handleMessage)
+      socket.once('error', reject)
+    })
+    receiver.respondToRequest(request.requestId, 'accept')
+    await welcomePromise
+
+    let receivedCount = 0
+    const unsubscribe = receiver.subscribeText(() => {
+      receivedCount += 1
+    })
+    const acknowledgementPromise = new Promise<void>((resolve, reject) => {
+      let acknowledgementCount = 0
+      const timeout = setTimeout(
+        () => reject(new Error('Timed out waiting for acknowledgements')),
+        1_000,
+      )
+      const handleMessage = (data: RawData): void => {
+        const message = parseProtocolMessage(JSON.parse(data.toString()))
+        if (message.type !== 'text:ack') return
+        acknowledgementCount += 1
+        if (acknowledgementCount === 2) {
+          clearTimeout(timeout)
+          socket.off('message', handleMessage)
+          resolve()
+        }
+      }
+      socket.on('message', handleMessage)
+      socket.once('error', reject)
+    })
+    const textMessage = JSON.stringify({
+      type: 'text:send',
+      messageId: '88888888-8888-4888-8888-888888888888',
+      senderId: rawDevice.deviceId,
+      timestamp: Date.now(),
+      payload: { content: 'send once', contentType: 'text' },
+    })
+    socket.send(textMessage)
+    socket.send(textMessage)
+
+    await acknowledgementPromise
+    unsubscribe()
+    expect(receivedCount).toBe(1)
+    socket.close()
+  })
+
   it('does not create a text task without an active connection', async () => {
     const sender = new ConnectionManager(() =>
       createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
@@ -181,6 +256,36 @@ describe('ConnectionManager', () => {
     const { receiver, serverPort } = await createPair()
     const socket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
     socket.once('open', () => socket.send('{invalid-json'))
+    const closeCode = await new Promise<number>((resolve, reject) => {
+      socket.once('close', resolve)
+      socket.once('error', reject)
+    })
+
+    expect(closeCode).toBe(1007)
+    expect(receiver.getStatus()).toMatchObject({
+      state: 'disconnected',
+      errorCode: 'PROTOCOL_INVALID',
+    })
+  })
+
+  it('rejects a hello whose envelope sender does not match the advertised device', async () => {
+    const { receiver, serverPort } = await createPair()
+    const socket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
+    socket.once('open', () => {
+      socket.send(
+        JSON.stringify({
+          type: 'device:hello',
+          messageId: '33333333-3333-4333-8333-333333333333',
+          senderId: '44444444-4444-4444-8444-444444444444',
+          timestamp: Date.now(),
+          payload: {
+            protocolVersion: 1,
+            device: createDevice('55555555-5555-4555-8555-555555555555', 'Spoofed', 54_000),
+            connectionNonce: 'n'.repeat(32),
+          },
+        }),
+      )
+    })
     const closeCode = await new Promise<number>((resolve, reject) => {
       socket.once('close', resolve)
       socket.once('error', reject)

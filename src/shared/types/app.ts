@@ -20,6 +20,7 @@ export interface ConnectionStatusDto {
   readonly state: ConnectionState
   readonly connectionId?: ConnectionId
   readonly peer?: DeviceInfo
+  readonly pendingRequest?: IncomingConnectionRequestDto
   readonly errorCode?: ErrorCode
 }
 

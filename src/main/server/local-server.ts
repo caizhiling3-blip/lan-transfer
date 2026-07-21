@@ -88,6 +88,11 @@ export class LocalServer {
         return
       }
 
+      if (request.headers.origin !== undefined) {
+        rejectUpgrade(socket, 403, 'Forbidden')
+        return
+      }
+
       webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
         webSocketServer.emit('connection', webSocket, request)
       })

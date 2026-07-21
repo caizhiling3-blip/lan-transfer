@@ -33,6 +33,7 @@ export class ServiceManager {
   private status: ServiceStatusDto
   private readonly listeners = new Set<ServiceStatusListener>()
   private connectionHandler: WebSocketConnectionHandler | null = null
+  private lifecycleQueue: Promise<void> = Promise.resolve()
 
   public constructor(
     initialPort: number,
@@ -64,8 +65,23 @@ export class ServiceManager {
   }
 
   public async start(port = this.status.port): Promise<ServiceStatusDto> {
+    return this.enqueueLifecycle(() => this.startInternal(port))
+  }
+
+  public async restart(port: number): Promise<ServiceStatusDto> {
+    return this.enqueueLifecycle(async () => {
+      await this.stopInternal()
+      return this.startInternal(port)
+    })
+  }
+
+  public async stop(): Promise<ServiceStatusDto> {
+    return this.enqueueLifecycle(() => this.stopInternal())
+  }
+
+  private async startInternal(port: number): Promise<ServiceStatusDto> {
     if (this.server !== null) {
-      await this.stop()
+      await this.stopInternal()
     }
 
     this.setStatus({ state: 'starting', ipAddresses: this.getIpAddresses(), port })
@@ -74,16 +90,18 @@ export class ServiceManager {
       server.setConnectionHandler?.(this.connectionHandler)
     }
     server.setErrorHandler?.((error) => {
-      if (this.server !== server) {
-        return
-      }
-      this.server = null
-      void server.stop().catch(() => undefined)
-      this.setStatus({
-        state: 'error',
-        ipAddresses: this.getIpAddresses(),
-        port: this.status.port,
-        errorCode: mapStartError(error),
+      void this.enqueueLifecycle(async () => {
+        if (this.server !== server) {
+          return
+        }
+        this.server = null
+        await server.stop().catch(() => undefined)
+        this.setStatus({
+          state: 'error',
+          ipAddresses: this.getIpAddresses(),
+          port: this.status.port,
+          errorCode: mapStartError(error),
+        })
       })
     })
 
@@ -108,12 +126,7 @@ export class ServiceManager {
     return this.getStatus()
   }
 
-  public async restart(port: number): Promise<ServiceStatusDto> {
-    await this.stop()
-    return this.start(port)
-  }
-
-  public async stop(): Promise<ServiceStatusDto> {
+  private async stopInternal(): Promise<ServiceStatusDto> {
     const server = this.server
     this.server = null
     if (server !== null) {
@@ -125,6 +138,15 @@ export class ServiceManager {
       port: this.status.port,
     })
     return this.getStatus()
+  }
+
+  private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.lifecycleQueue.then(operation, operation)
+    this.lifecycleQueue = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
   private setStatus(status: ServiceStatusDto): void {

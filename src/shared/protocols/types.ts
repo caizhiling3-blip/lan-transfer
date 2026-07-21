@@ -13,6 +13,7 @@ import type {
   fileProgressMessageSchema,
   fileRejectMessageSchema,
   protocolMessageSchema,
+  textAcknowledgementMessageSchema,
   textSendMessageSchema,
 } from './schemas'
 
@@ -29,6 +30,7 @@ export type DeviceWelcomeMessage = z.infer<typeof deviceWelcomeMessageSchema>
 export type DeviceHeartbeatMessage = z.infer<typeof deviceHeartbeatMessageSchema>
 export type DeviceDisconnectMessage = z.infer<typeof deviceDisconnectMessageSchema>
 export type TextSendMessage = z.infer<typeof textSendMessageSchema>
+export type TextAcknowledgementMessage = z.infer<typeof textAcknowledgementMessageSchema>
 export type FileOfferMessage = z.infer<typeof fileOfferMessageSchema>
 export type FileAcceptMessage = z.infer<typeof fileAcceptMessageSchema>
 export type FileRejectMessage = z.infer<typeof fileRejectMessageSchema>

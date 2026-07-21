@@ -22,22 +22,22 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳。对象拒绝�
 
 ## 设备消息
 
-| type                | payload                                    |
-| ------------------- | ------------------------------------------ |
-| `device:hello`      | 协议版本、设备信息、连接 nonce             |
-| `device:welcome`    | 协议版本、设备信息、connectionId、心跳参数 |
-| `device:heartbeat`  | connectionId、递增序号                     |
-| `device:disconnect` | connectionId、固定断开原因                 |
+| type                | payload                                                |
+| ------------------- | ------------------------------------------------------ |
+| `device:hello`      | 协议版本、设备信息、连接 nonce                         |
+| `device:welcome`    | 协议版本、设备信息、回显 nonce、connectionId、心跳参数 |
+| `device:heartbeat`  | connectionId、递增序号                                 |
+| `device:disconnect` | connectionId、固定断开原因                             |
 
 设备信息包含设备 UUID、名称、`windows | macos`、IP 和服务端口。陌生设备的 hello 必须先经过本机用户审批。
 
-阶段 6 已实现该状态机。hello/welcome 必须在 10 秒内完成；连接后双方每 10 秒发送 heartbeat，30 秒未收到任何有效消息即断开。入站设备展示 IP 以 TCP socket 来源为准，不信任 hello 中自报的 IP。
+阶段 6 已实现该状态机。hello/welcome 必须在 10 秒内完成；welcome 必须回显 hello 的 connection nonce，且握手消息 senderId 必须等于设备信息中的 deviceId。连接后双方每 10 秒发送 heartbeat，30 秒未收到任何有效消息即断开。入站设备展示 IP 以 TCP socket 来源为准，不信任 hello 中自报的 IP。
 
 ## 文字消息
 
-`text:send` 包含非空 `content` 与 `text | link` 类型。链接分类仅用于 UI 展示；打开链接必须由用户主动触发并再次校验 URL scheme。
+`text:send` 包含非空 `content` 与 `text | link` 类型。接收方完成本地投影后发送 `text:ack`，其 payload 中的 messageId 指向被确认的 `text:send`。链接分类仅用于 UI 展示；打开链接必须由用户主动触发并再次校验 URL scheme。
 
-阶段 7 已实现该消息。发送前 IPC 与协议 schema 都按 UTF-8 字节数执行 64 KiB 限制；接收端只接受当前已审批连接中 senderId 与对端设备 ID 一致的消息。`link` 只表示整个正文可解析为 `http:` 或 `https:` URL，不赋予自动打开或其他执行能力。
+阶段 7 已实现这些消息。发送前 IPC 与协议 schema 都按 UTF-8 字节数执行 64 KiB 限制；接收端只接受当前已审批连接中 senderId 与对端设备 ID 一致的消息。发送任务只有在 10 秒内收到对应 `text:ack` 后才标记完成。`link` 只表示整个正文可解析为 `http:` 或 `https:` URL，不赋予自动打开或其他执行能力。
 
 ## 文件消息
 
@@ -51,9 +51,9 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳。对象拒绝�
 | `file:complete` | transferId、fileId、最终大小                      |
 | `file:error`    | transferId、可选 fileId、稳定错误码、可选安全详情 |
 
-文件元数据只包含 fileId、展示名、大小和 MIME type，不包含发送方路径或接收方保存路径。0 字节文件合法，单文件最大 2 GiB。MIME type 仅用于展示，不作为安全判断依据。
+文件元数据只包含 fileId、展示名、大小和 MIME type，不包含发送方路径或接收方保存路径。展示名必须是 Windows/macOS 可移植的单个路径段：不得使用 Windows 保留名、非法字符或尾随点/空格，UTF-8 编码不得超过 255 字节。0 字节文件合法，单文件最大 2 GiB。MIME type 仅用于展示，不作为安全判断依据。
 
-结构 schema 只验证单条消息。时间偏差、重复 messageId、offer/accept 顺序、进度不超过文件大小、token 状态和来源绑定由后续有状态协调器验证。
+结构 schema 只验证单条消息。主进程已使用有界时间窗口拒绝重复 messageId，并限制每个连接状态允许的消息类型。时间偏差、offer/accept 顺序、进度不超过文件大小、token 状态和来源绑定由后续文件协调器验证。
 
 ## HTTP 上传
 

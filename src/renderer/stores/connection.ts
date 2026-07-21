@@ -17,7 +17,9 @@ export const useConnectionStore = defineStore('connection', {
       this.unsubscribers = [
         window.lanTransfer.connection.onStateChanged((status) => this.applyStatus(status)),
         window.lanTransfer.connection.onIncomingRequest((request) => {
-          this.incomingRequest = request
+          if (this.incomingRequest?.requestId !== request.requestId) {
+            this.incomingRequest = request
+          }
         }),
       ]
       const result = await window.lanTransfer.connection.getStatus()
@@ -36,19 +38,22 @@ export const useConnectionStore = defineStore('connection', {
       const result = await window.lanTransfer.connection.disconnect()
       if (!result.ok) this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
     },
-    async respondToIncoming(decision: 'accept' | 'reject'): Promise<void> {
+    async respondToIncoming(
+      requestId: IncomingConnectionRequestDto['requestId'],
+      decision: 'accept' | 'reject',
+    ): Promise<void> {
       const request = this.incomingRequest
-      if (request === null) return
-      this.incomingRequest = null
-      const result = await window.lanTransfer.connection.respondToRequest(
-        request.requestId,
-        decision,
-      )
+      if (request === null || request.requestId !== requestId) return
+      const result = await window.lanTransfer.connection.respondToRequest(requestId, decision)
       if (result.ok) this.applyStatus(result.data)
       else this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
     },
     applyStatus(status: ConnectionStatusDto): void {
       this.status = status
+      const pendingRequest = status.pendingRequest ?? null
+      if (this.incomingRequest?.requestId !== pendingRequest?.requestId) {
+        this.incomingRequest = pendingRequest
+      }
       this.errorMessage = status.errorCode ? ERROR_MESSAGES_ZH_CN[status.errorCode] : ''
     },
     dispose(): void {

@@ -33,22 +33,28 @@ export const deviceInfoSchema = z
   })
   .strict()
 
-const isSafeDisplayName = (value: string): boolean =>
-  [...value].every((character) => {
+const windowsReservedFileNamePattern = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu
+const invalidPortableFileNameCharacterPattern = /[<>:"/\\|?*]/u
+const hasControlCharacter = (value: string): boolean =>
+  [...value].some((character) => {
     const codePoint = character.codePointAt(0)
-    return (
-      codePoint !== undefined &&
-      codePoint > 31 &&
-      codePoint !== 127 &&
-      character !== '/' &&
-      character !== '\\'
-    )
+    return codePoint !== undefined && (codePoint <= 31 || codePoint === 127)
   })
+
+const isSafeDisplayName = (value: string): boolean =>
+  value !== '.' &&
+  value !== '..' &&
+  !value.endsWith('.') &&
+  !value.endsWith(' ') &&
+  !windowsReservedFileNamePattern.test(value) &&
+  !invalidPortableFileNameCharacterPattern.test(value) &&
+  !hasControlCharacter(value) &&
+  getUtf8ByteLength(value) <= 255
 
 export const fileMetadataSchema = z
   .object({
     fileId: fileIdSchema,
-    displayName: z.string().trim().min(1).max(255).refine(isSafeDisplayName, 'Invalid file name'),
+    displayName: z.string().min(1).max(255).refine(isSafeDisplayName, 'Invalid file name'),
     size: safeIntegerSchema.max(MAX_FILE_SIZE_BYTES),
     mimeType: z
       .string()
@@ -93,6 +99,7 @@ export const deviceWelcomeMessageSchema = createMessageSchema(
     .object({
       protocolVersion: z.literal(PROTOCOL_VERSION),
       device: deviceInfoSchema,
+      connectionNonce: z.string().min(32).max(128),
       connectionId: connectionIdSchema,
       heartbeatIntervalMs: z.literal(HEARTBEAT_INTERVAL_MS),
       heartbeatTimeoutMs: z.literal(HEARTBEAT_TIMEOUT_MS),
@@ -129,6 +136,15 @@ export const textSendMessageSchema = createMessageSchema(
         .min(1)
         .refine((value) => getUtf8ByteLength(value) <= MAX_TEXT_BYTES, 'Text is too large'),
       contentType: z.enum(['text', 'link']),
+    })
+    .strict(),
+)
+
+export const textAcknowledgementMessageSchema = createMessageSchema(
+  'text:ack',
+  z
+    .object({
+      messageId: messageIdSchema,
     })
     .strict(),
 )
@@ -222,6 +238,7 @@ export const protocolMessageSchema = z.discriminatedUnion('type', [
   deviceHeartbeatMessageSchema,
   deviceDisconnectMessageSchema,
   textSendMessageSchema,
+  textAcknowledgementMessageSchema,
   fileOfferMessageSchema,
   fileAcceptMessageSchema,
   fileRejectMessageSchema,
