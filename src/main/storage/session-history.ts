@@ -32,11 +32,16 @@ export class SessionHistory {
   }
 
   public list(filter: HistoryFilterDto): readonly HistoryEntryDto[] {
+    const normalizedQuery = filter.query?.normalize('NFKC').toLocaleLowerCase()
     const filtered = this.entries.filter(
       (entry) =>
         (filter.direction === undefined || entry.direction === filter.direction) &&
         (filter.kind === undefined || entry.kind === filter.kind) &&
-        (filter.status === undefined || entry.status === filter.status),
+        (filter.status === undefined || entry.status === filter.status) &&
+        (normalizedQuery === undefined ||
+          [entry.textPreview, entry.displayName, entry.peer.deviceName, entry.peer.ipAddress].some(
+            (value) => value?.normalize('NFKC').toLocaleLowerCase().includes(normalizedQuery),
+          )),
     )
     return filtered.slice(filter.offset, filter.offset + filter.limit)
   }

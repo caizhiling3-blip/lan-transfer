@@ -44,6 +44,25 @@ describe('SessionHistory', () => {
     expect(history.list({ direction: 'send', offset: 1, limit: 1 })[0]?.textPreview).toBe('one')
   })
 
+  it('searches text, file names, device names, and addresses before pagination', () => {
+    const history = new SessionHistory()
+    addEntry(history, 'Quarterly Report', 'send')
+    history.add({
+      direction: 'receive',
+      kind: 'file',
+      peer: { ...peer, deviceName: 'Design Mac', ipAddress: '192.168.1.88' },
+      status: 'completed',
+      displayName: '品牌方案.pdf',
+      size: 42,
+      createdAt: Date.now(),
+    })
+
+    expect(history.list({ query: 'quarterly', offset: 0, limit: 100 })).toHaveLength(1)
+    expect(history.list({ query: '品牌', offset: 0, limit: 100 })).toHaveLength(1)
+    expect(history.list({ query: 'design mac', offset: 0, limit: 100 })).toHaveLength(1)
+    expect(history.list({ query: '1.88', offset: 0, limit: 100 })).toHaveLength(1)
+  })
+
   it('clears all entries', () => {
     const history = new SessionHistory()
     addEntry(history, 'one', 'send')

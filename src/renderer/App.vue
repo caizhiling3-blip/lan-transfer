@@ -4,6 +4,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useConnectionStore } from './stores/connection'
 import { useFileTransferStore } from './stores/file-transfer'
+import ThemeToggle from './components/ThemeToggle.vue'
+import linduLogo from './assets/lindu-logo.svg?no-inline'
 import HomeView from './views/HomeView.vue'
 import HistoryView from './views/HistoryView.vue'
 import SettingsView from './views/SettingsView.vue'
@@ -77,10 +79,10 @@ onBeforeUnmount(() => {
   <el-container class="app-shell">
     <el-aside width="220px" class="sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">LT</span>
+        <img class="brand-mark" :src="linduLogo" alt="邻渡 Logo" draggable="false" />
         <span class="brand-copy">
-          <strong>局域网互传</strong>
-          <small>安全、直接、无云端</small>
+          <strong>邻渡</strong>
+          <small>NEARBY TRANSFER</small>
         </span>
       </div>
       <nav class="sidebar-nav" aria-label="主菜单">
@@ -101,11 +103,14 @@ onBeforeUnmount(() => {
         仅在局域网内通信
       </div>
     </el-aside>
-    <el-main class="main-content">
+    <el-main class="main-content" :class="{ 'is-transfer-page': activePage === 'transfer' }">
       <div class="content-container">
         <header class="page-header">
-          <p>LAN TRANSFER</p>
-          <h1>{{ currentTitle }}</h1>
+          <div>
+            <p>邻近设备 · 安全直传</p>
+            <h1>{{ currentTitle }}</h1>
+          </div>
+          <ThemeToggle />
         </header>
         <HomeView v-if="activePage === 'home'" />
         <TransferView v-else-if="activePage === 'transfer'" />

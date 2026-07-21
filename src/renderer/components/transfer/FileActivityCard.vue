@@ -117,7 +117,7 @@ const tagType = computed(() => {
       </el-button>
     </div>
 
-    <details class="task-files" :open="task.files.length === 1 || isIncomingOffer">
+    <details class="task-files">
       <summary>文件明细（{{ task.files.length }}）</summary>
       <div v-for="file in task.files" :key="file.fileId" class="task-file-row">
         <div class="file-row-heading">
@@ -154,15 +154,15 @@ const tagType = computed(() => {
 .activity-card {
   width: min(88%, 820px);
   padding: 16px;
-  border: 1px solid #dbe3ec;
+  border: 1px solid var(--app-border);
   border-radius: 14px;
-  background: #fff;
+  background: var(--app-surface-raised);
 }
 
 .activity-card.send {
   margin-left: auto;
-  border-color: #b6d4fe;
-  background: #f8fbff;
+  border-color: var(--app-primary-border);
+  background: var(--app-primary-soft);
 }
 
 .task-heading,
@@ -177,14 +177,14 @@ const tagType = computed(() => {
 
 .task-heading p {
   margin: 5px 0 12px;
-  color: #64748b;
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 
 .task-stats,
 .file-detail,
 .file-row-footer {
-  color: #64748b;
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 
@@ -197,8 +197,8 @@ const tagType = computed(() => {
   gap: 7px;
   padding: 12px;
   border-radius: 10px;
-  background: #fff7e6;
-  color: #7c5b16;
+  background: var(--app-warning-soft);
+  color: var(--app-warning-text);
 }
 
 .offer-actions,
@@ -222,12 +222,12 @@ const tagType = computed(() => {
 .task-files {
   margin-top: 13px;
   padding-top: 11px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--app-border);
 }
 
 .task-files summary {
   cursor: pointer;
-  color: #475569;
+  color: var(--app-text-muted);
   font-size: 13px;
 }
 
@@ -235,7 +235,7 @@ const tagType = computed(() => {
   margin-top: 9px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: rgb(248 250 252 / 85%);
+  background: var(--app-surface-muted);
 }
 
 .file-row-heading {

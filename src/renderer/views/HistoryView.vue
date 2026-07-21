@@ -3,8 +3,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted } from 'vue'
 
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
+import { MAX_HISTORY_SEARCH_LENGTH } from '@shared/constants'
 import type { HistoryEntryDto, TransferStatus } from '@shared/types'
 
+import HistoryStatusIcon from '../components/HistoryStatusIcon.vue'
 import { useHistoryStore } from '../stores/history'
 
 const store = useHistoryStore()
@@ -46,19 +48,33 @@ onMounted(() => void store.load(true))
   <el-card shadow="never">
     <div class="history-toolbar">
       <div class="history-filters">
+        <el-input
+          v-model="store.filters.query"
+          class="history-search"
+          clearable
+          :maxlength="MAX_HISTORY_SEARCH_LENGTH"
+          placeholder="搜索内容、文件名或设备"
+          aria-label="搜索历史记录"
+          @keyup.enter="store.load(true)"
+          @clear="store.load(true)"
+        >
+          <template #append>
+            <el-button aria-label="搜索" @click="store.load(true)">搜索</el-button>
+          </template>
+        </el-input>
         <el-select v-model="store.filters.direction" aria-label="方向" @change="store.load(true)">
-          <el-option label="全部方向" value="" />
+          <el-option label="全部方向" value="all" />
           <el-option label="发送" value="send" />
           <el-option label="接收" value="receive" />
         </el-select>
         <el-select v-model="store.filters.kind" aria-label="类型" @change="store.load(true)">
-          <el-option label="全部类型" value="" />
+          <el-option label="全部类型" value="all" />
           <el-option label="文字" value="text" />
           <el-option label="链接" value="link" />
           <el-option label="文件" value="file" />
         </el-select>
         <el-select v-model="store.filters.status" aria-label="状态" @change="store.load(true)">
-          <el-option label="全部状态" value="" />
+          <el-option label="全部状态" value="all" />
           <el-option
             v-for="(label, status) in statusLabels"
             :key="status"
@@ -102,9 +118,14 @@ onMounted(() => void store.load(true))
       </el-table-column>
       <el-table-column label="状态" width="110">
         <template #default="{ row }: { row: HistoryEntryDto }">
-          {{ statusLabels[row.status] }}
-          <el-tooltip v-if="row.errorCode" :content="ERROR_MESSAGES_ZH_CN[row.errorCode]">
-            <span class="error-mark">!</span>
+          <el-tooltip
+            :disabled="row.errorCode === undefined"
+            :content="row.errorCode === undefined ? '' : ERROR_MESSAGES_ZH_CN[row.errorCode]"
+          >
+            <span class="status-cell">
+              <HistoryStatusIcon :status="row.status" />
+              {{ statusLabels[row.status] }}
+            </span>
           </el-tooltip>
         </template>
       </el-table-column>
@@ -141,26 +162,37 @@ onMounted(() => void store.load(true))
   width: 132px;
 }
 
+.history-search {
+  width: min(320px, 30vw);
+}
+
 .history-error {
   margin-bottom: 16px;
 }
 
-.error-mark {
-  display: inline-grid;
-  width: 16px;
-  height: 16px;
-  margin-left: 4px;
-  place-items: center;
-  border-radius: 50%;
-  color: #ffffff;
-  background: #ef4444;
-  font-size: 11px;
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 18px;
 }
 
 .history-pagination {
   justify-content: center;
   margin-top: 18px;
-  color: #64748b;
+  color: var(--app-text-muted);
   font-size: 13px;
+}
+
+@media (max-width: 1200px) {
+  .history-toolbar,
+  .history-filters {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .history-search {
+    width: 100%;
+  }
 }
 </style>

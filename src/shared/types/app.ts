@@ -69,6 +69,7 @@ export interface HistoryFilterDto {
   readonly direction?: TransferDirection
   readonly kind?: TransferKind
   readonly status?: TransferStatus
+  readonly query?: string
   readonly offset: number
   readonly limit: number
 }

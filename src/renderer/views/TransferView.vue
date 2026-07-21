@@ -187,11 +187,18 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .transfer-layout {
-  display: grid;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
   gap: 14px;
 }
 
 .transfer-workspace {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -204,7 +211,7 @@ onBeforeUnmount(() => {
 
 .transfer-header p {
   margin: 5px 0 0;
-  color: #64748b;
+  color: var(--app-text-muted);
   font-size: 13px;
 }
 
@@ -212,14 +219,18 @@ onBeforeUnmount(() => {
   display: grid;
   align-content: start;
   gap: 12px;
-  height: min(54vh, 560px);
-  min-height: 340px;
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
   padding: 14px 16px 20px;
-  background: #f8fafc;
+  background: var(--app-surface-muted);
 }
 
 :deep(.workspace-body) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
   padding: 0;
 }
 
@@ -230,7 +241,6 @@ onBeforeUnmount(() => {
   }
 
   .activity-list {
-    height: 48vh;
     padding-inline: 10px;
   }
 }

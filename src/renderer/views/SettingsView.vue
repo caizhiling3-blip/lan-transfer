@@ -125,7 +125,7 @@ onBeforeUnmount(() => store.dispose())
 
 .field-help {
   margin-left: 12px;
-  color: #94a3b8;
+  color: var(--app-text-subtle);
   font-size: 12px;
 }
 

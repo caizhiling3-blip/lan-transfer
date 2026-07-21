@@ -222,8 +222,8 @@ onBeforeUnmount(() => {
   gap: 7px;
   padding: 5px 10px;
   border-radius: 999px;
-  color: #64748b;
-  background: #f1f5f9;
+  color: var(--app-text-muted);
+  background: var(--app-surface-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -236,18 +236,18 @@ onBeforeUnmount(() => {
 }
 
 .connection-status.is-progress {
-  color: #d97706;
-  background: #fffbeb;
+  color: var(--app-warning-text);
+  background: var(--app-warning-soft);
 }
 
 .connection-status.is-success {
-  color: #16a34a;
-  background: #f0fdf4;
+  color: var(--app-success-text);
+  background: var(--app-success-soft);
 }
 
 .connection-status.is-danger {
-  color: #dc2626;
-  background: #fef2f2;
+  color: var(--app-danger-text);
+  background: var(--app-danger-soft);
 }
 
 .connection-form-footer {
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
 }
 
 .connection-form-footer span {
-  color: #64748b;
+  color: var(--app-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }

@@ -4,6 +4,7 @@ import {
   MAX_FILE_SIZE_BYTES,
   MAX_FILES_PER_TRANSFER,
   MAX_HISTORY_LIMIT,
+  MAX_HISTORY_SEARCH_LENGTH,
   MAX_SERVICE_PORT,
   MAX_TEXT_BYTES,
   MIN_HISTORY_LIMIT,
@@ -133,6 +134,7 @@ export const ipcInvokeRequestSchemas = {
           'rejected',
         ])
         .optional(),
+      query: z.string().trim().min(1).max(MAX_HISTORY_SEARCH_LENGTH).optional(),
       offset: z.number().int().nonnegative(),
       limit: z.number().int().min(1).max(100),
     })

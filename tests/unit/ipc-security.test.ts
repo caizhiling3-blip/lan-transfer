@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import { createWindowOptions } from '../../src/main/app/window-options'
 import { isTrustedIpcSenderContext } from '../../src/main/ipc/sender-validation'
-import { MAX_FILES_PER_TRANSFER, MAX_TEXT_BYTES } from '@shared/constants'
+import {
+  MAX_FILES_PER_TRANSFER,
+  MAX_HISTORY_SEARCH_LENGTH,
+  MAX_TEXT_BYTES,
+} from '@shared/constants'
 import { IPC_INVOKE_CHANNELS, ipcInvokeRequestSchemas, parseIpcInvokeRequest } from '@shared/ipc'
 
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
@@ -148,5 +152,25 @@ describe('IPC request schemas', () => {
   it('does not accept parameters when listing recent devices', () => {
     expect(() => parseIpcInvokeRequest('connection:list-recent-devices', undefined)).not.toThrow()
     expect(() => parseIpcInvokeRequest('connection:list-recent-devices', {})).toThrow()
+  })
+
+  it('bounds history search input', () => {
+    expect(() =>
+      parseIpcInvokeRequest('history:list', {
+        query: 'report',
+        offset: 0,
+        limit: 50,
+      }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('history:list', {
+        query: 'x'.repeat(MAX_HISTORY_SEARCH_LENGTH + 1),
+        offset: 0,
+        limit: 50,
+      }),
+    ).toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('history:list', { query: '   ', offset: 0, limit: 50 }),
+    ).toThrow()
   })
 })

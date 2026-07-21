@@ -39,15 +39,15 @@ const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleTi
 .activity-card {
   width: min(78%, 720px);
   padding: 13px 15px;
-  border: 1px solid #dbe3ec;
+  border: 1px solid var(--app-border);
   border-radius: 14px;
-  background: #f8fafc;
+  background: var(--app-surface-raised);
 }
 
 .activity-card.send {
   margin-left: auto;
-  border-color: #b6d4fe;
-  background: #eff6ff;
+  border-color: var(--app-primary-border);
+  background: var(--app-primary-soft);
 }
 
 .activity-meta,
@@ -59,7 +59,7 @@ const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleTi
 }
 
 .activity-meta {
-  color: #64748b;
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 

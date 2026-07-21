@@ -122,8 +122,8 @@ const handleDrop = (event: DragEvent): void => {
 .composer {
   position: relative;
   padding: 14px;
-  border-top: 1px solid #e2e8f0;
-  background: #fff;
+  border-top: 1px solid var(--app-border);
+  background: var(--app-surface);
 }
 
 .pending-tray {
@@ -131,9 +131,9 @@ const handleDrop = (event: DragEvent): void => {
   gap: 8px;
   margin-bottom: 12px;
   padding: 11px 12px;
-  border: 1px solid #dbeafe;
+  border: 1px solid var(--app-primary-border);
   border-radius: 10px;
-  background: #f8fbff;
+  background: var(--app-primary-soft);
 }
 
 .pending-heading,
@@ -148,7 +148,7 @@ const handleDrop = (event: DragEvent): void => {
 }
 
 .pending-heading {
-  color: #334155;
+  color: var(--app-text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -164,7 +164,7 @@ const handleDrop = (event: DragEvent): void => {
   min-width: 230px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--app-surface-raised);
 }
 
 .pending-file div {
@@ -183,7 +183,7 @@ const handleDrop = (event: DragEvent): void => {
 .pending-file span,
 .pending-tray small,
 .send-area > span {
-  color: #64748b;
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 
@@ -204,8 +204,8 @@ const handleDrop = (event: DragEvent): void => {
   gap: 5px;
   border: 2px dashed #409eff;
   border-radius: 12px;
-  background: rgb(239 246 255 / 96%);
-  color: #2563eb;
+  background: color-mix(in srgb, var(--app-primary-soft) 96%, transparent);
+  color: var(--app-primary-strong);
   text-align: center;
   pointer-events: none;
 }
