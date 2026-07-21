@@ -1,6 +1,6 @@
 import type { ErrorCode } from '@shared/errors'
 import type { ServiceStatusDto } from '@shared/types'
-import type { IncomingMessage } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebSocket } from 'ws'
 
 import { LocalServer } from './local-server'
@@ -11,10 +11,15 @@ export interface LocalServerAdapter {
   stop(): Promise<void>
   setErrorHandler?(handler: (error: Error) => void): void
   setConnectionHandler?(handler: WebSocketConnectionHandler): void
+  setRequestHandler?(handler: ServiceHttpRequestHandler): void
 }
 
 export type ServiceStatusListener = (status: ServiceStatusDto) => void
 export type WebSocketConnectionHandler = (webSocket: WebSocket, request: IncomingMessage) => void
+export type ServiceHttpRequestHandler = (
+  request: IncomingMessage,
+  response: ServerResponse,
+) => boolean
 
 const mapStartError = (error: unknown): ErrorCode => {
   if (
@@ -33,6 +38,7 @@ export class ServiceManager {
   private status: ServiceStatusDto
   private readonly listeners = new Set<ServiceStatusListener>()
   private connectionHandler: WebSocketConnectionHandler | null = null
+  private requestHandler: ServiceHttpRequestHandler | null = null
   private lifecycleQueue: Promise<void> = Promise.resolve()
 
   public constructor(
@@ -64,6 +70,11 @@ export class ServiceManager {
     this.server?.setConnectionHandler?.(handler)
   }
 
+  public setRequestHandler(handler: ServiceHttpRequestHandler): void {
+    this.requestHandler = handler
+    this.server?.setRequestHandler?.(handler)
+  }
+
   public async start(port = this.status.port): Promise<ServiceStatusDto> {
     return this.enqueueLifecycle(() => this.startInternal(port))
   }
@@ -88,6 +99,9 @@ export class ServiceManager {
     const server = this.createServer()
     if (this.connectionHandler !== null) {
       server.setConnectionHandler?.(this.connectionHandler)
+    }
+    if (this.requestHandler !== null) {
+      server.setRequestHandler?.(this.requestHandler)
     }
     server.setErrorHandler?.((error) => {
       void this.enqueueLifecycle(async () => {

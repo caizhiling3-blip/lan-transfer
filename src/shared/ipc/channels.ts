@@ -26,14 +26,16 @@ export const SERVICE_STATUS_CHANGED_EVENT_CHANNEL = 'service:status-changed' as 
 export const CONNECTION_STATE_CHANGED_EVENT_CHANNEL = 'connection:state-changed' as const
 export const CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL = 'connection:incoming-request' as const
 export const TEXT_RECEIVED_EVENT_CHANNEL = 'transfer:text-received' as const
+export const TRANSFER_TASK_CHANGED_EVENT_CHANNEL = 'transfer:task-changed' as const
+export const FILE_OFFER_RECEIVED_EVENT_CHANNEL = 'transfer:offer-received' as const
 
 export const IPC_EVENT_CHANNELS = [
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
-  'transfer:task-changed',
+  TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
   TEXT_RECEIVED_EVENT_CHANNEL,
-  'transfer:offer-received',
+  FILE_OFFER_RECEIVED_EVENT_CHANNEL,
   'settings:changed',
 ] as const
 

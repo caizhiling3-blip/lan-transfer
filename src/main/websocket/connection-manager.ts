@@ -16,9 +16,24 @@ import {
   deviceHeartbeatMessageSchema,
   deviceHelloMessageSchema,
   deviceWelcomeMessageSchema,
+  fileAcceptMessageSchema,
+  fileCompleteMessageSchema,
+  fileErrorMessageSchema,
+  fileOfferMessageSchema,
+  fileProgressMessageSchema,
+  fileRejectMessageSchema,
   parseProtocolMessage,
   textAcknowledgementMessageSchema,
   textSendMessageSchema,
+} from '@shared/protocols'
+import type {
+  FileAcceptMessage,
+  FileCancelMessage,
+  FileCompleteMessage,
+  FileErrorMessage,
+  FileOfferMessage,
+  FileProgressMessage,
+  FileRejectMessage,
 } from '@shared/protocols'
 import {
   connectionIdSchema,
@@ -30,10 +45,13 @@ import type {
   ConnectionId,
   ConnectionStatusDto,
   DeviceInfo,
+  FileId,
+  FileMetadata,
   IncomingConnectionRequestDto,
   MessageId,
   RequestId,
   TransferTaskDto,
+  TransferId,
 } from '@shared/types'
 import type { TextReceivedDto } from '@shared/ipc'
 
@@ -42,6 +60,15 @@ import { isConnectedProtocolMessage, MessageDeduplicator } from './protocol-stat
 type StatusListener = (status: ConnectionStatusDto) => void
 type RequestListener = (request: IncomingConnectionRequestDto) => void
 type TextListener = (message: TextReceivedDto) => void
+export type FileControlMessage =
+  | FileOfferMessage
+  | FileAcceptMessage
+  | FileRejectMessage
+  | FileCancelMessage
+  | FileProgressMessage
+  | FileCompleteMessage
+  | FileErrorMessage
+type FileMessageListener = (message: FileControlMessage) => void
 
 interface PendingConnection {
   readonly requestId: RequestId
@@ -83,6 +110,7 @@ export class ConnectionManager {
   private readonly statusListeners = new Set<StatusListener>()
   private readonly requestListeners = new Set<RequestListener>()
   private readonly textListeners = new Set<TextListener>()
+  private readonly fileMessageListeners = new Set<FileMessageListener>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private connectionId: ConnectionId | null = null
@@ -111,6 +139,107 @@ export class ConnectionManager {
   public subscribeText(listener: TextListener): () => void {
     this.textListeners.add(listener)
     return () => this.textListeners.delete(listener)
+  }
+
+  public subscribeFileMessages(listener: FileMessageListener): () => void {
+    this.fileMessageListeners.add(listener)
+    return () => this.fileMessageListeners.delete(listener)
+  }
+
+  public getPeer(): DeviceInfo | null {
+    return this.peer === null ? null : { ...this.peer }
+  }
+
+  public sendFileOffer(transferId: TransferId, files: readonly FileMetadata[]): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      fileOfferMessageSchema.parse({
+        type: 'file:offer',
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload: { transferId, files },
+      }),
+    )
+  }
+
+  public sendFileAccept(
+    transferId: TransferId,
+    files: FileAcceptMessage['payload']['files'],
+  ): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      fileAcceptMessageSchema.parse({
+        type: 'file:accept',
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload: { transferId, files },
+      }),
+    )
+  }
+
+  public sendFileReject(
+    transferId: TransferId,
+    reason: FileRejectMessage['payload']['reason'] = 'user_rejected',
+  ): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      fileRejectMessageSchema.parse({
+        type: 'file:reject',
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload: { transferId, reason },
+      }),
+    )
+  }
+
+  public sendFileProgress(
+    transferId: TransferId,
+    fileId: FileId,
+    transferredBytes: number,
+  ): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      fileProgressMessageSchema.parse({
+        type: 'file:progress',
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload: { transferId, fileId, transferredBytes },
+      }),
+    )
+  }
+
+  public sendFileComplete(transferId: TransferId, fileId: FileId, size: number): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      fileCompleteMessageSchema.parse({
+        type: 'file:complete',
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload: { transferId, fileId, size },
+      }),
+    )
+  }
+
+  public sendFileError(
+    transferId: TransferId,
+    fileId: FileId,
+    errorCode: ErrorCode,
+  ): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      fileErrorMessageSchema.parse({
+        type: 'file:error',
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload: { transferId, fileId, errorCode },
+      }),
+    )
   }
 
   public async sendText(
@@ -414,6 +543,8 @@ export class ConnectionManager {
         this.sendTextAcknowledgement(message.messageId)
       } else if (message.type === 'text:ack') {
         this.pendingTextAcknowledgements.get(message.payload.messageId)?.complete(true)
+      } else {
+        for (const listener of this.fileMessageListeners) listener(message)
       }
     } catch {
       this.socket?.close(1007, 'Invalid protocol message')
@@ -457,6 +588,14 @@ export class ConnectionManager {
         }),
       ),
     )
+  }
+
+  private async sendProtocolMessage(message: FileControlMessage): Promise<boolean> {
+    const socket = this.socket
+    if (socket === null || socket.readyState !== WebSocket.OPEN) return false
+    return new Promise((resolve) => {
+      socket.send(JSON.stringify(message), (error) => resolve(!error))
+    })
   }
 
   private reset(errorCode?: ErrorCode): void {

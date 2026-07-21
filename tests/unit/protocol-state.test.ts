@@ -59,7 +59,7 @@ describe('connected message whitelist', () => {
     expect(isConnectedProtocolMessage(acknowledgement)).toBe(true)
   })
 
-  it('rejects file messages before the file-transfer stage is active', () => {
+  it('allows file control messages after the file-transfer stage is active', () => {
     const offer = parseProtocolMessage({
       type: 'file:offer',
       ...baseMessage,
@@ -69,6 +69,6 @@ describe('connected message whitelist', () => {
       },
     })
 
-    expect(isConnectedProtocolMessage(offer)).toBe(false)
+    expect(isConnectedProtocolMessage(offer)).toBe(true)
   })
 })

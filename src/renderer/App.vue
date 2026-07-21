@@ -3,6 +3,7 @@ import { ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useConnectionStore } from './stores/connection'
+import { useFileTransferStore } from './stores/file-transfer'
 import HomeView from './views/HomeView.vue'
 import TransferView from './views/TransferView.vue'
 
@@ -10,6 +11,7 @@ type PageKey = 'home' | 'transfer' | 'history' | 'settings'
 
 const activePage = ref<PageKey>('home')
 const connectionStore = useConnectionStore()
+const fileTransferStore = useFileTransferStore()
 const activeApprovalRequestId = ref<string | null>(null)
 
 const pageTitles: Readonly<Record<PageKey, string>> = {
@@ -20,6 +22,13 @@ const pageTitles: Readonly<Record<PageKey, string>> = {
 }
 
 const currentTitle = computed(() => pageTitles[activePage.value])
+
+watch(
+  () => fileTransferStore.incomingOffer,
+  (offer) => {
+    if (offer !== null) activePage.value = 'transfer'
+  },
+)
 
 watch(
   () => connectionStore.incomingRequest,
@@ -53,10 +62,12 @@ watch(
 
 onMounted(() => {
   void connectionStore.initialize()
+  fileTransferStore.initialize()
 })
 
 onBeforeUnmount(() => {
   connectionStore.dispose()
+  fileTransferStore.dispose()
 })
 </script>
 

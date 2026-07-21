@@ -2,6 +2,13 @@ import { MESSAGE_DEDUPLICATION_LIMIT, MESSAGE_DEDUPLICATION_TTL_MS } from '@shar
 import type {
   DeviceDisconnectMessage,
   DeviceHeartbeatMessage,
+  FileAcceptMessage,
+  FileCancelMessage,
+  FileCompleteMessage,
+  FileErrorMessage,
+  FileOfferMessage,
+  FileProgressMessage,
+  FileRejectMessage,
   ProtocolMessage,
   TextAcknowledgementMessage,
   TextSendMessage,
@@ -9,7 +16,17 @@ import type {
 import type { MessageId } from '@shared/types'
 
 export type ConnectedProtocolMessage =
-  DeviceHeartbeatMessage | DeviceDisconnectMessage | TextSendMessage | TextAcknowledgementMessage
+  | DeviceHeartbeatMessage
+  | DeviceDisconnectMessage
+  | TextSendMessage
+  | TextAcknowledgementMessage
+  | FileOfferMessage
+  | FileAcceptMessage
+  | FileRejectMessage
+  | FileCancelMessage
+  | FileProgressMessage
+  | FileCompleteMessage
+  | FileErrorMessage
 
 export const isConnectedProtocolMessage = (
   message: ProtocolMessage,
@@ -19,6 +36,13 @@ export const isConnectedProtocolMessage = (
     case 'device:disconnect':
     case 'text:send':
     case 'text:ack':
+    case 'file:offer':
+    case 'file:accept':
+    case 'file:reject':
+    case 'file:cancel':
+    case 'file:progress':
+    case 'file:complete':
+    case 'file:error':
       return true
     default:
       return false

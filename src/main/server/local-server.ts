@@ -5,7 +5,11 @@ import type { Duplex } from 'node:stream'
 import type { WebSocket } from 'ws'
 import { WebSocketServer } from 'ws'
 
-import { MAX_WEBSOCKET_MESSAGE_BYTES, PROTOCOL_VERSION } from '@shared/constants'
+import {
+  MAX_WEBSOCKET_MESSAGE_BYTES,
+  PROTOCOL_VERSION,
+  TRANSFER_TIMEOUT_MS,
+} from '@shared/constants'
 
 const HEALTH_PATH = '/health'
 const WEBSOCKET_PATH = '/v1/ws'
@@ -22,14 +26,7 @@ const writeJson = (response: ServerResponse, statusCode: number, body: unknown):
   response.end(content)
 }
 
-const handleRequest = (request: IncomingMessage, response: ServerResponse): void => {
-  if (request.method === 'GET' && request.url === HEALTH_PATH) {
-    writeJson(response, 200, { status: 'ok', protocolVersion: PROTOCOL_VERSION })
-    return
-  }
-
-  writeJson(response, 404, { error: 'NOT_FOUND' })
-}
+export type HttpRequestHandler = (request: IncomingMessage, response: ServerResponse) => boolean
 
 const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string): void => {
   socket.end(
@@ -41,6 +38,7 @@ export class LocalServer {
   private httpServer: Server | null = null
   private webSocketServer: WebSocketServer | null = null
   private errorHandler: (error: Error) => void = () => undefined
+  private requestHandler: HttpRequestHandler = () => false
   private connectionHandler: (webSocket: WebSocket, request: IncomingMessage) => void = (
     webSocket,
   ) => {
@@ -57,12 +55,23 @@ export class LocalServer {
     this.connectionHandler = handler
   }
 
+  public setRequestHandler(handler: HttpRequestHandler): void {
+    this.requestHandler = handler
+  }
+
   public async start(port: number, host = '0.0.0.0'): Promise<number> {
     if (this.httpServer !== null) {
       throw new Error('Local server is already running')
     }
 
-    const httpServer = createServer(handleRequest)
+    const httpServer = createServer((request, response) => {
+      if (request.method === 'GET' && request.url === HEALTH_PATH) {
+        writeJson(response, 200, { status: 'ok', protocolVersion: PROTOCOL_VERSION })
+        return
+      }
+      if (this.requestHandler(request, response)) return
+      writeJson(response, 404, { error: 'NOT_FOUND' })
+    })
     const webSocketServer = new WebSocketServer({
       noServer: true,
       maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
@@ -70,7 +79,7 @@ export class LocalServer {
     })
 
     httpServer.headersTimeout = 5_000
-    httpServer.requestTimeout = 10_000
+    httpServer.requestTimeout = TRANSFER_TIMEOUT_MS
     httpServer.keepAliveTimeout = 1_000
     httpServer.maxHeadersCount = 50
 

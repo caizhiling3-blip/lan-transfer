@@ -7,14 +7,18 @@ import { DEFAULT_SERVICE_PORT } from '@shared/constants'
 import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
+  FILE_OFFER_RECEIVED_EVENT_CHANNEL,
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   TEXT_RECEIVED_EVENT_CHANNEL,
+  TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
 } from '@shared/ipc'
 
 import { createMainWindow, DeviceIdentity } from './app'
+import { FileAccessRegistry, FileTransferCoordinator } from './file-transfer'
 import {
   registerConnectionIpcHandlers,
   registerFoundationIpcHandlers,
+  registerFileTransferIpcHandlers,
   registerRuntimeIpcHandlers,
   registerServiceIpcHandlers,
   registerTextIpcHandlers,
@@ -31,6 +35,12 @@ const connectionManager = new ConnectionManager(() =>
   deviceIdentity.getDeviceInfo(serviceManager.getStatus()),
 )
 const sessionHistory = new SessionHistory()
+const fileAccessRegistry = new FileAccessRegistry(() => app.getPath('downloads'))
+const fileTransferCoordinator = new FileTransferCoordinator(
+  connectionManager,
+  fileAccessRegistry,
+  sessionHistory,
+)
 let unsubscribeFromService: (() => void) | null = null
 let connectionUnsubscribers: readonly (() => void)[] = []
 let isQuitting = false
@@ -47,6 +57,16 @@ const openMainWindow = (): void => {
   mainWindow.once('closed', () => {
     mainWindow = null
   })
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (mainWindow === null || mainWindow.isDestroyed()) return
+    for (const task of fileTransferCoordinator.getTasks()) {
+      mainWindow.webContents.send(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
+    }
+    const pendingOffer = fileTransferCoordinator.getPendingOffer()
+    if (pendingOffer !== null) {
+      mainWindow.webContents.send(FILE_OFFER_RECEIVED_EVENT_CHANNEL, pendingOffer)
+    }
+  })
 }
 
 void app.whenReady().then(() => {
@@ -55,6 +75,7 @@ void app.whenReady().then(() => {
   registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, serviceManager)
   registerConnectionIpcHandlers(() => mainWindow, connectionManager)
   registerTextIpcHandlers(() => mainWindow, connectionManager, sessionHistory)
+  registerFileTransferIpcHandlers(() => mainWindow, fileAccessRegistry, fileTransferCoordinator)
   openMainWindow()
 
   unsubscribeFromService = serviceManager.subscribe((status) => {
@@ -86,10 +107,23 @@ void app.whenReady().then(() => {
         mainWindow.webContents.send(TEXT_RECEIVED_EVENT_CHANNEL, message)
       }
     }),
+    fileTransferCoordinator.subscribeTasks((task) => {
+      if (mainWindow !== null && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
+      }
+    }),
+    fileTransferCoordinator.subscribeOffers((offer) => {
+      if (mainWindow !== null && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
+      }
+    }),
   ]
   serviceManager.setConnectionHandler((webSocket, request) => {
     connectionManager.acceptIncoming(webSocket, request)
   })
+  serviceManager.setRequestHandler((request, response) =>
+    fileTransferCoordinator.handleHttpRequest(request, response),
+  )
   void serviceManager.start()
 
   app.on('activate', () => {
@@ -112,11 +146,14 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   isQuitting = true
   connectionManager.disconnect('app_shutdown')
-  void serviceManager.stop().finally(() => {
-    unsubscribeFromService?.()
-    for (const unsubscribe of connectionUnsubscribers) unsubscribe()
-    app.quit()
-  })
+  void fileTransferCoordinator
+    .shutdown()
+    .then(() => serviceManager.stop())
+    .finally(() => {
+      unsubscribeFromService?.()
+      for (const unsubscribe of connectionUnsubscribers) unsubscribe()
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => {

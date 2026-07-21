@@ -6,10 +6,12 @@ import { MAX_TEXT_BYTES } from '@shared/constants'
 import { getUtf8ByteLength } from '@shared/utils'
 
 import { useConnectionStore } from '../stores/connection'
+import { useFileTransferStore } from '../stores/file-transfer'
 import { useTextTransferStore } from '../stores/text-transfer'
 
 const connectionStore = useConnectionStore()
 const textTransferStore = useTextTransferStore()
+const fileTransferStore = useFileTransferStore()
 const content = ref('')
 const messageList = ref<HTMLElement | null>(null)
 
@@ -56,6 +58,22 @@ const openLink = async (url: string): Promise<void> => {
 }
 
 const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleString()
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1_024) return `${String(bytes)} B`
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KiB`
+  if (bytes < 1_024 * 1_024 * 1_024) return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`
+  return `${(bytes / (1_024 * 1_024 * 1_024)).toFixed(2)} GiB`
+}
+const statusLabels: Readonly<Record<string, string>> = {
+  awaitingAcceptance: '等待接收方确认',
+  accepted: '已接受',
+  transferring: '传输中',
+  completed: '已完成',
+  failed: '失败',
+  rejected: '已拒绝',
+  cancelled: '已取消',
+  pending: '等待中',
+}
 
 onMounted(() => {
   void textTransferStore.initialize()
@@ -151,7 +169,111 @@ onBeforeUnmount(() => {
     </el-card>
 
     <el-card shadow="never">
-      <el-empty description="文件选择、拖拽和传输任务将在文件传输阶段实现" />
+      <template #header>
+        <div class="transfer-header">
+          <span>单文件传输</span>
+          <el-button
+            type="primary"
+            :loading="fileTransferStore.selecting"
+            :disabled="!isConnected"
+            @click="fileTransferStore.selectAndOffer()"
+          >
+            选择文件发送
+          </el-button>
+        </div>
+      </template>
+
+      <el-alert
+        v-if="fileTransferStore.incomingOffer"
+        class="incoming-offer"
+        type="warning"
+        :closable="false"
+      >
+        <template #title>
+          {{ fileTransferStore.incomingOffer.peer.deviceName }} 请求发送文件
+        </template>
+        <div v-for="file in fileTransferStore.incomingOffer.files" :key="file.fileId">
+          <strong>{{ file.displayName }}</strong>
+          <span class="file-detail">{{ formatBytes(file.size) }} · {{ file.mimeType }}</span>
+        </div>
+        <div class="offer-actions">
+          <el-button
+            type="primary"
+            :loading="fileTransferStore.responding"
+            @click="fileTransferStore.respond('accept')"
+          >
+            接受到默认目录
+          </el-button>
+          <el-button
+            :loading="fileTransferStore.responding"
+            @click="fileTransferStore.respond('accept', true)"
+          >
+            选择目录并接受
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            :loading="fileTransferStore.responding"
+            @click="fileTransferStore.respond('reject')"
+          >
+            拒绝
+          </el-button>
+        </div>
+      </el-alert>
+
+      <el-empty v-if="fileTransferStore.tasks.length === 0" description="暂无文件传输任务" />
+      <div v-else class="file-task-list">
+        <article v-for="task in fileTransferStore.tasks" :key="task.transferId" class="file-task">
+          <div class="task-heading">
+            <div>
+              <strong>{{ task.files[0]?.displayName ?? '未知文件' }}</strong>
+              <p>
+                {{ task.direction === 'send' ? '发送给' : '接收自' }} {{ task.peer.deviceName }}
+              </p>
+            </div>
+            <el-tag
+              :type="
+                task.status === 'completed'
+                  ? 'success'
+                  : task.status === 'failed' || task.status === 'rejected'
+                    ? 'danger'
+                    : 'info'
+              "
+            >
+              {{ statusLabels[task.status] ?? task.status }}
+            </el-tag>
+          </div>
+          <el-progress
+            :percentage="
+              task.totalBytes === 0
+                ? task.status === 'completed'
+                  ? 100
+                  : 0
+                : Math.min(100, Math.round((task.transferredBytes / task.totalBytes) * 100))
+            "
+            :status="
+              task.status === 'completed'
+                ? 'success'
+                : task.status === 'failed'
+                  ? 'exception'
+                  : undefined
+            "
+          />
+          <div class="task-stats">
+            <span
+              >{{ formatBytes(task.transferredBytes) }} / {{ formatBytes(task.totalBytes) }}</span
+            >
+            <span>{{ formatBytes(task.bytesPerSecond) }}/s</span>
+          </div>
+        </article>
+      </div>
+      <el-alert
+        v-if="fileTransferStore.errorMessage"
+        class="transfer-error"
+        :title="fileTransferStore.errorMessage"
+        type="error"
+        :closable="false"
+      />
     </el-card>
   </div>
 </template>
@@ -224,5 +346,49 @@ onBeforeUnmount(() => {
 
 .transfer-error {
   margin-top: 16px;
+}
+
+.incoming-offer {
+  margin-bottom: 20px;
+}
+
+.file-detail {
+  margin-left: 12px;
+  color: #64748b;
+}
+
+.offer-actions {
+  margin-top: 14px;
+}
+
+.file-task-list {
+  display: grid;
+  gap: 12px;
+}
+
+.file-task {
+  padding: 16px;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+}
+
+.task-heading,
+.task-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-heading p {
+  margin: 5px 0 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.task-stats {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
 }
 </style>

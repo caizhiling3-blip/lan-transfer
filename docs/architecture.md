@@ -67,7 +67,7 @@ IPC handler 必须同时满足：
 
 hello 的 envelope senderId 必须与 deviceId 一致，welcome 必须回显本次 hello 的 connection nonce，避免把不属于当前握手的响应激活为连接。待审批请求同时保存在连接状态快照中；renderer 在应用根层订阅连接状态，因此页面切换或窗口重建后仍能恢复审批。
 
-握手和连接态入站消息使用 10 分钟、最多 2000 条的 messageId 窗口去重。当前阶段只允许 heartbeat、disconnect、text:send 和 text:ack 出现在已连接状态；提前到达的文件消息按协议错误关闭，阶段 8 接入文件协调器时再扩展白名单。重复文字不会再次投影到历史，但会重发 ACK，允许发送方安全重试确认。
+握手和连接态入站消息使用 10 分钟、最多 2000 条的 messageId 窗口去重。当前允许 heartbeat、disconnect、文字确认和文件控制消息出现在已连接状态。重复文字不会再次投影到历史，但会重发 ACK，允许发送方安全重试确认。
 
 本机设备 ID 使用安全随机 UUID，并在单次应用进程内稳定；阶段 10 将其写入本地存储以实现跨重启稳定。主机名作为阶段 6 默认设备名称，设置页持久化名称同样留到阶段 10。
 
@@ -75,8 +75,21 @@ hello 的 envelope senderId 必须与 deviceId 一致，welcome 必须回显本�
 
 `ConnectionManager` 是文字网络状态的事实来源。只有已完成握手的活动 socket 可以发送或接收 `text:send`；收到消息时还会核对 envelope 的 senderId 与当前对端设备 ID，避免连接内身份替换。接收方把文字投影到本地后返回 `text:ack`，发送方只有收到对应 messageId 的确认才把任务标记为 completed，连接关闭或确认超时则标记为 failed。主进程把接收事件和发送结果转换为只读 IPC DTO，renderer 不接触 WebSocket。
 
-文件协议中的 displayName 必须是 Windows 和 macOS 都可安全表示的单个路径段，拒绝 Windows 保留名、非法字符、尾随点/空格以及超过 255 UTF-8 字节的名称。阶段 8 落盘时仍需独立处理目录内重名，不能直接把远端名称拼接为未校验路径。
+文件协议中的 displayName 必须是 Windows 和 macOS 都可安全表示的单个路径段。发送端清洗路径分隔符、控制字符、Windows 保留名、非法字符、尾随点/空格和超长 UTF-8 名称，接收端协议 schema 再次校验。
 
 阶段 7 使用有上限的 `SessionHistory` 保存当前应用进程内的文字摘要，并通过既有 history IPC 提供最近 100 条记录给传输页。应用重启后这些记录会消失；设备 ID、设置、最近设备和历史的可靠持久化仍属于阶段 10，不提前引入 electron-store。
 
 renderer 使用 Pinia 维护文字页投影：进入页面时读取会话历史并订阅接收事件，离开页面时取消订阅。链接分类只接受完整的 HTTP(S) URL；外部打开仍经过主进程 scheme 校验并要求用户点击。
+
+## 单文件传输
+
+阶段 8 的 `FileTransferCoordinator` 维护发送和接收任务，renderer 只接收任务 DTO：
+
+1. Electron 系统文件选择器在主进程读取文件元数据，把真实路径绑定到一分钟有效、单次消费的 selection token；
+2. 协调器通过 WebSocket 发送只含文件元数据的 offer；接收方必须拒绝、接受到默认 Downloads，或通过系统目录选择器为本次授权目录；
+3. 接受后生成与 transferId、fileId、当前 connectionId、对端 IP、长度和期限共同校验的一次性 upload token；
+4. 发送方使用 Node HTTP 流上传，renderer 不读取文件内容或路径；
+5. 接收方独占创建随机 `.part` 文件，流结束且字节数吻合后创建不覆盖的最终硬链接，再删除临时名称；同名文件使用 `name (1).ext` 递增；
+6. 失败、断线或退出会终止活动流并清理临时文件，磁盘和权限错误映射为稳定错误码。
+
+HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。上传要求固定 Content-Length，不接受远端文件名或保存路径；任务进度事件和 WebSocket 进度消息分别节流。阶段 8 只允许一个文件，多个 selection token 会被 IPC 拒绝。

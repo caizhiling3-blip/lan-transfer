@@ -1,4 +1,5 @@
 export * from './foundation-handlers'
+export * from './file-transfer-handlers'
 export * from './connection-handlers'
 export * from './register-handler'
 export * from './runtime-handlers'
