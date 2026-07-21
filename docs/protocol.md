@@ -4,7 +4,7 @@
 
 第一版协议版本为 `1`。WebSocket 路径为 `/v1/ws`，负责握手、心跳、文字和文件控制消息；HTTP 负责文件流。文件内容不得转成 Base64 后通过 WebSocket 发送。
 
-阶段 5 提供 `GET /health`，返回 `{ "status": "ok", "protocolVersion": 1 }`。其他未注册 HTTP 路由返回 404。设备握手在阶段 6 实现前，`/v1/ws` Upgrade 会以 WebSocket close code 1013 关闭。
+`GET /health` 返回 `{ "status": "ok", "protocolVersion": 1 }`，其他未注册 HTTP 路由返回 404。`/v1/ws` 由设备连接管理器接管；已有活动连接时，新 socket 使用 WebSocket close code 1013 关闭。
 
 所有消息使用统一 envelope：
 
@@ -29,7 +29,9 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳。对象拒绝�
 | `device:heartbeat`  | connectionId、递增序号                     |
 | `device:disconnect` | connectionId、固定断开原因                 |
 
-设备信息包含设备 UUID、名称、`windows | macos`、IP 和服务端口。陌生设备的 hello 必须先经过本机用户审批，具体状态机在阶段 6 实现。
+设备信息包含设备 UUID、名称、`windows | macos`、IP 和服务端口。陌生设备的 hello 必须先经过本机用户审批。
+
+阶段 6 已实现该状态机。hello/welcome 必须在 10 秒内完成；连接后双方每 10 秒发送 heartbeat，30 秒未收到任何有效消息即断开。入站设备展示 IP 以 TCP socket 来源为准，不信任 hello 中自报的 IP。
 
 ## 文字消息
 

@@ -55,6 +55,7 @@ export const createLanTransferApi = (): LanTransferApi => {
       onStatusChanged: (listener) => subscribe('service:status-changed', listener),
     }),
     connection: Object.freeze({
+      getStatus: () => invoke('connection:get-status', undefined),
       connect: (host: string, port: number) => invoke('connection:connect', { host, port }),
       disconnect: () => invoke('connection:disconnect', undefined),
       respondToRequest: (requestId, decision) =>

@@ -28,6 +28,7 @@ export interface IpcInvokeMap {
   readonly 'app:open-external-url': InvokeContract<{ readonly url: string }, undefined>
   readonly 'service:get-status': InvokeContract<undefined, ServiceStatusDto>
   readonly 'service:restart': InvokeContract<{ readonly port: number }, ServiceStatusDto>
+  readonly 'connection:get-status': InvokeContract<undefined, ConnectionStatusDto>
   readonly 'connection:connect': InvokeContract<
     { readonly host: string; readonly port: number },
     ConnectionStatusDto

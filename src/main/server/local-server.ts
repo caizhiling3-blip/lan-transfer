@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 
+import type { WebSocket } from 'ws'
 import { WebSocketServer } from 'ws'
 
 import { MAX_WEBSOCKET_MESSAGE_BYTES, PROTOCOL_VERSION } from '@shared/constants'
@@ -40,9 +41,20 @@ export class LocalServer {
   private httpServer: Server | null = null
   private webSocketServer: WebSocketServer | null = null
   private errorHandler: (error: Error) => void = () => undefined
+  private connectionHandler: (webSocket: WebSocket, request: IncomingMessage) => void = (
+    webSocket,
+  ) => {
+    webSocket.close(1013, 'Device connection handler is unavailable')
+  }
 
   public setErrorHandler(handler: (error: Error) => void): void {
     this.errorHandler = handler
+  }
+
+  public setConnectionHandler(
+    handler: (webSocket: WebSocket, request: IncomingMessage) => void,
+  ): void {
+    this.connectionHandler = handler
   }
 
   public async start(port: number, host = '0.0.0.0'): Promise<number> {
@@ -81,8 +93,8 @@ export class LocalServer {
       })
     })
 
-    webSocketServer.on('connection', (webSocket) => {
-      webSocket.close(1013, 'Device connections are not available yet')
+    webSocketServer.on('connection', (webSocket, request) => {
+      this.connectionHandler(webSocket, request)
     })
 
     try {
@@ -127,20 +139,16 @@ export class LocalServer {
     for (const client of webSocketServer.clients) {
       client.terminate()
     }
+    webSocketServer.close()
 
-    await Promise.all([
-      new Promise<void>((resolve) => {
-        webSocketServer.close(() => resolve())
-      }),
-      new Promise<void>((resolve, reject) => {
-        httpServer.close((error) => {
-          if (error === undefined) {
-            resolve()
-          } else {
-            reject(error)
-          }
-        })
-      }),
-    ])
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => {
+        if (error === undefined) {
+          resolve()
+        } else {
+          reject(error)
+        }
+      })
+    })
   }
 }

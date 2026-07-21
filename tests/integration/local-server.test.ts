@@ -29,7 +29,7 @@ describe('LocalServer', () => {
     await expect(unknownResponse.json()).resolves.toEqual({ error: 'NOT_FOUND' })
   })
 
-  it('accepts only the WebSocket path and closes until stage 6', async () => {
+  it('accepts only the WebSocket path and closes without a connection handler', async () => {
     const server = new LocalServer()
     runningServers.push(server)
     const port = await server.start(0, '127.0.0.1')
@@ -45,7 +45,7 @@ describe('LocalServer', () => {
     )
     expect(closeResult).toEqual({
       code: 1013,
-      reason: 'Device connections are not available yet',
+      reason: 'Device connection handler is unavailable',
     })
 
     const invalidStatus = await new Promise<number>((resolve, reject) => {

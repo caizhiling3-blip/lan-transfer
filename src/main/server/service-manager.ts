@@ -1,5 +1,7 @@
 import type { ErrorCode } from '@shared/errors'
 import type { ServiceStatusDto } from '@shared/types'
+import type { IncomingMessage } from 'node:http'
+import type { WebSocket } from 'ws'
 
 import { LocalServer } from './local-server'
 import { getLanIpv4Addresses } from './network-info'
@@ -8,9 +10,11 @@ export interface LocalServerAdapter {
   start(port: number, host?: string): Promise<number>
   stop(): Promise<void>
   setErrorHandler?(handler: (error: Error) => void): void
+  setConnectionHandler?(handler: WebSocketConnectionHandler): void
 }
 
 export type ServiceStatusListener = (status: ServiceStatusDto) => void
+export type WebSocketConnectionHandler = (webSocket: WebSocket, request: IncomingMessage) => void
 
 const mapStartError = (error: unknown): ErrorCode => {
   if (
@@ -28,6 +32,7 @@ export class ServiceManager {
   private server: LocalServerAdapter | null = null
   private status: ServiceStatusDto
   private readonly listeners = new Set<ServiceStatusListener>()
+  private connectionHandler: WebSocketConnectionHandler | null = null
 
   public constructor(
     initialPort: number,
@@ -53,6 +58,11 @@ export class ServiceManager {
     }
   }
 
+  public setConnectionHandler(handler: WebSocketConnectionHandler): void {
+    this.connectionHandler = handler
+    this.server?.setConnectionHandler?.(handler)
+  }
+
   public async start(port = this.status.port): Promise<ServiceStatusDto> {
     if (this.server !== null) {
       await this.stop()
@@ -60,6 +70,9 @@ export class ServiceManager {
 
     this.setStatus({ state: 'starting', ipAddresses: this.getIpAddresses(), port })
     const server = this.createServer()
+    if (this.connectionHandler !== null) {
+      server.setConnectionHandler?.(this.connectionHandler)
+    }
     server.setErrorHandler?.((error) => {
       if (this.server !== server) {
         return

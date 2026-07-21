@@ -3,6 +3,7 @@ export const IPC_INVOKE_CHANNELS = [
   'app:open-external-url',
   'service:get-status',
   'service:restart',
+  'connection:get-status',
   'connection:connect',
   'connection:disconnect',
   'connection:respond-to-request',
@@ -22,11 +23,13 @@ export const IPC_INVOKE_CHANNELS = [
 ] as const
 
 export const SERVICE_STATUS_CHANGED_EVENT_CHANNEL = 'service:status-changed' as const
+export const CONNECTION_STATE_CHANGED_EVENT_CHANNEL = 'connection:state-changed' as const
+export const CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL = 'connection:incoming-request' as const
 
 export const IPC_EVENT_CHANNELS = [
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
-  'connection:state-changed',
-  'connection:incoming-request',
+  CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
+  CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
   'transfer:task-changed',
   'transfer:text-received',
   'transfer:offer-received',

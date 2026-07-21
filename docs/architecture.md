@@ -42,9 +42,24 @@ IPC handler 必须同时满足：
 - 默认监听 `0.0.0.0:53317`，HTTP 与 WebSocket 共用一个 TCP 端口；
 - Node HTTP server 只暴露健康检查和明确注册的路由，未知路由返回 404；
 - WebSocket 使用 no-server Upgrade 模式，只接受 `/v1/ws`，禁用压缩并限制 payload 为 128 KiB；
-- 阶段 5 尚未实现设备握手，Upgrade 成功后使用 1013 明确关闭，阶段 6 接管连接；
+- `/v1/ws` Upgrade 交给 ConnectionManager 完成设备握手；未安装连接处理器时使用 1013 关闭；
 - `ServiceManager` 维护 stopped、starting、running、error 状态，端口占用映射为 `PORT_IN_USE`；
 - 启动失败和监听后的运行时错误都会转成状态事件，不作为未处理异常退出应用；
 - 本机地址来自所有非 internal IPv4 网卡，不依赖 Windows 或 macOS 的固定网卡名称。
 
 应用启动后自动启动服务；退出前关闭 WebSocket 客户端和 HTTP listener。阶段 5 的端口重启只影响当前运行实例，持久化设置留到阶段 10。
+
+## 设备连接
+
+`ConnectionManager` 同时处理主动连接和入站连接，并且只允许一个活动或待审批对端：
+
+1. 主动方连接 `/v1/ws` 后发送 `device:hello`；
+2. 入站方严格校验消息并用 socket 实际来源地址覆盖对端自报 IP；
+3. renderer 显示设备名称、系统、IP 和端口，由用户允许或拒绝；
+4. 允许后入站方生成 connectionId 并发送 `device:welcome`；
+5. 双方进入 connected，每 10 秒发送 heartbeat，30 秒无消息判定超时；
+6. 主动断开先发送 `device:disconnect`，socket close 仍作为最终清理依据。
+
+连接、审批和握手分别有 10 秒超时。非法 JSON、错误消息类型或 connectionId 会关闭 socket。第二个入站 socket 使用 1013 拒绝，不替换当前连接。
+
+本机设备 ID 使用安全随机 UUID，并在单次应用进程内稳定；阶段 10 将其写入本地存储以实现跨重启稳定。主机名作为阶段 6 默认设备名称，设置页持久化名称同样留到阶段 10。

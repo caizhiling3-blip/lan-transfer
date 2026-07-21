@@ -25,6 +25,7 @@ export interface LanTransferApi {
     onStatusChanged(listener: EventListener<'service:status-changed'>): Unsubscribe
   }
   readonly connection: {
+    getStatus(): Promise<IpcInvokeResponse<'connection:get-status'>>
     connect(host: string, port: number): Promise<IpcInvokeResponse<'connection:connect'>>
     disconnect(): Promise<IpcInvokeResponse<'connection:disconnect'>>
     respondToRequest(

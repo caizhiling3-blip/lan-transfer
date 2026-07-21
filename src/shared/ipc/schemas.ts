@@ -96,6 +96,7 @@ export const ipcInvokeRequestSchemas = {
   'app:open-external-url': z.object({ url: externalUrlSchema }).strict(),
   'service:get-status': noRequestSchema,
   'service:restart': z.object({ port: portSchema }).strict(),
+  'connection:get-status': noRequestSchema,
   'connection:connect': connectRequestSchema,
   'connection:disconnect': noRequestSchema,
   'connection:respond-to-request': respondToConnectionRequestSchema,
