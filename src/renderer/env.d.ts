@@ -1,4 +1,4 @@
-import type { LanTransferApi } from '../preload'
+import type { LanTransferApi } from '../preload/types'
 
 declare global {
   interface Window {
