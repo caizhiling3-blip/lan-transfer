@@ -50,6 +50,24 @@ pnpm package:win
 
 生产渲染资源使用相对 URL，以保证 `BrowserWindow.loadFile` 加载 `dist/index.html` 时能找到 JS、CSS 和 Logo。打包输出位于 `release/`，不得提交到 Git。
 
+## macOS 打包开发
+
+阶段 13 继续使用 electron-builder，不增加第三方依赖。`build/icon.icns` 是从品牌 SVG 生成并通过 `iconutil` 反向解析验证的多分辨率 macOS 图标。
+
+```bash
+pnpm package:mac:dir
+pnpm package:mac:arm64
+pnpm package:mac:x64
+pnpm package:mac
+```
+
+- `package:mac:dir`：生成当前 CPU 架构的未压缩 `.app`，用于本机冒烟测试；
+- `package:mac:arm64`：生成 Apple Silicon DMG；
+- `package:mac:x64`：生成 Intel DMG；
+- `package:mac`：依次生成两个架构的 DMG。
+
+当前测试包显式禁用代码签名、notarization 和 Hardened Runtime，只允许开发验收，不适合公开分发。应用的最低系统版本为 macOS 12，Bundle ID 固定为 `com.lindu.transfer`。第一版不使用 Bonjour，因此 Info.plist 只声明本地网络用途，不声明 `NSBonjourServices`。
+
 ## IPC 开发约束
 
 - 新 handler 必须使用 `registerIpcHandler`，不得直接分散调用 `ipcMain.handle`。

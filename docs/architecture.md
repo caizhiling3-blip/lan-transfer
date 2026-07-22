@@ -142,3 +142,9 @@ renderer 使用 `light | dark` 两种纯界面主题，首次运行跟随系统�
 - selection token、目录 token、messageId、transferId 和内存任务记录都有 TTL 或容量上限，避免长时间运行产生无界内存增长。
 
 本地日志由主进程 `electron-log` 写入 Electron 标准日志目录并按 5 MiB 轮转。日志记录应用/服务生命周期、设备连接、文件 offer、任务状态、错误码和未处理错误堆栈；不记录文字正文、剪贴板内容、文件内容、上传 token 或文件完整路径。
+
+## 桌面打包边界
+
+electron-builder 使用稳定 `com.lindu.transfer` 标识构建 Windows NSIS 和 macOS DMG。渲染资源统一使用相对 URL，应用 Logo 的 SVG、ICO 和 ICNS 位于 `build/`，打包输出统一进入被 Git 忽略的 `release/`。
+
+macOS 第一版分别输出 arm64 和 x64，避免 Universal 包体积及合并复杂度。测试包显式跳过代码签名、notarization 和 Hardened Runtime；正式发布必须把三者作为独立安全工作流恢复。Info.plist 声明直接局域网连接用途，但不声明 Bonjour 服务，因为第一版仅支持手动 IP/端口连接。`afterPack` 钩子在未来签名前收紧 ATS，并移除邻渡没有使用的相机、麦克风、音频采集和蓝牙模板描述，避免打包模板扩大隐私表面。

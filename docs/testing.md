@@ -144,3 +144,17 @@ Windows x64 实机需执行以下安装验收：
 8. 记录未签名包的 SmartScreen 行为，正式发布前不得把手动放行当作签名替代。
 
 当前配置可在 macOS 生成 NSIS 安装包，但 macOS 无法运行该安装包；跨平台构建结果不能证明 Windows 快捷方式、Defender Firewall、杀毒软件文件锁和卸载语义正确。
+
+## 阶段 13
+
+自动化质量门禁继续覆盖 typecheck、lint、Prettier、Vitest 和生产构建。打包后检查：
+
+- `邻渡.app` 的主可执行文件架构与目标一致；
+- Info.plist 中 Bundle ID、版本、最低系统版本、本地网络和受保护目录用途说明正确，ATS 不允许任意加载，且不存在未使用的相机、麦克风、音频采集和蓝牙用途描述；
+- 应用资源包含可由 `iconutil` 解析的 ICNS；
+- ASAR 包含主进程、Preload、渲染资源、Logo 和生产依赖；
+- DMG 同时包含邻渡应用与 Applications 链接，文件名带明确架构。
+
+Apple Silicon 实机执行 arm64 `.app` 和 DMG 冒烟测试：启动、四个页面、深浅色、系统选择器、剪贴板、通知、外链、服务监听和退出。Intel DMG 在当前 Apple Silicon 构建机只做结构检查，必须在真实 Intel Mac 补充启动和传输测试。
+
+手动权限矩阵需覆盖 Gatekeeper 首次阻止与单应用放行、本地网络允许/拒绝/恢复、macOS 防火墙传入连接允许/阻止、Downloads/文稿/桌面目录选择、应用移入废纸篓以及设置历史保留。不得用全局关闭 Gatekeeper 或批量清除 quarantine 代替真实权限流程。

@@ -2,7 +2,7 @@
 
 ## Windows 测试包
 
-阶段 12 使用 electron-builder 生成 Windows x64 应用目录和 NSIS `.exe` 安装包。第一版包未签名，只用于受控测试；macOS `.dmg` 将在阶段 13 单独配置。
+阶段 12 使用 electron-builder 生成 Windows x64 应用目录和 NSIS `.exe` 安装包。第一版包未签名，只用于受控测试。
 
 打包配置：
 
@@ -59,4 +59,69 @@ pnpm package:win
 
 未签名测试包可能被 SmartScreen 拦截，不应分发给不知情的终端用户。正式 Windows 发布前需另行配置受信任代码签名证书、签名密钥保护、时间戳服务和签名校验流程。
 
-macOS 的 Bundle ID、DMG、Developer ID、Hardened Runtime、Gatekeeper 与 notarization 不属于本阶段，将在阶段 13 规划和实现。
+## macOS 测试包
+
+阶段 13 使用 electron-builder 分别生成 Apple Silicon 和 Intel DMG：
+
+- Bundle ID：`com.lindu.transfer`
+- 应用包：`邻渡.app`
+- 可执行文件：`邻渡`
+- 应用分类：Utilities
+- 最低系统版本：macOS 12
+- Apple Silicon：`Lindu-0.1.0-arm64.dmg`
+- Intel：`Lindu-0.1.0-x64.dmg`
+- 图标：`build/icon.icns`，包含 16–1024 像素资源
+- 安装界面：把邻渡拖入 Applications
+
+构建命令：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm package:mac:dir
+pnpm package:mac:arm64
+pnpm package:mac:x64
+pnpm package:mac
+```
+
+应优先在对应架构硬件或 CI matrix 上生成正式产物：Apple Silicon 构建 arm64，Intel 构建 x64。当前项目没有原生 Node 扩展，因此可以在 Apple Silicon 开发机生成并结构检查 x64 包，但本机不能证明 Intel 运行行为正确。
+
+## macOS 安装与 Gatekeeper 验收
+
+第一版 DMG 明确未签名、未 notarize，仅用于受控测试。测试步骤：
+
+1. 挂载与本机架构匹配的 DMG，把“邻渡”拖到 Applications；
+2. 从 Applications 首次启动，记录 Gatekeeper 提示；需要放行时使用 Finder 右键“打开”，或在“系统设置 > 隐私与安全性”中确认本次启动；
+3. 不使用全局关闭 Gatekeeper 的命令，也不要移除其他应用的 quarantine 属性；
+4. 检查 Dock、访达、应用切换器和“关于”窗口中的图标、名称、版本及 Bundle ID；
+5. 验证深浅色页面、系统文件/目录选择器、通知和外部链接；
+6. 退出应用并把它移到废纸篓，再确认用户设置和历史仍保留在 Electron `userData`；
+7. 如需彻底清理测试数据，先备份并确认 `app.getPath('userData')` 的实际目录，再由测试人员手动删除。
+
+不要把手动 Gatekeeper 放行作为正式发布流程。正式分发需要 Developer ID Application 签名、Hardened Runtime、正确 entitlements、`notarytool` notarization 和 stapling。
+
+## macOS 本地网络与防火墙
+
+Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网直连设备。第一版没有 UDP/Bonjour 自动发现，因此不声明 Bonjour service type。
+
+打包钩子会关闭 ATS 任意网络加载、删除模板中的 localhost 例外域，并移除应用未使用的相机、麦克风、音频采集和蓝牙用途描述。局域网 HTTP/WebSocket 由受控的 Electron 主进程处理，渲染进程仍受 CSP 和安全窗口配置限制。
+
+实机验收：
+
+- 首次发生局域网访问时检查本地网络权限提示，选择允许后完成双向连接；
+- 在“系统设置 > 隐私与安全性 > 本地网络”关闭邻渡权限，确认连接失败但应用不崩溃；
+- 重新允许权限并重启服务，确认连接恢复；
+- 开启 macOS 防火墙后检查传入连接提示与应用规则，分别验证允许和阻止；
+- 只在受信任网络测试，端口变更后重新检查监听和连接；
+- 下载、文稿和桌面目录只在用户通过系统选择器授权后访问。
+
+未签名应用的本地网络权限身份在不同构建之间可能不稳定；正式包应使用稳定 Developer ID 签名。
+
+## 正式签名发布待办
+
+- 准备 Apple Developer Program 团队和 Developer ID Application 证书；
+- 启用 Hardened Runtime，并为 Electron/V8 配置最小 entitlements；
+- 在 CI 密钥库中提供证书和 notarization 凭据，不写入仓库；
+- 对 arm64、x64 或最终选定的 Universal 架构执行签名；
+- 使用 `notarytool` 提交，等待成功后 stapling；
+- 通过 `codesign --verify --deep --strict`、`spctl --assess` 和离线 Gatekeeper 测试；
+- 再决定是否公开分发、加入自动更新或发布渠道。

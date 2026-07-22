@@ -13,6 +13,7 @@ files:
 
 asar: true
 compression: normal
+afterPack: ./scripts/after-pack.mjs
 
 win:
   target:
@@ -24,6 +25,39 @@ win:
   artifactName: Lindu-Setup-${version}-${arch}.${ext}
   requestedExecutionLevel: asInvoker
   forceCodeSigning: false
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  icon: build/icon.icns
+  artifactName: Lindu-${version}-${arch}.${ext}
+  category: public.app-category.utilities
+  minimumSystemVersion: '12.0'
+  identity: null
+  hardenedRuntime: false
+  notarize: false
+  extendInfo:
+    NSLocalNetworkUsageDescription: 邻渡需要访问本地网络，以连接同一局域网内的设备并传输文字和文件。
+    NSDownloadsFolderUsageDescription: 邻渡需要访问下载文件夹，以保存用户明确接受的文件。
+    NSDocumentsFolderUsageDescription: 邻渡仅在用户选择后访问文稿文件夹中的发送或接收文件。
+    NSDesktopFolderUsageDescription: 邻渡仅在用户选择后访问桌面文件夹中的发送或接收文件。
+
+dmg:
+  title: 邻渡 ${version}
+  icon: build/icon.icns
+  backgroundColor: '#f3f7ff'
+  iconSize: 96
+  contents:
+    - x: 160
+      y: 200
+      type: file
+    - x: 380
+      y: 200
+      type: link
+      path: /Applications
 
 nsis:
   oneClick: false
