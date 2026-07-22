@@ -35,6 +35,21 @@ pnpm test
 pnpm test:watch
 ```
 
+## Windows 打包开发
+
+阶段 12 使用 `electron-builder`。安装此依赖是为了生成 Windows x64 应用目录和 NSIS 安装包；`build/icon.ico` 是 Windows 打包图标，渲染进程复用其高质量源文件 `build/icon.svg`。
+
+建议在 Windows x64 环境执行：
+
+```bash
+pnpm package:win:dir
+pnpm package:win
+```
+
+`package:win:dir` 先生成 `release/win-unpacked`，适合验证应用启动、资源路径和服务监听；`package:win` 生成正式的安装向导。两条命令都会先执行生产构建。当前配置可以在项目的 macOS 开发机生成 NSIS 包，但跨平台产物不能代替 Windows 实机的安装、卸载和防火墙验收；若构建机提示缺少兼容工具链，应改在 Windows x64 环境构建。
+
+生产渲染资源使用相对 URL，以保证 `BrowserWindow.loadFile` 加载 `dist/index.html` 时能找到 JS、CSS 和 Logo。打包输出位于 `release/`，不得提交到 Git。
+
 ## IPC 开发约束
 
 - 新 handler 必须使用 `registerIpcHandler`，不得直接分散调用 `ipcMain.handle`。

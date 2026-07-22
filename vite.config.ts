@@ -7,6 +7,7 @@ import electron from 'vite-plugin-electron/simple'
 const sharedAlias = fileURLToPath(new URL('./src/shared', import.meta.url))
 
 export default defineConfig({
+  base: './',
   plugins: [
     vue(),
     electron({
