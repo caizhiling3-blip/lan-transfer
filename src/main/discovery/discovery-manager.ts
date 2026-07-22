@@ -15,6 +15,7 @@ import { messageIdSchema } from '@shared/types'
 import type { DeviceInfo, DiscoveredDeviceDto } from '@shared/types'
 
 import { DiscoveryRegistry } from './discovery-registry'
+import { getDiscoveryNetworkInterfaces } from './network-interfaces'
 
 type DiscoveryListener = (devices: readonly DiscoveredDeviceDto[]) => void
 type ErrorListener = (error: unknown) => void
@@ -25,6 +26,7 @@ export class DiscoveryManager {
   private socket: Socket | null = null
   private announceTimer: ReturnType<typeof setInterval> | null = null
   private expiryTimer: ReturnType<typeof setInterval> | null = null
+  private readonly joinedInterfaceAddresses = new Set<string>()
 
   public constructor(
     private readonly getLocalDevice: () => DeviceInfo,
@@ -42,9 +44,10 @@ export class DiscoveryManager {
     socket.bind(DISCOVERY_PORT, '0.0.0.0', () => {
       if (this.socket !== socket) return
       try {
-        socket.addMembership(DISCOVERY_MULTICAST_ADDRESS)
         socket.setMulticastTTL(1)
         socket.setMulticastLoopback(true)
+        socket.setBroadcast(true)
+        this.ensureMemberships(socket)
         socket.unref()
         this.announce()
         this.announceTimer = setInterval(() => this.announce(), DISCOVERY_ANNOUNCEMENT_INTERVAL_MS)
@@ -66,6 +69,7 @@ export class DiscoveryManager {
     this.expiryTimer = null
     const socket = this.socket
     this.socket = null
+    this.joinedInterfaceAddresses.clear()
     if (socket !== null) {
       try {
         socket.close()
@@ -100,7 +104,41 @@ export class DiscoveryManager {
       timestamp: Date.now(),
     })
     const data = Buffer.from(JSON.stringify(announcement), 'utf8')
-    socket.send(data, DISCOVERY_PORT, DISCOVERY_MULTICAST_ADDRESS, (error) => {
+    const networkInterfaces = getDiscoveryNetworkInterfaces()
+    this.ensureMemberships(socket)
+    if (networkInterfaces.length === 0) {
+      this.send(socket, data, DISCOVERY_MULTICAST_ADDRESS)
+      return
+    }
+    const broadcastAddresses = new Set<string>()
+    for (const networkInterface of networkInterfaces) {
+      try {
+        socket.setMulticastInterface(networkInterface.address)
+        this.send(socket, data, DISCOVERY_MULTICAST_ADDRESS)
+      } catch (error) {
+        this.onError(error)
+      }
+      broadcastAddresses.add(networkInterface.broadcastAddress)
+    }
+    for (const broadcastAddress of broadcastAddresses) {
+      this.send(socket, data, broadcastAddress)
+    }
+  }
+
+  private ensureMemberships(socket: Socket): void {
+    for (const networkInterface of getDiscoveryNetworkInterfaces()) {
+      if (this.joinedInterfaceAddresses.has(networkInterface.address)) continue
+      try {
+        socket.addMembership(DISCOVERY_MULTICAST_ADDRESS, networkInterface.address)
+        this.joinedInterfaceAddresses.add(networkInterface.address)
+      } catch (error) {
+        this.onError(error)
+      }
+    }
+  }
+
+  private send(socket: Socket, data: Buffer, destination: string): void {
+    socket.send(data, DISCOVERY_PORT, destination, (error) => {
       if (error !== null) this.onError(error)
     })
   }

@@ -22,7 +22,7 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳，并且只能�
 
 ## UDP 设备发现
 
-1.1 增加独立于 WebSocket 的 UDP4 组播发现。应用每 5 秒向 `239.255.53.17:53318` 发送一个最大 8 KiB 的 JSON 数据报，组播 TTL 为 1：
+1.1 增加独立于 WebSocket 的 UDP4 发现。应用每 5 秒通过每个有效非回环 IPv4 网卡向 `239.255.53.17:53318` 发送组播，并向该网卡所在子网的定向广播地址发送同一份最大 8 KiB JSON 数据报；组播 TTL 为 1，不跨越路由器：
 
 ```ts
 interface DiscoveryAnnouncement {

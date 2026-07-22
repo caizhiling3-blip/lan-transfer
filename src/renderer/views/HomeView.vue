@@ -151,11 +151,12 @@ onBeforeUnmount(() => {
           <el-tag type="info" effect="plain">{{ discoveryStore.devices.length }} 台在线</el-tag>
         </div>
       </template>
-      <el-empty
-        v-if="discoveryStore.devices.length === 0"
-        :image-size="64"
-        description="暂未发现设备，可继续使用手动 IP 连接"
-      />
+      <div v-if="discoveryStore.devices.length === 0" class="discovery-empty">
+        <el-empty :image-size="64" description="正在查找同一局域网内的设备" />
+        <p>
+          列表不会显示本机。请在另一台设备启动邻渡并允许专用网络访问；仍未发现时可使用手动 IP 连接。
+        </p>
+      </div>
       <div v-else class="nearby-list">
         <div
           v-for="discovered in discoveryStore.devices"
@@ -324,6 +325,15 @@ onBeforeUnmount(() => {
 .nearby-list {
   display: grid;
   gap: 10px;
+}
+
+.discovery-empty p {
+  max-width: 520px;
+  margin: -10px auto 16px;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .nearby-device {
