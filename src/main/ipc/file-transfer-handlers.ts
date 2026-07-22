@@ -1,3 +1,4 @@
+import { shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 
 import type { ErrorCode } from '@shared/errors'
@@ -77,6 +78,13 @@ export const registerFileTransferIpcHandlers = (
     return task === null
       ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
       : { ok: true, data: task }
+  })
+
+  registerIpcHandler('transfer:show-received-file', getWindow, ({ transferId, fileId }) => {
+    const filePath = coordinator.getReceivedFilePath(transferId, fileId)
+    if (filePath === null) return { ok: false, error: { code: 'FILE_NOT_FOUND' } }
+    shell.showItemInFolder(filePath)
+    return { ok: true, data: undefined }
   })
 
   registerIpcHandler('settings:select-receive-directory', getWindow, async () => {

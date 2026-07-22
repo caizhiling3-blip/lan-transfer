@@ -64,6 +64,10 @@ export const createLanTransferApi = (): LanTransferApi => {
       onStateChanged: (listener) => subscribe('connection:state-changed', listener),
       onIncomingRequest: (listener) => subscribe('connection:incoming-request', listener),
     }),
+    discovery: Object.freeze({
+      getDevices: () => invoke('discovery:get-devices', undefined),
+      onDevicesChanged: (listener) => subscribe('discovery:devices-changed', listener),
+    }),
     clipboard: Object.freeze({
       readText: () => invoke('clipboard:read-text', undefined),
       writeText: (text: string) => invoke('clipboard:write-text', { text }),
@@ -88,6 +92,11 @@ export const createLanTransferApi = (): LanTransferApi => {
       cancel: (transferId, fileId) =>
         invoke('transfer:cancel', fileId === undefined ? { transferId } : { transferId, fileId }),
       retry: (transferId) => invoke('transfer:retry', { transferId }),
+      showReceivedFile: (transferId, fileId) =>
+        invoke(
+          'transfer:show-received-file',
+          fileId === undefined ? { transferId } : { transferId, fileId },
+        ),
       onTaskChanged: (listener) => subscribe('transfer:task-changed', listener),
       onTextReceived: (listener) => subscribe('transfer:text-received', listener),
       onOfferReceived: (listener) => subscribe('transfer:offer-received', listener),

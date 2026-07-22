@@ -1,6 +1,13 @@
 export const PROTOCOL_VERSION = 1 as const
 
 export const DEFAULT_SERVICE_PORT = 53_317
+export const DISCOVERY_PORT = 53_318
+export const DISCOVERY_MULTICAST_ADDRESS = '239.255.53.17'
+export const DISCOVERY_APP_ID = 'lan-drop'
+export const DISCOVERY_ANNOUNCEMENT_INTERVAL_MS = 5_000
+export const DISCOVERY_DEVICE_EXPIRY_MS = 16_000
+export const MAX_DISCOVERY_DATAGRAM_BYTES = 8 * 1_024
+export const MAX_DISCOVERED_DEVICES = 50
 export const MIN_SERVICE_PORT = 1_024
 export const MAX_SERVICE_PORT = 65_535
 

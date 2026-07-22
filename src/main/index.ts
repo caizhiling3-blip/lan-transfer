@@ -2,11 +2,12 @@ import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 
 import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
+  DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL,
   FILE_OFFER_RECEIVED_EVENT_CHANNEL,
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   SETTINGS_CHANGED_EVENT_CHANNEL,
@@ -15,13 +16,16 @@ import {
 } from '@shared/ipc'
 
 import { createMainWindow, DeviceIdentity } from './app'
+import { DiscoveryManager } from './discovery'
 import {
   cleanupStaleTemporaryFiles,
   FileAccessRegistry,
   FileTransferCoordinator,
+  TransferPowerSaveController,
 } from './file-transfer'
 import {
   registerConnectionIpcHandlers,
+  registerDiscoveryIpcHandlers,
   registerFoundationIpcHandlers,
   registerFileTransferIpcHandlers,
   registerRuntimeIpcHandlers,
@@ -39,6 +43,8 @@ let mainWindow: BrowserWindow | null = null
 let serviceManager: ServiceManager | null = null
 let connectionManager: ConnectionManager | null = null
 let fileTransferCoordinator: FileTransferCoordinator | null = null
+let discoveryManager: DiscoveryManager | null = null
+let transferPowerSaveController: TransferPowerSaveController | null = null
 let unsubscribeFromService: (() => void) | null = null
 let applicationUnsubscribers: readonly (() => void)[] = []
 let isQuitting = false
@@ -73,6 +79,9 @@ const openMainWindow = (): void => {
     }
     const pendingOffer = fileTransferCoordinator.getPendingOffer()
     if (pendingOffer !== null) sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, pendingOffer)
+    if (discoveryManager !== null) {
+      sendToRenderer(DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL, discoveryManager.getDevices())
+    }
   })
 }
 
@@ -112,14 +121,22 @@ void app.whenReady().then(() => {
     sessionHistory,
     () => settingsStore.getSettings().maxFileSizeBytes,
   )
+  const activeDiscoveryManager = new DiscoveryManager(
+    () => deviceIdentity.getDeviceInfo(activeServiceManager.getStatus()),
+    (error) => logger.warn('device_discovery_error', { error: String(error) }),
+  )
+  const activeTransferPowerSaveController = new TransferPowerSaveController()
   serviceManager = activeServiceManager
   connectionManager = activeConnectionManager
   fileTransferCoordinator = activeFileTransferCoordinator
+  discoveryManager = activeDiscoveryManager
+  transferPowerSaveController = activeTransferPowerSaveController
 
   registerFoundationIpcHandlers(() => mainWindow)
   registerServiceIpcHandlers(() => mainWindow, activeServiceManager, settingsStore)
   registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, activeServiceManager)
   registerConnectionIpcHandlers(() => mainWindow, activeConnectionManager, recentDevices)
+  registerDiscoveryIpcHandlers(() => mainWindow, activeDiscoveryManager)
   registerTextIpcHandlers(() => mainWindow, activeConnectionManager, sessionHistory)
   registerFileTransferIpcHandlers(
     () => mainWindow,
@@ -149,9 +166,11 @@ void app.whenReady().then(() => {
         port: status.port,
         listeningAddresses: status.ipAddresses,
       })
+      activeDiscoveryManager.start()
     } else if (status.state === 'error') {
       logger.warn('service_failed', { port: status.port, errorCode: status.errorCode })
     }
+    if (status.state !== 'running') activeDiscoveryManager.stop()
     sendToRenderer(SERVICE_STATUS_CHANGED_EVENT_CHANNEL, status)
   })
   const loggedTaskStatuses = new Map<string, string>()
@@ -202,7 +221,11 @@ void app.whenReady().then(() => {
           errorCode: task.errorCode,
         })
       }
+      activeTransferPowerSaveController.sync(activeFileTransferCoordinator.getTasks())
       sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
+    }),
+    activeDiscoveryManager.subscribe((devices) => {
+      sendToRenderer(DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL, devices)
     }),
     activeFileTransferCoordinator.subscribeOffers((offer) => {
       logger.info('file_offer_received', {
@@ -238,9 +261,32 @@ app.on('before-quit', (event) => {
   }
   if (isQuitting) return
 
+  if (fileTransferCoordinator.hasActiveTransfers()) {
+    const options = {
+      type: 'warning' as const,
+      title: '传输尚未完成',
+      message: '仍有文件正在等待或传输中，退出将取消这些任务。',
+      detail: '建议等待传输完成后再退出。',
+      buttons: ['继续传输', '退出并取消'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    }
+    const choice =
+      mainWindow === null || mainWindow.isDestroyed()
+        ? dialog.showMessageBoxSync(options)
+        : dialog.showMessageBoxSync(mainWindow, options)
+    if (choice === 0) {
+      event.preventDefault()
+      return
+    }
+  }
+
   event.preventDefault()
   isQuitting = true
   logger.info('application_stopping')
+  discoveryManager?.stop()
+  transferPowerSaveController?.stop()
   connectionManager.disconnect('app_shutdown')
   void fileTransferCoordinator
     .shutdown()

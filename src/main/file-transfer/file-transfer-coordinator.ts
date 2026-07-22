@@ -69,6 +69,7 @@ interface IncomingFileState {
   tokenExpiresAt?: number
   tokenUsed: boolean
   temporaryPath?: string
+  publishedPath?: string
   abortUpload?: () => void
   uploadPromise?: Promise<void>
   failureOverride?: ErrorCode
@@ -149,6 +150,22 @@ export class FileTransferCoordinator {
       files: [...transfer.files.values()].map(({ metadata }) => metadata),
       receivedAt: transfer.task.createdAt,
     }
+  }
+
+  public hasActiveTransfers(): boolean {
+    return this.getTasks().some(
+      (task) => task.kind === 'file' && !TERMINAL_TASK_STATUSES.includes(task.status),
+    )
+  }
+
+  public getReceivedFilePath(transferId: TransferId, fileId?: FileId): string | null {
+    const transfer = this.incoming.get(transferId)
+    if (transfer === undefined || transfer.task.status !== 'completed') return null
+    if (fileId !== undefined) return transfer.files.get(fileId)?.publishedPath ?? null
+    return (
+      [...transfer.files.values()].find((file) => file.publishedPath !== undefined)
+        ?.publishedPath ?? null
+    )
   }
 
   public async offerFiles(selectionTokens: readonly string[]): Promise<TransferTaskDto | null> {
@@ -719,7 +736,11 @@ export class FileTransferCoordinator {
       })
       await pipeline(request, output)
       if (receivedBytes !== file.metadata.size) throw new Error('TRANSFER_FAILED')
-      await publishTemporaryFile(temporaryPath, directoryPath, file.metadata.displayName)
+      file.publishedPath = await publishTemporaryFile(
+        temporaryPath,
+        directoryPath,
+        file.metadata.displayName,
+      )
       delete file.temporaryPath
       transfer.task = updateFile(
         transfer.task,

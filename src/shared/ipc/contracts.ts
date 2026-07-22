@@ -2,6 +2,7 @@ import type {
   AppSettingsDto,
   ConnectionStatusDto,
   DeviceInfo,
+  DiscoveredDeviceDto,
   FileId,
   FileMetadata,
   HistoryEntryDto,
@@ -40,6 +41,7 @@ export interface IpcInvokeMap {
     ConnectionStatusDto
   >
   readonly 'connection:list-recent-devices': InvokeContract<undefined, readonly RecentDeviceDto[]>
+  readonly 'discovery:get-devices': InvokeContract<undefined, readonly DiscoveredDeviceDto[]>
   readonly 'clipboard:read-text': InvokeContract<undefined, string>
   readonly 'clipboard:write-text': InvokeContract<{ readonly text: string }, undefined>
   readonly 'transfer:select-files': InvokeContract<
@@ -71,6 +73,10 @@ export interface IpcInvokeMap {
     TransferTaskDto
   >
   readonly 'transfer:retry': InvokeContract<{ readonly transferId: TransferId }, TransferTaskDto>
+  readonly 'transfer:show-received-file': InvokeContract<
+    { readonly transferId: TransferId; readonly fileId?: FileId },
+    undefined
+  >
   readonly 'history:list': InvokeContract<HistoryFilterDto, readonly HistoryEntryDto[]>
   readonly 'history:clear': InvokeContract<undefined, undefined>
   readonly 'settings:get': InvokeContract<undefined, AppSettingsDto>
@@ -110,6 +116,7 @@ export interface IpcEventMap {
   readonly 'transfer:text-received': TextReceivedDto
   readonly 'transfer:offer-received': FileOfferReceivedDto
   readonly 'settings:changed': AppSettingsDto
+  readonly 'discovery:devices-changed': readonly DiscoveredDeviceDto[]
 }
 
 export type IpcInvokeRequest<TChannel extends keyof IpcInvokeMap> =

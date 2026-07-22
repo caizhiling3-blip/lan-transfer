@@ -66,7 +66,7 @@ export const publishTemporaryFile = async (
   temporaryPath: string,
   directoryPath: string,
   fileName: string,
-): Promise<void> => {
+): Promise<string> => {
   const resolvedDirectory = resolve(directoryPath)
   for (let attempt = 0; attempt < 10_000; attempt += 1) {
     const targetPath = resolve(directoryPath, createConflictName(fileName, attempt))
@@ -77,7 +77,7 @@ export const publishTemporaryFile = async (
       try {
         await link(temporaryPath, targetPath)
         await unlink(temporaryPath).catch(() => undefined)
-        return
+        return targetPath
       } catch (error) {
         if (isNodeError(error) && error.code === 'EEXIST') break
         if (retry < FILE_OPERATION_RETRY_COUNT && isTransientFileLockError(error)) {

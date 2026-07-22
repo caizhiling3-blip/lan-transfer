@@ -4,6 +4,8 @@ import type { TextMessageItem } from '../../src/renderer/types/transfer-activity
 import {
   createTransferActivities,
   formatBytes,
+  formatRemainingTime,
+  getEstimatedRemainingSeconds,
   getTransferPercentage,
 } from '../../src/renderer/utils/transfer-activity'
 import type { DeviceInfo, TransferTaskDto } from '../../src/shared/types'
@@ -64,5 +66,14 @@ describe('transfer activity view model', () => {
     expect(getTransferPercentage(0, 0, false)).toBe(0)
     expect(getTransferPercentage(0, 0, true)).toBe(100)
     expect(getTransferPercentage(75, 100, false)).toBe(75)
+  })
+
+  it('estimates and formats remaining transfer time', () => {
+    expect(getEstimatedRemainingSeconds(200, 1_000, 200)).toBe(4)
+    expect(getEstimatedRemainingSeconds(1_000, 1_000, 200)).toBeNull()
+    expect(getEstimatedRemainingSeconds(200, 1_000, 0)).toBeNull()
+    expect(formatRemainingTime(45)).toBe('45 秒')
+    expect(formatRemainingTime(61)).toBe('2 分钟')
+    expect(formatRemainingTime(3_660)).toBe('1 小时 1 分钟')
   })
 })

@@ -5,7 +5,12 @@ import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
 import type { FileOfferReceivedDto } from '@shared/ipc'
 import type { FileId, TransferStatus, TransferTaskDto } from '@shared/types'
 
-import { formatBytes, getTransferPercentage } from '../../utils/transfer-activity'
+import {
+  formatBytes,
+  formatRemainingTime,
+  getEstimatedRemainingSeconds,
+  getTransferPercentage,
+} from '../../utils/transfer-activity'
 
 const props = defineProps<{
   readonly task: TransferTaskDto
@@ -18,6 +23,7 @@ defineEmits<{
   cancelTask: []
   cancelFile: [fileId: FileId]
   retry: []
+  showReceivedFile: []
 }>()
 
 const statusLabels: Readonly<Record<TransferStatus, string>> = {
@@ -42,6 +48,16 @@ const canRetry = computed(
 )
 const errorMessage = computed(() =>
   props.task.errorCode === undefined ? '' : ERROR_MESSAGES_ZH_CN[props.task.errorCode],
+)
+const estimatedRemainingSeconds = computed(() =>
+  getEstimatedRemainingSeconds(
+    props.task.transferredBytes,
+    props.task.totalBytes,
+    props.task.bytesPerSecond,
+  ),
+)
+const canShowReceivedFile = computed(
+  () => props.task.direction === 'receive' && props.task.status === 'completed',
 )
 const tagType = computed(() => {
   if (props.task.status === 'completed') return 'success'
@@ -102,7 +118,12 @@ const tagType = computed(() => {
       />
       <div class="task-stats">
         <span>{{ formatBytes(task.transferredBytes) }} / {{ formatBytes(task.totalBytes) }}</span>
-        <span v-if="task.status === 'transferring'">{{ formatBytes(task.bytesPerSecond) }}/s</span>
+        <span v-if="task.status === 'transferring'">
+          {{ formatBytes(task.bytesPerSecond) }}/s
+          <template v-if="estimatedRemainingSeconds !== null">
+            · 预计剩余 {{ formatRemainingTime(estimatedRemainingSeconds) }}
+          </template>
+        </span>
       </div>
     </template>
 
@@ -114,6 +135,15 @@ const tagType = computed(() => {
       </el-button>
       <el-button v-if="canRetry" size="small" type="primary" plain @click="$emit('retry')">
         重新发送
+      </el-button>
+      <el-button
+        v-if="canShowReceivedFile"
+        size="small"
+        type="primary"
+        plain
+        @click="$emit('showReceivedFile')"
+      >
+        在文件夹中显示
       </el-button>
     </div>
 

@@ -1,5 +1,6 @@
 import type {
   AppSettingsDto,
+  DiscoveredDeviceDto,
   HistoryFilterDto,
   IpcEventMap,
   IpcInvokeResponse,
@@ -36,6 +37,10 @@ export interface LanTransferApi {
     onStateChanged(listener: EventListener<'connection:state-changed'>): Unsubscribe
     onIncomingRequest(listener: EventListener<'connection:incoming-request'>): Unsubscribe
   }
+  readonly discovery: {
+    getDevices(): Promise<IpcInvokeResponse<'discovery:get-devices'>>
+    onDevicesChanged(listener: (devices: readonly DiscoveredDeviceDto[]) => void): Unsubscribe
+  }
   readonly clipboard: {
     readText(): Promise<IpcInvokeResponse<'clipboard:read-text'>>
     writeText(text: string): Promise<IpcInvokeResponse<'clipboard:write-text'>>
@@ -59,6 +64,10 @@ export interface LanTransferApi {
     ): Promise<IpcInvokeResponse<'transfer:respond-to-offer'>>
     cancel(transferId: TransferId, fileId?: FileId): Promise<IpcInvokeResponse<'transfer:cancel'>>
     retry(transferId: TransferId): Promise<IpcInvokeResponse<'transfer:retry'>>
+    showReceivedFile(
+      transferId: TransferId,
+      fileId?: FileId,
+    ): Promise<IpcInvokeResponse<'transfer:show-received-file'>>
     onTaskChanged(listener: EventListener<'transfer:task-changed'>): Unsubscribe
     onTextReceived(listener: EventListener<'transfer:text-received'>): Unsubscribe
     onOfferReceived(listener: EventListener<'transfer:offer-received'>): Unsubscribe

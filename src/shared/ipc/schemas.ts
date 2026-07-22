@@ -102,6 +102,7 @@ export const ipcInvokeRequestSchemas = {
   'connection:disconnect': noRequestSchema,
   'connection:respond-to-request': respondToConnectionRequestSchema,
   'connection:list-recent-devices': noRequestSchema,
+  'discovery:get-devices': noRequestSchema,
   'clipboard:read-text': noRequestSchema,
   'clipboard:write-text': z.object({ text: textSchema }).strict(),
   'transfer:select-files': selectFilesRequestSchema,
@@ -118,6 +119,9 @@ export const ipcInvokeRequestSchemas = {
     .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })
     .strict(),
   'transfer:retry': z.object({ transferId: transferIdSchema }).strict(),
+  'transfer:show-received-file': z
+    .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })
+    .strict(),
   'history:list': z
     .object({
       direction: z.enum(['send', 'receive']).optional(),

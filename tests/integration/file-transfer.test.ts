@@ -176,6 +176,9 @@ describe('single file transfer', () => {
     await expect(readFile(join(receiveDirectory, '测试 file (1).txt'), 'utf8')).resolves.toBe(
       'new content',
     )
+    expect(receiverCoordinator.getReceivedFilePath(offer.transferId)).toBe(
+      join(receiveDirectory, '测试 file (1).txt'),
+    )
   })
 
   it('propagates a receiver rejection without uploading', async () => {

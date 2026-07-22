@@ -10,6 +10,11 @@ export interface DeviceInfo {
   readonly servicePort: number
 }
 
+export interface DiscoveredDeviceDto {
+  readonly device: DeviceInfo
+  readonly lastSeenAt: number
+}
+
 export type ServiceState = 'stopped' | 'starting' | 'running' | 'error'
 
 export type ConnectionState =

@@ -38,3 +38,21 @@ export const getTransferPercentage = (
       ? 100
       : 0
     : Math.min(100, Math.round((transferredBytes / totalBytes) * 100))
+
+export const getEstimatedRemainingSeconds = (
+  transferredBytes: number,
+  totalBytes: number,
+  bytesPerSecond: number,
+): number | null => {
+  const remainingBytes = Math.max(0, totalBytes - transferredBytes)
+  if (remainingBytes === 0 || bytesPerSecond <= 0) return null
+  return Math.ceil(remainingBytes / bytesPerSecond)
+}
+
+export const formatRemainingTime = (seconds: number): string => {
+  if (seconds < 60) return `${String(seconds)} 秒`
+  if (seconds < 60 * 60) return `${String(Math.ceil(seconds / 60))} 分钟`
+  const hours = Math.floor(seconds / (60 * 60))
+  const minutes = Math.ceil((seconds % (60 * 60)) / 60)
+  return minutes === 0 ? `${String(hours)} 小时` : `${String(hours)} 小时 ${String(minutes)} 分钟`
+}

@@ -3,12 +3,15 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { DEFAULT_SERVICE_PORT } from '@shared/constants'
 import type { ConnectionState, ServiceState } from '@shared/types'
+import type { DeviceInfo } from '@shared/types'
 
 import { useConnectionStore } from '../stores/connection'
+import { useDiscoveryStore } from '../stores/discovery'
 import { useServiceStore } from '../stores/service'
 
 const serviceStore = useServiceStore()
 const connectionStore = useConnectionStore()
+const discoveryStore = useDiscoveryStore()
 const peerIp = ref('')
 const peerPort = ref(DEFAULT_SERVICE_PORT)
 const localDeviceName = ref('')
@@ -71,8 +74,17 @@ const connectionPresentations: Readonly<
 const connectionPresentation = computed(() => connectionPresentations[connectionStore.status.state])
 const isConnected = computed(() => connectionStore.status.state === 'connected')
 
+const connectDiscoveredDevice = (device: DeviceInfo): void => {
+  peerIp.value = device.ipAddress
+  peerPort.value = device.servicePort
+  if (connectionStore.status.state === 'disconnected') {
+    void connectionStore.connect(device.ipAddress, device.servicePort)
+  }
+}
+
 onMounted(() => {
   void serviceStore.initialize()
+  void discoveryStore.initialize()
   void window.lanTransfer.app.getRuntimeInfo().then((result) => {
     if (result.ok) {
       localDeviceName.value = result.data.localDevice.deviceName
@@ -90,6 +102,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   serviceStore.dispose()
+  discoveryStore.dispose()
 })
 </script>
 
@@ -126,6 +139,51 @@ onBeforeUnmount(() => {
         v-if="serviceStore.errorMessage"
         class="message-alert"
         :title="serviceStore.errorMessage"
+        type="error"
+        :closable="false"
+      />
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-header">
+          <span>附近设备</span>
+          <el-tag type="info" effect="plain">{{ discoveryStore.devices.length }} 台在线</el-tag>
+        </div>
+      </template>
+      <el-empty
+        v-if="discoveryStore.devices.length === 0"
+        :image-size="64"
+        description="暂未发现设备，可继续使用手动 IP 连接"
+      />
+      <div v-else class="nearby-list">
+        <div
+          v-for="discovered in discoveryStore.devices"
+          :key="discovered.device.deviceId"
+          class="nearby-device"
+        >
+          <div>
+            <strong>{{ discovered.device.deviceName }}</strong>
+            <p>
+              {{ discovered.device.operatingSystem === 'windows' ? 'Windows' : 'macOS' }} ·
+              {{ discovered.device.ipAddress }}:{{ discovered.device.servicePort }}
+            </p>
+          </div>
+          <el-button
+            type="primary"
+            plain
+            :loading="connectionStore.loading"
+            :disabled="connectionStore.status.state !== 'disconnected'"
+            @click="connectDiscoveredDevice(discovered.device)"
+          >
+            连接
+          </el-button>
+        </div>
+      </div>
+      <el-alert
+        v-if="discoveryStore.errorMessage"
+        class="message-alert"
+        :title="discoveryStore.errorMessage"
         type="error"
         :closable="false"
       />
@@ -261,5 +319,27 @@ onBeforeUnmount(() => {
   color: var(--app-text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.nearby-list {
+  display: grid;
+  gap: 10px;
+}
+
+.nearby-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-surface-muted);
+}
+
+.nearby-device p {
+  margin: 5px 0 0;
+  color: var(--app-text-muted);
+  font-size: 12px;
 }
 </style>

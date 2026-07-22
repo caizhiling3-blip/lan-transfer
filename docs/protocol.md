@@ -20,6 +20,25 @@ interface BaseMessage<TType extends string, TPayload> {
 
 ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳，并且只能处于接收端当前时间前后 5 分钟。对象拒绝未知字段，WebSocket 只接受文本 JSON 控制消息，单条消息最大 128 KiB，文字正文最大 64 KiB（按 UTF-8 字节计算）。连接内消息和新建 WebSocket Upgrade 均有限速。
 
+## UDP 设备发现
+
+1.1 增加独立于 WebSocket 的 UDP4 组播发现。应用每 5 秒向 `239.255.53.17:53318` 发送一个最大 8 KiB 的 JSON 数据报，组播 TTL 为 1：
+
+```ts
+interface DiscoveryAnnouncement {
+  appId: 'lan-drop'
+  protocolVersion: 1
+  messageId: string
+  deviceId: string
+  deviceName: string
+  operatingSystem: 'windows' | 'macos'
+  servicePort: number
+  timestamp: number
+}
+```
+
+对象严格拒绝未知字段，ID、端口、名称和时间戳使用 shared schema 校验。发现包不携带 IP，接收端使用数据报来源 IPv4；自身消息、时间偏差超限和非法 JSON 被静默忽略。设备 16 秒未刷新即从列表移除。发现只提供连接地址，后续仍使用 `/v1/ws` 完成审批握手，不能凭发现包建立信任或授权上传。
+
 ## 设备消息
 
 | type                | payload                                                |

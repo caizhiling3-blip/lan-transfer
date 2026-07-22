@@ -83,6 +83,13 @@ const openLink = async (url: string): Promise<void> => {
   if (!result.ok) ElMessage.error('无法打开该链接')
 }
 
+const showReceivedFile = async (
+  transferId: Parameters<typeof window.lanTransfer.transfer.showReceivedFile>[0],
+): Promise<void> => {
+  const result = await window.lanTransfer.transfer.showReceivedFile(transferId)
+  if (!result.ok) ElMessage.error('文件已被移动或删除，无法在文件夹中显示')
+}
+
 const addDroppedFiles = (files: readonly File[]): void => {
   if (!isConnected.value) {
     ElMessage.warning('请先连接设备')
@@ -154,6 +161,7 @@ onBeforeUnmount(() => {
             @cancel-task="fileTransferStore.cancel(activity.task.transferId)"
             @cancel-file="cancelFile(activity.task.transferId, $event)"
             @retry="fileTransferStore.retry(activity.task.transferId)"
+            @show-received-file="showReceivedFile(activity.task.transferId)"
           />
         </template>
       </div>

@@ -101,7 +101,7 @@ pnpm package:mac
 
 ## macOS 本地网络与防火墙
 
-Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网直连设备。第一版没有 UDP/Bonjour 自动发现，因此不声明 Bonjour service type。
+Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网直连设备。1.1 使用原生 UDP4 组播自动发现，不使用 Bonjour，因此不声明 Bonjour service type。
 
 打包钩子会关闭 ATS 任意网络加载、删除模板中的 localhost 例外域，并移除应用未使用的相机、麦克风、音频采集和蓝牙用途描述。局域网 HTTP/WebSocket 由受控的 Electron 主进程处理，渲染进程仍受 CSP 和安全窗口配置限制。
 
@@ -112,6 +112,7 @@ Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网
 - 重新允许权限并重启服务，确认连接恢复；
 - 开启 macOS 防火墙后检查传入连接提示与应用规则，分别验证允许和阻止；
 - 只在受信任网络测试，端口变更后重新检查监听和连接；
+- 检查 UDP 53318 组播发现；防火墙阻止组播时应保留手动 IP 连接回退，Windows 只应为专用网络放行；
 - 下载、文稿和桌面目录只在用户通过系统选择器授权后访问。
 
 未签名应用的本地网络权限身份在不同构建之间可能不稳定；正式包应使用稳定 Developer ID 签名。

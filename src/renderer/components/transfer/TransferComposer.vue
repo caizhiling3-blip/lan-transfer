@@ -49,6 +49,13 @@ const handleDrop = (event: DragEvent): void => {
   if (files === undefined || files.length === 0) return
   emit('dropFiles', Array.from(files))
 }
+
+const handleComposerKeydown = (event: KeyboardEvent): void => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+
+  event.preventDefault()
+  if (props.canSend) emit('send')
+}
 </script>
 
 <template>
@@ -86,8 +93,7 @@ const handleDrop = (event: DragEvent): void => {
       :rows="4"
       resize="vertical"
       placeholder="输入文字或链接，也可以添加或拖入文件"
-      @keydown.meta.enter.prevent="$emit('send')"
-      @keydown.ctrl.enter.prevent="$emit('send')"
+      @keydown="handleComposerKeydown"
     />
 
     <div class="composer-footer">
@@ -102,6 +108,7 @@ const handleDrop = (event: DragEvent): void => {
         <el-button @click="$emit('readClipboard')">读取剪贴板</el-button>
       </div>
       <div class="send-area">
+        <span class="send-hint">Enter 发送 · Shift+Enter 换行</span>
         <span :class="{ 'limit-exceeded': contentBytes > MAX_TEXT_BYTES }">
           {{ contentBytes }} / {{ MAX_TEXT_BYTES }} 字节
         </span>
@@ -185,6 +192,10 @@ const handleDrop = (event: DragEvent): void => {
 .send-area > span {
   color: var(--app-text-muted);
   font-size: 12px;
+}
+
+.send-area .send-hint {
+  color: var(--app-text-secondary);
 }
 
 .composer-footer {
