@@ -79,6 +79,8 @@ manifest 文件按规范化 relativePath 升序排列，空目录同样排序。
 
 上传每个文件前重新打开并核对文件身份、大小和修改时间。文件夹扫描后新增、删除或替换内容不会被静默纳入原任务；不一致时任务失败并提示重新选择。
 
+阶段 2 已实现扫描器、系统文件夹选择、文件/文件夹混合拖拽、一次性 folder selectionToken 和 renderer 摘要预览。协议 offer、manifest 分片和 token 消费从阶段 3 开始实现。
+
 ## 协议版本与 Manifest 分片
 
 文件夹能力使用协议版本 2。原因是 hello/welcome 和消息 schema 当前为 strict，版本 1 客户端无法安全协商新能力。v1 与 v2 连接必须返回 `PROTOCOL_INVALID` 并在 UI 显示双方版本不一致；本版本不维护双协议栈。

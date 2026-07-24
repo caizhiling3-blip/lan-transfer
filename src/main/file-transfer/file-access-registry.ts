@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { lstat, realpath } from 'node:fs/promises'
-import { basename, extname, isAbsolute } from 'node:path'
+import { basename, isAbsolute } from 'node:path'
 
 import { dialog } from 'electron'
 import type { BrowserWindow } from 'electron'
@@ -9,14 +9,24 @@ import {
   DIRECTORY_SELECTION_TOKEN_TTL_MS,
   FILE_SELECTION_TOKEN_TTL_MS,
   MAX_AUTHORIZED_DIRECTORIES,
+  MAX_AUTHORIZED_FOLDER_SELECTIONS,
   MAX_AUTHORIZED_FILE_SELECTIONS,
   MAX_FILE_SIZE_BYTES,
   MAX_FILES_PER_TRANSFER,
+  MAX_TOP_LEVEL_TRANSFER_ITEMS,
 } from '@shared/constants'
 import { fileIdSchema } from '@shared/types'
-import type { SelectedDirectoryDto, SelectedFileDto } from '@shared/types'
+import type {
+  SelectedDirectoryDto,
+  SelectedFileDto,
+  SelectedFolderDto,
+  SelectedTransferItemDto,
+} from '@shared/types'
 
 import { assertSafeReceiveDirectory, sanitizeFileName } from '../security'
+import { scanFolder } from './folder-scanner'
+import type { AuthorizedFolderFile } from './folder-scanner'
+import { getMimeType } from './mime-type'
 
 export interface AuthorizedSourceFile {
   readonly path: string
@@ -28,27 +38,23 @@ export interface AuthorizedSourceFile {
   }
 }
 
+export interface AuthorizedSourceFolder {
+  readonly rootPath: string
+  readonly selection: SelectedFolderDto
+  readonly manifest: Awaited<ReturnType<typeof scanFolder>>['manifest']
+  readonly files: readonly AuthorizedFolderFile[]
+}
+
 interface ExpiringValue<T> {
   readonly value: T
   readonly expiresAt: number
-}
-
-const MIME_TYPES: Readonly<Record<string, string>> = {
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.json': 'application/json',
-  '.pdf': 'application/pdf',
-  '.png': 'image/png',
-  '.txt': 'text/plain',
-  '.webp': 'image/webp',
-  '.zip': 'application/zip',
 }
 
 const createToken = (): string => randomBytes(32).toString('base64url')
 
 export class FileAccessRegistry {
   private readonly sourceFiles = new Map<string, ExpiringValue<AuthorizedSourceFile>>()
+  private readonly sourceFolders = new Map<string, ExpiringValue<AuthorizedSourceFolder>>()
   private readonly directories = new Map<string, ExpiringValue<string>>()
 
   public constructor(
@@ -75,6 +81,62 @@ export class FileAccessRegistry {
     return this.registerFilePaths(filePaths)
   }
 
+  public async selectFolder(window: BrowserWindow): Promise<SelectedFolderDto | null> {
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openDirectory'],
+      title: '选择要发送的文件夹',
+    })
+    const folderPath = result.filePaths[0]
+    if (result.canceled || folderPath === undefined) return null
+    const folder = await this.authorizeFolderPath(folderPath)
+    this.storeAuthorizedFolders([folder])
+    return folder.selection
+  }
+
+  public async registerDroppedItems(
+    itemPaths: readonly string[],
+  ): Promise<readonly SelectedTransferItemDto[]> {
+    const uniquePaths = [...new Set(itemPaths)]
+    if (uniquePaths.length === 0 || uniquePaths.length > MAX_FILES_PER_TRANSFER) {
+      throw new Error('FILE_COUNT_EXCEEDED')
+    }
+    this.pruneExpired()
+    const itemMetadata = await Promise.all(
+      uniquePaths.map(async (itemPath) => {
+        if (!isAbsolute(itemPath)) throw new Error('FILE_NOT_FOUND')
+        const metadata = await lstat(itemPath).catch(() => null)
+        if (metadata === null) throw new Error('FILE_NOT_FOUND')
+        if (metadata.isSymbolicLink()) throw new Error('FOLDER_SYMLINK_UNSUPPORTED')
+        return { itemPath, metadata }
+      }),
+    )
+    if (
+      itemMetadata.some(({ metadata }) => metadata.isDirectory()) &&
+      itemMetadata.length > MAX_TOP_LEVEL_TRANSFER_ITEMS
+    ) {
+      throw new Error('FILE_COUNT_EXCEEDED')
+    }
+    const authorizedFiles: AuthorizedSourceFile[] = []
+    const authorizedFolders: AuthorizedSourceFolder[] = []
+    const selections: SelectedTransferItemDto[] = []
+    for (const { itemPath, metadata } of itemMetadata) {
+      if (metadata.isFile()) {
+        const file = await this.authorizeFilePath(itemPath)
+        authorizedFiles.push(file)
+        selections.push({ kind: 'file', file: file.selection })
+      } else if (metadata.isDirectory()) {
+        const folder = await this.authorizeFolderPath(itemPath)
+        authorizedFolders.push(folder)
+        selections.push({ kind: 'folder', folder: folder.selection })
+      } else {
+        throw new Error('FOLDER_PATH_INVALID')
+      }
+    }
+    this.storeAuthorizedFiles(authorizedFiles)
+    this.storeAuthorizedFolders(authorizedFolders)
+    return selections
+  }
+
   private async registerFilePaths(
     filePaths: readonly string[],
   ): Promise<readonly SelectedFileDto[]> {
@@ -85,50 +147,81 @@ export class FileAccessRegistry {
 
     this.pruneExpired()
     const authorizedFiles = await Promise.all(
-      uniquePaths.map(async (filePath): Promise<AuthorizedSourceFile> => {
-        if (!isAbsolute(filePath)) throw new Error('FILE_NOT_FOUND')
-        const selectedMetadata = await lstat(filePath)
-        if (!selectedMetadata.isFile() || selectedMetadata.isSymbolicLink()) {
-          throw new Error('FILE_NOT_FOUND')
-        }
-        const canonicalPath = await realpath(filePath)
-        const metadata = await lstat(canonicalPath)
-        if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('FILE_NOT_FOUND')
-        if (metadata.size > this.getMaximumFileSize()) throw new Error('FILE_TOO_LARGE')
-
-        const selectionToken = createToken()
-        const extension = extname(filePath).toLowerCase()
-        return {
-          path: canonicalPath,
-          identity: {
-            device: metadata.dev,
-            inode: metadata.ino,
-            modifiedAt: metadata.mtimeMs,
-          },
-          selection: {
-            selectionToken,
-            fileId: fileIdSchema.parse(randomUUID()),
-            displayName: sanitizeFileName(basename(canonicalPath)),
-            size: metadata.size,
-            mimeType: MIME_TYPES[extension] ?? 'application/octet-stream',
-          },
-        }
-      }),
+      uniquePaths.map((filePath) => this.authorizeFilePath(filePath)),
     )
+    this.storeAuthorizedFiles(authorizedFiles)
+    return authorizedFiles.map(({ selection }) => selection)
+  }
+
+  private async authorizeFilePath(filePath: string): Promise<AuthorizedSourceFile> {
+    if (!isAbsolute(filePath)) throw new Error('FILE_NOT_FOUND')
+    const selectedMetadata = await lstat(filePath)
+    if (!selectedMetadata.isFile() || selectedMetadata.isSymbolicLink()) {
+      throw new Error('FILE_NOT_FOUND')
+    }
+    const canonicalPath = await realpath(filePath)
+    const metadata = await lstat(canonicalPath)
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('FILE_NOT_FOUND')
+    if (metadata.size > this.getMaximumFileSize()) throw new Error('FILE_TOO_LARGE')
+    return {
+      path: canonicalPath,
+      identity: {
+        device: metadata.dev,
+        inode: metadata.ino,
+        modifiedAt: metadata.mtimeMs,
+      },
+      selection: {
+        selectionToken: createToken(),
+        fileId: fileIdSchema.parse(randomUUID()),
+        displayName: sanitizeFileName(basename(canonicalPath)),
+        size: metadata.size,
+        mimeType: getMimeType(canonicalPath),
+      },
+    }
+  }
+
+  private async authorizeFolderPath(folderPath: string): Promise<AuthorizedSourceFolder> {
+    const scanned = await scanFolder(folderPath, { maximumFileSize: this.getMaximumFileSize() })
+    return {
+      rootPath: scanned.rootPath,
+      manifest: scanned.manifest,
+      files: scanned.files,
+      selection: {
+        selectionToken: createToken(),
+        displayName: scanned.manifest.displayName,
+        fileCount: scanned.manifest.files.length,
+        emptyDirectoryCount: scanned.manifest.emptyDirectories.length,
+        totalSize: scanned.manifest.totalSize,
+      },
+    }
+  }
+
+  private storeAuthorizedFiles(files: readonly AuthorizedSourceFile[]): void {
     const expiresAt = Date.now() + FILE_SELECTION_TOKEN_TTL_MS
-    for (const authorizedFile of authorizedFiles) {
-      this.sourceFiles.set(authorizedFile.selection.selectionToken, {
-        value: authorizedFile,
-        expiresAt,
-      })
+    for (const file of files) {
+      this.sourceFiles.set(file.selection.selectionToken, { value: file, expiresAt })
     }
     this.enforceLimit(this.sourceFiles, MAX_AUTHORIZED_FILE_SELECTIONS)
-    return authorizedFiles.map(({ selection }) => selection)
+  }
+
+  private storeAuthorizedFolders(folders: readonly AuthorizedSourceFolder[]): void {
+    const expiresAt = Date.now() + FILE_SELECTION_TOKEN_TTL_MS
+    for (const folder of folders) {
+      this.sourceFolders.set(folder.selection.selectionToken, { value: folder, expiresAt })
+    }
+    this.enforceLimit(this.sourceFolders, MAX_AUTHORIZED_FOLDER_SELECTIONS)
   }
 
   public consumeSource(selectionToken: string): AuthorizedSourceFile | null {
     const entry = this.sourceFiles.get(selectionToken)
     this.sourceFiles.delete(selectionToken)
+    if (entry === undefined || entry.expiresAt < Date.now()) return null
+    return entry.value
+  }
+
+  public consumeFolder(selectionToken: string): AuthorizedSourceFolder | null {
+    const entry = this.sourceFolders.get(selectionToken)
+    this.sourceFolders.delete(selectionToken)
     if (entry === undefined || entry.expiresAt < Date.now()) return null
     return entry.value
   }
@@ -184,6 +277,9 @@ export class FileAccessRegistry {
     }
     for (const [token, entry] of this.directories) {
       if (entry.expiresAt < now) this.directories.delete(token)
+    }
+    for (const [token, entry] of this.sourceFolders) {
+      if (entry.expiresAt < now) this.sourceFolders.delete(token)
     }
   }
 

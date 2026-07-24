@@ -48,9 +48,13 @@ const scrollToLatest = (): void => {
 
 watch(() => activities.value.at(-1)?.id, scrollToLatest)
 watch(isConnected, (connected, wasConnected) => {
-  if (!connected && wasConnected && fileTransferStore.pendingFiles.length > 0) {
-    fileTransferStore.clearPendingFiles()
-    ElMessage.info('连接已断开，待发送文件已清空，请重新选择')
+  if (
+    !connected &&
+    wasConnected &&
+    (fileTransferStore.pendingFiles.length > 0 || fileTransferStore.pendingFolders.length > 0)
+  ) {
+    fileTransferStore.clearPendingItems()
+    ElMessage.info('连接已断开，待发送内容已清空，请重新选择')
   }
 })
 
@@ -90,12 +94,12 @@ const showReceivedFile = async (
   if (!result.ok) ElMessage.error('文件已被移动或删除，无法在文件夹中显示')
 }
 
-const addDroppedFiles = (files: readonly File[]): void => {
+const addDroppedItems = (items: readonly File[]): void => {
   if (!isConnected.value) {
     ElMessage.warning('请先连接设备')
     return
   }
-  void fileTransferStore.registerDroppedFiles(files)
+  void fileTransferStore.registerDroppedItems(items)
 }
 
 const respondToOffer = (decision: 'accept' | 'reject', chooseDirectory = false): void => {
@@ -169,15 +173,18 @@ onBeforeUnmount(() => {
       <TransferComposer
         v-model="content"
         :pending-files="fileTransferStore.pendingFiles"
+        :pending-folders="fileTransferStore.pendingFolders"
         :content-bytes="contentBytes"
         :connected="isConnected"
         :selecting="fileTransferStore.selecting"
         :sending="isSending"
         :can-send="canSend"
         @add-files="fileTransferStore.selectFiles"
-        @drop-files="addDroppedFiles"
+        @add-folder="fileTransferStore.selectFolder"
+        @drop-items="addDroppedItems"
         @remove-file="fileTransferStore.removePendingFile"
-        @clear-files="fileTransferStore.clearPendingFiles"
+        @remove-folder="fileTransferStore.removePendingFolder"
+        @clear-items="fileTransferStore.clearPendingItems"
         @read-clipboard="readClipboard"
         @send="send"
       />

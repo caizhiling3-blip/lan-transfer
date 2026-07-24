@@ -47,9 +47,13 @@ export interface LanTransferApi {
   }
   readonly transfer: {
     selectFiles(multiple: boolean): Promise<IpcInvokeResponse<'transfer:select-files'>>
+    selectFolder(): Promise<IpcInvokeResponse<'transfer:select-folder'>>
     registerDroppedFiles(
       files: readonly File[],
     ): Promise<IpcInvokeResponse<'transfer:register-dropped-files'>>
+    registerDroppedItems(
+      files: readonly File[],
+    ): Promise<IpcInvokeResponse<'transfer:register-dropped-items'>>
     sendText(
       content: string,
       contentType: 'text' | 'link',

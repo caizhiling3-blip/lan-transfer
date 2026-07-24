@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -52,5 +52,50 @@ describe('FileAccessRegistry dropped files', () => {
     const registry = new FileAccessRegistry(() => directory)
 
     await expect(registry.registerDroppedFiles([linkPath])).rejects.toThrow('FILE_NOT_FOUND')
+  })
+})
+
+describe('FileAccessRegistry folders', () => {
+  it('registers a mixed drop without exposing source paths', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'lan-transfer-folder-drop-'))
+    temporaryDirectories.push(directory)
+    const filePath = join(directory, 'single.txt')
+    const folderPath = join(directory, '项目资料')
+    await writeFile(filePath, 'single')
+    await mkdir(folderPath)
+    await writeFile(join(folderPath, 'readme.txt'), 'folder')
+    const registry = new FileAccessRegistry(() => directory)
+
+    const selections = await registry.registerDroppedItems([filePath, folderPath])
+
+    expect(selections.map(({ kind }) => kind)).toEqual(['file', 'folder'])
+    const folderSelection = selections[1]
+    expect(folderSelection?.kind).toBe('folder')
+    if (folderSelection?.kind !== 'folder') throw new Error('Expected folder selection')
+    expect(folderSelection.folder).toMatchObject({
+      displayName: '项目资料',
+      fileCount: 1,
+      emptyDirectoryCount: 0,
+      totalSize: 6,
+    })
+    expect(JSON.stringify(folderSelection.folder)).not.toContain(folderPath)
+    expect(registry.consumeFolder(folderSelection.folder.selectionToken)?.rootPath).toBe(
+      await realpath(folderPath),
+    )
+    expect(registry.consumeFolder(folderSelection.folder.selectionToken)).toBeNull()
+  })
+
+  it('does not retain partial authorizations when a mixed drop is invalid', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'lan-transfer-folder-drop-'))
+    temporaryDirectories.push(directory)
+    const filePath = join(directory, 'single.txt')
+    const linkPath = join(directory, 'link')
+    await writeFile(filePath, 'single')
+    await symlink(filePath, linkPath)
+    const registry = new FileAccessRegistry(() => directory)
+
+    await expect(registry.registerDroppedItems([filePath, linkPath])).rejects.toThrow(
+      'FOLDER_SYMLINK_UNSUPPORTED',
+    )
   })
 })

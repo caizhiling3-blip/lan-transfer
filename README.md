@@ -2,7 +2,7 @@
 
 「邻渡」是一款基于 Electron、Vue 3 和 TypeScript 的 Windows/macOS 局域网文字与文件互传应用。
 
-当前进度：1.2 文件夹传输阶段 1（需求与协议设计）。1.1 已支持自动发现、手动连接以及文字、链接和 1–20 个文件互传；1.2 将按独立阶段增加安全文件夹扫描、manifest 分片、逐文件流式上传、临时目录发布、多任务队列和后台通知。完整边界见 [文件夹传输设计](docs/folder-transfer.md)。Windows x64 使用 NSIS 安装包，macOS 分别生成 Apple Silicon 与 Intel DMG；当前测试包均未签名。
+当前进度：1.2 文件夹传输阶段 2（安全扫描与短期授权）。主进程已支持系统文件夹选择和文件/文件夹混合拖拽扫描，严格限制符号链接、路径、层级、数量、大小、扫描时间和 manifest 内存；renderer 只获得文件夹摘要与 10 分钟 token。folder offer 和实际发送将在阶段 3 接入。完整边界见 [文件夹传输设计](docs/folder-transfer.md)。
 
 ## 环境要求
 

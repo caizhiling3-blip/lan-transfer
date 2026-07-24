@@ -1,4 +1,6 @@
 export * from './file-access-registry'
 export * from './file-system'
 export * from './file-transfer-coordinator'
+export * from './folder-scanner'
+export * from './mime-type'
 export * from './transfer-power-save'

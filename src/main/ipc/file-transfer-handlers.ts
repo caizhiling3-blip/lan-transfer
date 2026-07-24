@@ -2,7 +2,13 @@ import { shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 
 import type { ErrorCode } from '@shared/errors'
-import type { OperationResult, SelectedDirectoryDto, SelectedFileDto } from '@shared/types'
+import type {
+  OperationResult,
+  SelectedDirectoryDto,
+  SelectedFileDto,
+  SelectedFolderDto,
+  SelectedTransferItemDto,
+} from '@shared/types'
 
 import type { FileAccessRegistry, FileTransferCoordinator } from '../file-transfer'
 import { registerIpcHandler } from './register-handler'
@@ -15,6 +21,15 @@ const mapError = (error: unknown): ErrorCode => {
     if (error.message === 'FILE_TOO_LARGE') return 'FILE_TOO_LARGE'
     if (error.message === 'FILE_COUNT_EXCEEDED') return 'FILE_COUNT_EXCEEDED'
     if (error.message === 'SAVE_DIRECTORY_INVALID') return 'SAVE_DIRECTORY_INVALID'
+    if (error.message === 'FOLDER_NOT_FOUND') return 'FOLDER_NOT_FOUND'
+    if (error.message === 'FOLDER_SCAN_TIMEOUT') return 'FOLDER_SCAN_TIMEOUT'
+    if (error.message === 'FOLDER_FILE_COUNT_EXCEEDED') return 'FOLDER_FILE_COUNT_EXCEEDED'
+    if (error.message === 'FOLDER_TOTAL_SIZE_EXCEEDED') return 'FOLDER_TOTAL_SIZE_EXCEEDED'
+    if (error.message === 'FOLDER_DEPTH_EXCEEDED') return 'FOLDER_DEPTH_EXCEEDED'
+    if (error.message === 'FOLDER_PATH_INVALID') return 'FOLDER_PATH_INVALID'
+    if (error.message === 'FOLDER_PATH_CONFLICT') return 'FOLDER_PATH_CONFLICT'
+    if (error.message === 'FOLDER_MANIFEST_TOO_LARGE') return 'FOLDER_MANIFEST_TOO_LARGE'
+    if (error.message === 'FOLDER_SYMLINK_UNSUPPORTED') return 'FOLDER_SYMLINK_UNSUPPORTED'
   }
   return 'TRANSFER_FAILED'
 }
@@ -38,12 +53,37 @@ export const registerFileTransferIpcHandlers = (
     }
   })
 
+  registerIpcHandler('transfer:select-folder', getWindow, async () => {
+    const window = getWindow()
+    if (window === null || window.isDestroyed()) {
+      return { ok: false, error: { code: 'MESSAGE_INVALID' } }
+    }
+    try {
+      return { ok: true, data: await fileAccess.selectFolder(window) }
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: mapError(error) },
+      } satisfies OperationResult<SelectedFolderDto | null>
+    }
+  })
+
   registerIpcHandler('transfer:register-dropped-files', getWindow, async ({ paths }) => {
     try {
       return { ok: true, data: await fileAccess.registerDroppedFiles(paths) }
     } catch (error) {
       return { ok: false, error: { code: mapError(error) } } satisfies OperationResult<
         readonly SelectedFileDto[]
+      >
+    }
+  })
+
+  registerIpcHandler('transfer:register-dropped-items', getWindow, async ({ paths }) => {
+    try {
+      return { ok: true, data: await fileAccess.registerDroppedItems(paths) }
+    } catch (error) {
+      return { ok: false, error: { code: mapError(error) } } satisfies OperationResult<
+        readonly SelectedTransferItemDto[]
       >
     }
   })

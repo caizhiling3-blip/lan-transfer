@@ -15,6 +15,8 @@ import type {
   RuntimeInfoDto,
   SelectedDirectoryDto,
   SelectedFileDto,
+  SelectedFolderDto,
+  SelectedTransferItemDto,
   ServiceStatusDto,
   TransferId,
   TransferTaskDto,
@@ -48,9 +50,14 @@ export interface IpcInvokeMap {
     { readonly multiple: boolean },
     readonly SelectedFileDto[]
   >
+  readonly 'transfer:select-folder': InvokeContract<undefined, SelectedFolderDto | null>
   readonly 'transfer:register-dropped-files': InvokeContract<
     { readonly paths: readonly string[] },
     readonly SelectedFileDto[]
+  >
+  readonly 'transfer:register-dropped-items': InvokeContract<
+    { readonly paths: readonly string[] },
+    readonly SelectedTransferItemDto[]
   >
   readonly 'transfer:send-text': InvokeContract<
     { readonly content: string; readonly contentType: 'text' | 'link' },

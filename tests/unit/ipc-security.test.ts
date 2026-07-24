@@ -134,6 +134,21 @@ describe('IPC request schemas', () => {
     ).toThrow()
   })
 
+  it('allows only bounded unique dropped file and folder items', () => {
+    expect(() =>
+      parseIpcInvokeRequest('transfer:register-dropped-items', {
+        paths: ['/tmp/report.txt', '/tmp/project'],
+      }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('transfer:register-dropped-items', {
+        paths: ['/tmp/project', '/tmp/project'],
+      }),
+    ).toThrow()
+    expect(() => parseIpcInvokeRequest('transfer:select-folder', undefined)).not.toThrow()
+    expect(() => parseIpcInvokeRequest('transfer:select-folder', {})).toThrow()
+  })
+
   it('does not allow a directory token on rejection', () => {
     expect(() =>
       parseIpcInvokeRequest('transfer:respond-to-offer', {

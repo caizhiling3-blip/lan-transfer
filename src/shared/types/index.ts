@@ -1,5 +1,6 @@
 export * from './app'
 export * from './device'
 export * from './identifiers'
+export * from './folder'
 export * from './result'
 export * from './transfer'

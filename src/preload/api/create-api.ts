@@ -74,8 +74,13 @@ export const createLanTransferApi = (): LanTransferApi => {
     }),
     transfer: Object.freeze({
       selectFiles: (multiple: boolean) => invoke('transfer:select-files', { multiple }),
+      selectFolder: () => invoke('transfer:select-folder', undefined),
       registerDroppedFiles: (files: readonly File[]) =>
         invoke('transfer:register-dropped-files', {
+          paths: files.map((file) => webUtils.getPathForFile(file)).filter((path) => path !== ''),
+        }),
+      registerDroppedItems: (files: readonly File[]) =>
+        invoke('transfer:register-dropped-items', {
           paths: files.map((file) => webUtils.getPathForFile(file)).filter((path) => path !== ''),
         }),
       sendText: (content, contentType) => invoke('transfer:send-text', { content, contentType }),

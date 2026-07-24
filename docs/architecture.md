@@ -112,6 +112,8 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 
 主进程扫描器拥有真实根路径和逐文件身份快照；Preload/renderer 只持有短期 selectionToken 与摘要。最大 2 MiB manifest 以最多 32 个 WS 消息分片传输，接收端在有界 assembler 中校验后才投影 offer。HTTP 路由只使用 transferId/fileId 查找已验证相对路径，不接受 URL、header 或 renderer 提供的目标路径。
 
+阶段 2 已实现 `scanFolder` 和 FileAccessRegistry 文件夹授权。扫描对规范化路径使用跨平台确定性排序，逐项 lstat/realpath 并验证仍位于根目录；普通文件记录设备号、inode、大小和修改时间。混合拖拽先验证所有顶层项，全部成功后才把文件和文件夹 token 写入有界注册表，避免部分失败留下 renderer 不可见的授权。
+
 接收内容先进入授权目录中的任务 staging 目录。整个树完整后独占创建新的最终目录，并以 ownership marker 约束发布失败和启动清理只能作用于当前任务创建的目录；不使用可能覆盖空目录的跨平台 rename 假设。详细设计见 [文件夹传输设计](folder-transfer.md)。
 
 ## 统一传输体验

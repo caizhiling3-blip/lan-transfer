@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import { MAX_FILES_PER_TRANSFER, MAX_TEXT_BYTES } from '@shared/constants'
-import type { FileId, SelectedFileDto } from '@shared/types'
+import {
+  MAX_FILES_PER_TRANSFER,
+  MAX_TEXT_BYTES,
+  MAX_TOP_LEVEL_TRANSFER_ITEMS,
+} from '@shared/constants'
+import type { FileId, SelectedFileDto, SelectedFolderDto } from '@shared/types'
 
 import { formatBytes } from '../../utils/transfer-activity'
 
 const content = defineModel<string>({ required: true })
 const props = defineProps<{
   readonly pendingFiles: readonly SelectedFileDto[]
+  readonly pendingFolders: readonly SelectedFolderDto[]
   readonly contentBytes: number
   readonly connected: boolean
   readonly selecting: boolean
@@ -18,9 +23,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   addFiles: []
-  dropFiles: [files: readonly File[]]
+  addFolder: []
+  dropItems: [items: readonly File[]]
   removeFile: [fileId: FileId]
-  clearFiles: []
+  removeFolder: [selectionToken: string]
+  clearItems: []
   readClipboard: []
   send: []
 }>()
@@ -47,7 +54,7 @@ const handleDrop = (event: DragEvent): void => {
   isDraggingFiles.value = false
   const files = event.dataTransfer?.files
   if (files === undefined || files.length === 0) return
-  emit('dropFiles', Array.from(files))
+  emit('dropItems', Array.from(files))
 }
 
 const handleComposerKeydown = (event: KeyboardEvent): void => {
@@ -66,12 +73,17 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
     @dragleave.prevent="handleDragLeave"
     @drop.prevent="handleDrop"
   >
-    <div v-if="pendingFiles.length > 0" class="pending-tray">
+    <div v-if="pendingFiles.length > 0 || pendingFolders.length > 0" class="pending-tray">
       <div class="pending-heading">
         <span>
-          待发送 {{ pendingFiles.length }} 个文件 · {{ formatBytes(totalPendingBytes) }}
+          待发送 {{ pendingFiles.length }} 个文件、{{ pendingFolders.length }} 个文件夹 ·
+          {{
+            formatBytes(
+              totalPendingBytes + pendingFolders.reduce((sum, item) => sum + item.totalSize, 0),
+            )
+          }}
         </span>
-        <el-button text size="small" @click="$emit('clearFiles')">清空</el-button>
+        <el-button text size="small" @click="$emit('clearItems')">清空</el-button>
       </div>
       <div class="pending-files">
         <div v-for="file in pendingFiles" :key="file.fileId" class="pending-file">
@@ -83,8 +95,28 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
             移除
           </el-button>
         </div>
+        <div
+          v-for="folder in pendingFolders"
+          :key="folder.selectionToken"
+          class="pending-file pending-folder"
+        >
+          <div>
+            <strong>{{ folder.displayName }}</strong>
+            <span>
+              文件夹 · {{ folder.fileCount }} 个文件 · {{ formatBytes(folder.totalSize) }}
+            </span>
+          </div>
+          <el-button
+            text
+            type="danger"
+            size="small"
+            @click="$emit('removeFolder', folder.selectionToken)"
+          >
+            移除
+          </el-button>
+        </div>
       </div>
-      <small>文件选择授权保留 10 分钟；发送时仍需对方确认接收。</small>
+      <small> 选择授权保留 10 分钟；文件夹已完成安全扫描，发送能力将在下一阶段接入。 </small>
     </div>
 
     <el-input
@@ -100,10 +132,25 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
       <div class="composer-tools">
         <el-button
           :loading="selecting"
-          :disabled="!connected || pendingFiles.length >= MAX_FILES_PER_TRANSFER"
+          :disabled="
+            !connected ||
+            (pendingFolders.length > 0
+              ? pendingFiles.length + pendingFolders.length >= MAX_TOP_LEVEL_TRANSFER_ITEMS
+              : pendingFiles.length >= MAX_FILES_PER_TRANSFER)
+          "
           @click="$emit('addFiles')"
         >
           添加文件
+        </el-button>
+        <el-button
+          :loading="selecting"
+          :disabled="
+            !connected ||
+            pendingFiles.length + pendingFolders.length >= MAX_TOP_LEVEL_TRANSFER_ITEMS
+          "
+          @click="$emit('addFolder')"
+        >
+          添加文件夹
         </el-button>
         <el-button @click="$emit('readClipboard')">读取剪贴板</el-button>
       </div>
@@ -119,8 +166,8 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
     </div>
 
     <div v-if="isDraggingFiles" class="drop-overlay">
-      <strong>松开即可添加文件</strong>
-      <span>最多 {{ MAX_FILES_PER_TRANSFER }} 个文件，不支持文件夹</span>
+      <strong>松开即可扫描并添加</strong>
+      <span>支持普通文件和文件夹；符号链接会被拒绝</span>
     </div>
   </section>
 </template>

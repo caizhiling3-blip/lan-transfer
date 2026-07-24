@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
 
-import { MAX_FILES_PER_TRANSFER } from '@shared/constants'
+import { MAX_FILES_PER_TRANSFER, MAX_TOP_LEVEL_TRANSFER_ITEMS } from '@shared/constants'
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
 import type { FileOfferReceivedDto } from '@shared/ipc'
-import type { SelectedFileDto, TransferTaskDto } from '@shared/types'
+import type { SelectedFileDto, SelectedFolderDto, TransferTaskDto } from '@shared/types'
 
 const upsertTask = (tasks: TransferTaskDto[], task: TransferTaskDto): TransferTaskDto[] => {
   const index = tasks.findIndex((candidate) => candidate.transferId === task.transferId)
@@ -15,6 +15,7 @@ export const useFileTransferStore = defineStore('fileTransfer', {
   state: () => ({
     tasks: [] as TransferTaskDto[],
     pendingFiles: [] as SelectedFileDto[],
+    pendingFolders: [] as SelectedFolderDto[],
     incomingOffer: null as FileOfferReceivedDto | null,
     selecting: false,
     offering: false,
@@ -51,6 +52,23 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       }
       this.addPendingFiles(selectionResult.data)
     },
+    async selectFolder(): Promise<void> {
+      if (this.pendingFiles.length + this.pendingFolders.length >= MAX_TOP_LEVEL_TRANSFER_ITEMS) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
+        return
+      }
+      this.selecting = true
+      this.errorMessage = ''
+      const selectionResult = await window.lanTransfer.transfer.selectFolder()
+      this.selecting = false
+      if (!selectionResult.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[selectionResult.error.code]
+        return
+      }
+      if (selectionResult.data !== null) {
+        this.addPendingFolders([selectionResult.data])
+      }
+    },
     async registerDroppedFiles(files: readonly File[]): Promise<void> {
       this.selecting = true
       this.errorMessage = ''
@@ -62,18 +80,68 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       }
       this.addPendingFiles(selectionResult.data)
     },
+    async registerDroppedItems(items: readonly File[]): Promise<void> {
+      this.selecting = true
+      this.errorMessage = ''
+      const selectionResult = await window.lanTransfer.transfer.registerDroppedItems(items)
+      this.selecting = false
+      if (!selectionResult.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[selectionResult.error.code]
+        return
+      }
+      const files = selectionResult.data.flatMap((item) =>
+        item.kind === 'file' ? [item.file] : [],
+      )
+      const folders = selectionResult.data.flatMap((item) =>
+        item.kind === 'folder' ? [item.folder] : [],
+      )
+      if (
+        folders.length > 0 &&
+        this.pendingFiles.length + this.pendingFolders.length + files.length + folders.length >
+          MAX_TOP_LEVEL_TRANSFER_ITEMS
+      ) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
+        return
+      }
+      this.addPendingFiles(files)
+      this.addPendingFolders(folders)
+    },
     addPendingFiles(selections: readonly SelectedFileDto[]): void {
-      if (this.pendingFiles.length + selections.length > MAX_FILES_PER_TRANSFER) {
+      const maximumItems =
+        this.pendingFolders.length > 0 ? MAX_TOP_LEVEL_TRANSFER_ITEMS : MAX_FILES_PER_TRANSFER
+      if (
+        this.pendingFiles.length + this.pendingFolders.length + selections.length >
+        maximumItems
+      ) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
         return
       }
       this.pendingFiles = [...this.pendingFiles, ...selections]
     },
+    addPendingFolders(selections: readonly SelectedFolderDto[]): void {
+      if (
+        this.pendingFiles.length + this.pendingFolders.length + selections.length >
+        MAX_TOP_LEVEL_TRANSFER_ITEMS
+      ) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
+        return
+      }
+      this.pendingFolders = [...this.pendingFolders, ...selections]
+    },
     removePendingFile(fileId: SelectedFileDto['fileId']): void {
       this.pendingFiles = this.pendingFiles.filter((file) => file.fileId !== fileId)
     },
+    removePendingFolder(selectionToken: string): void {
+      this.pendingFolders = this.pendingFolders.filter(
+        (folder) => folder.selectionToken !== selectionToken,
+      )
+    },
     clearPendingFiles(): void {
       this.pendingFiles = []
+    },
+    clearPendingItems(): void {
+      this.pendingFiles = []
+      this.pendingFolders = []
     },
     async sendPendingFiles(): Promise<boolean> {
       if (this.pendingFiles.length === 0 || this.offering) return false
