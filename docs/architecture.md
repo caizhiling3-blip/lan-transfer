@@ -126,6 +126,10 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 
 阶段 6 在两个传输协调器之外增加 `TransferQueueCoordinator`。统一编辑器通过单个 `transfer:enqueue` IPC 提交可选文字、一个文件批次和文件夹 token；主进程先原子认领全部源授权，再建立最多 50 项的内存队列。文字等待 ack，文件和文件夹等待对应 TransferTask 终态，严格串行推进。队列不会持久化，应用退出或连接断开会丢弃尚未启动的项；每项绑定入队时的 peer deviceId，防止重连后误投递。`transfer:queue-changed` 只投影类型、展示名、数量、大小、位置和状态，不包含正文、源路径、selection token 或上传授权。
 
+阶段 7 的 `TransferNotificationCoordinator` 接收既有文字、offer 和任务 DTO，但只生成不含内容正文、名称或路径的通知摘要。主进程负责判断窗口焦点、调用 Electron Notification、处理点击后的窗口恢复，以及捕获平台通知异常。终态任务按 transferId/status 使用最多 500 项的观察集合去重；即使事件发生时窗口在前台也会记录，避免用户稍后切到后台时补发旧结果。
+
+完成摘要由 renderer 从 `TransferTaskDto.files` 纯计算得到，不新增 IPC 或网络字段。任务卡直接展示各终态数量和前 20 个未完成项目的本地化原因，其余项目仍可在默认折叠的文件明细中查看。
+
 接收内容先进入授权目录中的任务 staging 目录。整个树完整后独占创建新的最终目录，并以 ownership marker 约束发布失败和启动清理只能作用于当前任务创建的目录；不使用可能覆盖空目录的跨平台 rename 假设。详细设计见 [文件夹传输设计](folder-transfer.md)。
 
 ## 统一传输体验

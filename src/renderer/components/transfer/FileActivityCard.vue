@@ -8,6 +8,7 @@ import type { FileId, TransferStatus, TransferTaskDto } from '@shared/types'
 import {
   formatBytes,
   formatRemainingTime,
+  getTransferCompletionSummary,
   getEstimatedRemainingSeconds,
   getTransferPercentage,
 } from '../../utils/transfer-activity'
@@ -68,6 +69,24 @@ const tagType = computed(() => {
   if (['transferring', 'publishing'].includes(props.task.status)) return 'primary'
   return 'info'
 })
+const isTaskTerminal = computed(() =>
+  ['completed', 'failed', 'cancelled', 'rejected'].includes(props.task.status),
+)
+const completionSummary = computed(() => getTransferCompletionSummary(props.task))
+const unfinishedFiles = computed(() =>
+  props.task.files.filter((file) => ['failed', 'cancelled', 'rejected'].includes(file.status)),
+)
+const visibleUnfinishedFiles = computed(() => unfinishedFiles.value.slice(0, 20))
+const hiddenUnfinishedCount = computed(
+  () => unfinishedFiles.value.length - visibleUnfinishedFiles.value.length,
+)
+const getUnfinishedReason = (file: TransferTaskDto['files'][number]): string => {
+  if (file.errorCode !== undefined) return ERROR_MESSAGES_ZH_CN[file.errorCode]
+  if (props.task.errorCode !== undefined) return ERROR_MESSAGES_ZH_CN[props.task.errorCode]
+  if (file.status === 'cancelled') return '已取消'
+  if (file.status === 'rejected') return '接收方已拒绝'
+  return '传输失败'
+}
 </script>
 
 <template>
@@ -144,6 +163,37 @@ const tagType = computed(() => {
     </template>
 
     <p v-if="errorMessage" class="task-error">{{ errorMessage }}</p>
+
+    <section
+      v-if="isTaskTerminal"
+      class="completion-summary"
+      :class="{ 'has-unfinished': completionSummary.unfinished > 0 }"
+    >
+      <strong>
+        {{
+          task.status === 'completed'
+            ? task.kind === 'folder'
+              ? '文件夹已安全发布'
+              : '传输已完成'
+            : '传输未全部完成'
+        }}
+      </strong>
+      <div v-if="completionSummary.total > 0" class="summary-counts">
+        <span>成功 {{ completionSummary.completed }}</span>
+        <span v-if="completionSummary.failed > 0">失败 {{ completionSummary.failed }}</span>
+        <span v-if="completionSummary.cancelled > 0"> 取消 {{ completionSummary.cancelled }} </span>
+        <span v-if="completionSummary.rejected > 0"> 拒绝 {{ completionSummary.rejected }} </span>
+      </div>
+      <ul v-if="visibleUnfinishedFiles.length > 0" class="unfinished-files">
+        <li v-for="file in visibleUnfinishedFiles" :key="file.fileId">
+          <span :title="file.displayName">{{ file.displayName }}</span>
+          <small>{{ getUnfinishedReason(file) }}</small>
+        </li>
+      </ul>
+      <small v-if="hiddenUnfinishedCount > 0" class="hidden-failure-count">
+        另有 {{ hiddenUnfinishedCount }} 项未完成，可在文件明细中查看
+      </small>
+    </section>
 
     <div v-if="!isIncomingOffer" class="task-actions">
       <el-button v-if="isTaskActive" size="small" type="danger" plain @click="$emit('cancelTask')">
@@ -265,6 +315,57 @@ const tagType = computed(() => {
   margin: 10px 0 0;
   color: #f56c6c;
   font-size: 13px;
+}
+
+.completion-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 11px;
+  padding: 11px 12px;
+  border: 1px solid var(--app-success-border, #95d475);
+  border-radius: 10px;
+  background: var(--app-success-soft, color-mix(in srgb, #67c23a 12%, transparent));
+}
+
+.completion-summary.has-unfinished {
+  border-color: color-mix(in srgb, #f56c6c 55%, var(--app-border));
+  background: color-mix(in srgb, #f56c6c 10%, var(--app-surface-raised));
+}
+
+.summary-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.unfinished-files {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.unfinished-files li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.unfinished-files span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unfinished-files small,
+.hidden-failure-count {
+  flex: none;
+  color: var(--app-text-muted);
 }
 
 .task-files {

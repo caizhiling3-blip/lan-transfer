@@ -2,7 +2,7 @@ import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog, Notification } from 'electron'
 
 import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
@@ -17,7 +17,7 @@ import {
   TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
 } from '@shared/ipc'
 
-import { createMainWindow, DeviceIdentity } from './app'
+import { createMainWindow, DeviceIdentity, TransferNotificationCoordinator } from './app'
 import { DiscoveryManager } from './discovery'
 import {
   cleanupStaleTemporaryFiles,
@@ -157,6 +157,25 @@ void app.whenReady().then(() => {
     activeFolderTransferCoordinator,
     sessionHistory,
   )
+  const notificationCoordinator = new TransferNotificationCoordinator(
+    () => mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isFocused(),
+    ({ title, body }) => {
+      if (!Notification.isSupported()) return
+      try {
+        const notification = new Notification({ title, body })
+        notification.on('click', () => {
+          if (mainWindow === null || mainWindow.isDestroyed()) openMainWindow()
+          if (mainWindow === null || mainWindow.isDestroyed()) return
+          if (mainWindow.isMinimized()) mainWindow.restore()
+          mainWindow.show()
+          mainWindow.focus()
+        })
+        notification.show()
+      } catch (error) {
+        logger.warn('notification_failed', { error: String(error) })
+      }
+    },
+  )
   serviceManager = activeServiceManager
   connectionManager = activeConnectionManager
   fileTransferCoordinator = activeFileTransferCoordinator
@@ -257,6 +276,7 @@ void app.whenReady().then(() => {
         createdAt: message.receivedAt,
       })
       sendToRenderer(TEXT_RECEIVED_EVENT_CHANNEL, message)
+      notificationCoordinator.notifyText(message)
     }),
     activeTransferQueueCoordinator.subscribe((items) => {
       sendToRenderer(TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL, items)
@@ -265,6 +285,7 @@ void app.whenReady().then(() => {
       sendToRenderer(TEXT_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
     activeFileTransferCoordinator.subscribeTasks((task) => {
+      notificationCoordinator.notifyTask(task)
       if (loggedTaskStatuses.get(task.transferId) !== task.status) {
         loggedTaskStatuses.set(task.transferId, task.status)
         logger.info('transfer_status_changed', {
@@ -281,6 +302,7 @@ void app.whenReady().then(() => {
       sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
     activeFolderTransferCoordinator.subscribeTasks((task) => {
+      notificationCoordinator.notifyTask(task)
       if (loggedTaskStatuses.get(task.transferId) !== task.status) {
         loggedTaskStatuses.set(task.transferId, task.status)
         logger.info('transfer_status_changed', {
@@ -310,6 +332,7 @@ void app.whenReady().then(() => {
         totalBytes: offer.files.reduce((total, file) => total + file.size, 0),
       })
       sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
+      notificationCoordinator.notifyOffer(offer)
     }),
     activeFolderTransferCoordinator.subscribeOffers((offer) => {
       logger.info('folder_offer_received', {
@@ -319,6 +342,7 @@ void app.whenReady().then(() => {
         totalBytes: offer.totalSize,
       })
       sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
+      notificationCoordinator.notifyOffer(offer)
     }),
   ]
   activeServiceManager.setConnectionHandler((webSocket, request) => {

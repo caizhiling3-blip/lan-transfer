@@ -6,6 +6,7 @@ import {
   formatBytes,
   formatRemainingTime,
   getEstimatedRemainingSeconds,
+  getTransferCompletionSummary,
   getTransferPercentage,
 } from '../../src/renderer/utils/transfer-activity'
 import type { DeviceInfo, TransferTaskDto } from '../../src/shared/types'
@@ -75,5 +76,59 @@ describe('transfer activity view model', () => {
     expect(formatRemainingTime(45)).toBe('45 秒')
     expect(formatRemainingTime(61)).toBe('2 分钟')
     expect(formatRemainingTime(3_660)).toBe('1 小时 1 分钟')
+  })
+
+  it('summarizes completed and unfinished file items', () => {
+    const task: TransferTaskDto = {
+      transferId: transferIdSchema.parse('20000000-0000-4000-8000-000000000002'),
+      direction: 'send',
+      kind: 'file',
+      peer,
+      status: 'failed',
+      files: [
+        {
+          fileId: fileIdSchema.parse('30000000-0000-4000-8000-000000000003'),
+          displayName: 'done.txt',
+          size: 1,
+          mimeType: 'text/plain',
+          transferredBytes: 1,
+          bytesPerSecond: 0,
+          status: 'completed',
+        },
+        {
+          fileId: fileIdSchema.parse('40000000-0000-4000-8000-000000000004'),
+          displayName: 'failed.txt',
+          size: 1,
+          mimeType: 'text/plain',
+          transferredBytes: 0,
+          bytesPerSecond: 0,
+          status: 'failed',
+          errorCode: 'TRANSFER_FAILED',
+        },
+        {
+          fileId: fileIdSchema.parse('50000000-0000-4000-8000-000000000005'),
+          displayName: 'cancelled.txt',
+          size: 1,
+          mimeType: 'text/plain',
+          transferredBytes: 0,
+          bytesPerSecond: 0,
+          status: 'cancelled',
+        },
+      ],
+      totalBytes: 3,
+      transferredBytes: 1,
+      bytesPerSecond: 0,
+      createdAt: 100,
+      updatedAt: 200,
+    }
+
+    expect(getTransferCompletionSummary(task)).toEqual({
+      completed: 1,
+      failed: 1,
+      cancelled: 1,
+      rejected: 0,
+      unfinished: 2,
+      total: 3,
+    })
   })
 })

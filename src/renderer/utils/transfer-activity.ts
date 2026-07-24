@@ -56,3 +56,27 @@ export const formatRemainingTime = (seconds: number): string => {
   const minutes = Math.ceil((seconds % (60 * 60)) / 60)
   return minutes === 0 ? `${String(hours)} 小时` : `${String(hours)} 小时 ${String(minutes)} 分钟`
 }
+
+export interface TransferCompletionSummary {
+  readonly completed: number
+  readonly failed: number
+  readonly cancelled: number
+  readonly rejected: number
+  readonly unfinished: number
+  readonly total: number
+}
+
+export const getTransferCompletionSummary = (task: TransferTaskDto): TransferCompletionSummary => {
+  const completed = task.files.filter((file) => file.status === 'completed').length
+  const failed = task.files.filter((file) => file.status === 'failed').length
+  const cancelled = task.files.filter((file) => file.status === 'cancelled').length
+  const rejected = task.files.filter((file) => file.status === 'rejected').length
+  return {
+    completed,
+    failed,
+    cancelled,
+    rejected,
+    unfinished: failed + cancelled + rejected,
+    total: task.files.length,
+  }
+}
