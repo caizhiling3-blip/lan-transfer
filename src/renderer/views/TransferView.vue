@@ -131,9 +131,9 @@ onBeforeUnmount(() => {
     <el-card class="transfer-workspace" shadow="never" body-class="workspace-body">
       <template #header>
         <div class="transfer-header">
-          <div>
+          <div class="transfer-title">
             <strong>与设备互传</strong>
-            <p>文字、链接和文件会按时间显示在同一条时间线中</p>
+            <span>文字、链接和文件按时间排列</span>
           </div>
           <el-tag :type="isConnected ? 'success' : 'info'">
             {{ isConnected ? `已连接 ${connectionStore.status.peer?.deviceName ?? ''}` : '未连接' }}
@@ -223,10 +223,19 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
-.transfer-header p {
-  margin: 5px 0 0;
+.transfer-title {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.transfer-title span {
+  overflow: hidden;
   color: var(--app-text-muted);
   font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-list {
@@ -248,10 +257,13 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
+:deep(.el-card__header) {
+  padding: 10px 16px;
+}
+
 @media (max-width: 720px) {
-  .transfer-header {
-    align-items: flex-start;
-    flex-direction: column;
+  .transfer-title span {
+    display: none;
   }
 
   .activity-list {

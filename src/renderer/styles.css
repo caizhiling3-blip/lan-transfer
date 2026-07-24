@@ -217,6 +217,8 @@ body {
 
 .main-content.is-transfer-page {
   overflow: hidden;
+  padding-top: 24px;
+  padding-bottom: 24px;
   scrollbar-gutter: auto;
 }
 
@@ -229,6 +231,7 @@ body {
 
 .main-content.is-transfer-page .page-header {
   flex: 0 0 auto;
+  margin-bottom: 14px;
 }
 
 .main-content.is-transfer-page .transfer-layout {

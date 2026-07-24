@@ -81,11 +81,11 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
     @dragleave.prevent="handleDragLeave"
     @drop.prevent="handleDrop"
   >
-    <div v-if="queueItems.length > 0" class="transfer-queue">
-      <div class="pending-heading">
+    <details v-if="queueItems.length > 0" class="transfer-queue">
+      <summary class="compact-summary">
         <span>发送队列 · {{ queueItems.length }} 项</span>
-        <small>文字、文件和文件夹将严格串行发送</small>
-      </div>
+        <small>点击查看队列</small>
+      </summary>
       <div class="queue-items">
         <div v-for="item in queueItems" :key="item.queueItemId" class="queue-item">
           <el-tag
@@ -114,10 +114,11 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
           </el-button>
         </div>
       </div>
-    </div>
+      <small>文字、文件和文件夹将严格串行发送</small>
+    </details>
 
-    <div v-if="pendingFiles.length > 0 || pendingFolders.length > 0" class="pending-tray">
-      <div class="pending-heading">
+    <details v-if="pendingFiles.length > 0 || pendingFolders.length > 0" class="pending-tray">
+      <summary class="compact-summary">
         <span>
           待发送 {{ pendingFiles.length }} 个文件、{{ pendingFolders.length }} 个文件夹 ·
           {{
@@ -126,8 +127,8 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
             )
           }}
         </span>
-        <el-button text size="small" @click="$emit('clearItems')">清空</el-button>
-      </div>
+        <small>点击查看附件</small>
+      </summary>
       <div class="pending-files">
         <div v-for="file in pendingFiles" :key="file.fileId" class="pending-file">
           <div>
@@ -159,14 +160,17 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
           </el-button>
         </div>
       </div>
-      <small> 选择授权保留 10 分钟；发送文件或文件夹时仍需对方确认接收。 </small>
-    </div>
+      <div class="pending-note">
+        <small>选择授权保留 10 分钟；发送时仍需对方确认接收。</small>
+        <el-button text size="small" @click="$emit('clearItems')">清空</el-button>
+      </div>
+    </details>
 
     <el-input
       v-model="content"
       type="textarea"
-      :rows="4"
-      resize="vertical"
+      :autosize="{ minRows: 2, maxRows: 4 }"
+      resize="none"
       placeholder="输入文字或链接，也可以添加或拖入文件"
       @keydown="handleComposerKeydown"
     />
@@ -219,33 +223,82 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
 <style scoped>
 .composer {
   position: relative;
-  padding: 14px;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--app-border);
   background: var(--app-surface);
 }
 
 .pending-tray {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 11px 12px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--app-primary-border);
   border-radius: 10px;
   background: var(--app-primary-soft);
 }
 
 .transfer-queue {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--app-border);
   border-radius: 10px;
   background: var(--app-surface-muted);
 }
 
+.transfer-queue[open],
+.pending-tray[open] {
+  display: grid;
+  gap: 8px;
+}
+
 .transfer-queue small {
   color: var(--app-text-muted);
+}
+
+.compact-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.compact-summary::-webkit-details-marker {
+  display: none;
+}
+
+.compact-summary::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  content: '';
+  transform: rotate(-45deg);
+  transition: transform 0.16s ease;
+}
+
+details[open] > .compact-summary::before {
+  transform: rotate(45deg);
+}
+
+.compact-summary > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-summary small {
+  flex: none;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .queue-items {
@@ -271,21 +324,15 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
   white-space: nowrap;
 }
 
-.pending-heading,
 .pending-file,
 .composer-footer,
 .composer-tools,
-.send-area {
+.send-area,
+.pending-note {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-}
-
-.pending-heading {
-  color: var(--app-text);
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .pending-files {
@@ -327,7 +374,7 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
 }
 
 .composer-footer {
-  margin-top: 11px;
+  margin-top: 8px;
 }
 
 .send-area .limit-exceeded {
@@ -350,6 +397,15 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
 }
 
 @media (max-width: 720px) {
+  .composer {
+    padding-inline: 10px;
+  }
+
+  .compact-summary small,
+  .send-hint {
+    display: none;
+  }
+
   .composer-footer {
     align-items: stretch;
     flex-direction: column;
