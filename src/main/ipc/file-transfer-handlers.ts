@@ -121,7 +121,9 @@ export const registerFileTransferIpcHandlers = (
   )
 
   registerIpcHandler('transfer:cancel', getWindow, async ({ transferId, fileId }) => {
-    const task = await coordinator.cancel(transferId, fileId)
+    const task = folderCoordinator.ownsTransfer(transferId)
+      ? await folderCoordinator.cancel(transferId)
+      : await coordinator.cancel(transferId, fileId)
     return task === null
       ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
       : { ok: true, data: task }

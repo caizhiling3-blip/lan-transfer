@@ -14,8 +14,12 @@ import type {
   FileProgressMessage,
   FileRejectMessage,
   FolderAcceptMessage,
+  FolderCancelMessage,
+  FolderCompleteMessage,
+  FolderErrorMessage,
   FolderManifestMessage,
   FolderOfferMessage,
+  FolderProgressMessage,
   FolderRejectMessage,
   ProtocolMessage,
   TextAcknowledgementMessage,
@@ -39,6 +43,10 @@ export type ConnectedProtocolMessage =
   | FolderManifestMessage
   | FolderAcceptMessage
   | FolderRejectMessage
+  | FolderCancelMessage
+  | FolderProgressMessage
+  | FolderCompleteMessage
+  | FolderErrorMessage
 
 export const isConnectedProtocolMessage = (
   message: ProtocolMessage,
@@ -59,6 +67,10 @@ export const isConnectedProtocolMessage = (
     case 'folder:manifest':
     case 'folder:accept':
     case 'folder:reject':
+    case 'folder:cancel':
+    case 'folder:progress':
+    case 'folder:complete':
+    case 'folder:error':
       return true
     default:
       return false

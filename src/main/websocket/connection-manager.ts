@@ -26,8 +26,12 @@ import {
   fileProgressMessageSchema,
   fileRejectMessageSchema,
   folderAcceptMessageSchema,
+  folderCancelMessageSchema,
+  folderCompleteMessageSchema,
+  folderErrorMessageSchema,
   folderManifestMessageSchema,
   folderOfferMessageSchema,
+  folderProgressMessageSchema,
   folderRejectMessageSchema,
   parseProtocolMessage,
   textAcknowledgementMessageSchema,
@@ -42,8 +46,12 @@ import type {
   FileProgressMessage,
   FileRejectMessage,
   FolderAcceptMessage,
+  FolderCancelMessage,
+  FolderCompleteMessage,
+  FolderErrorMessage,
   FolderManifestMessage,
   FolderOfferMessage,
+  FolderProgressMessage,
   FolderRejectMessage,
 } from '@shared/protocols'
 import {
@@ -86,7 +94,14 @@ export type FileControlMessage =
   | FileErrorMessage
 type FileMessageListener = (message: FileControlMessage) => void
 export type FolderControlMessage =
-  FolderOfferMessage | FolderManifestMessage | FolderAcceptMessage | FolderRejectMessage
+  | FolderOfferMessage
+  | FolderManifestMessage
+  | FolderAcceptMessage
+  | FolderRejectMessage
+  | FolderCancelMessage
+  | FolderProgressMessage
+  | FolderCompleteMessage
+  | FolderErrorMessage
 type FolderMessageListener = (message: FolderControlMessage) => void
 
 interface PendingConnection {
@@ -190,6 +205,22 @@ export class ConnectionManager {
 
   public sendFolderReject(payload: FolderRejectMessage['payload']): Promise<boolean> {
     return this.sendFolderMessage('folder:reject', folderRejectMessageSchema, payload)
+  }
+
+  public sendFolderCancel(payload: FolderCancelMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:cancel', folderCancelMessageSchema, payload)
+  }
+
+  public sendFolderProgress(payload: FolderProgressMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:progress', folderProgressMessageSchema, payload)
+  }
+
+  public sendFolderComplete(payload: FolderCompleteMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:complete', folderCompleteMessageSchema, payload)
+  }
+
+  public sendFolderError(payload: FolderErrorMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:error', folderErrorMessageSchema, payload)
   }
 
   public getPeer(): DeviceInfo | null {
@@ -619,7 +650,11 @@ export class ConnectionManager {
         message.type === 'folder:offer' ||
         message.type === 'folder:manifest' ||
         message.type === 'folder:accept' ||
-        message.type === 'folder:reject'
+        message.type === 'folder:reject' ||
+        message.type === 'folder:cancel' ||
+        message.type === 'folder:progress' ||
+        message.type === 'folder:complete' ||
+        message.type === 'folder:error'
       ) {
         for (const listener of this.folderMessageListeners) listener(message)
       } else {

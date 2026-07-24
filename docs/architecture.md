@@ -116,6 +116,10 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 
 阶段 3 已实现独立 `FolderTransferCoordinator`。发送端消费 folder selectionToken，计算 manifest SHA-256 并按 96 KiB 目标大小分片；接收端按 manifestId 和 chunkIndex 有界组装，验证摘要、数量、总大小、fileId、可移植路径冲突以及“文件占用父目录”冲突后才产生 IPC offer。文件与文件夹协调器共享单活动发送约束，基础 UI 每次只允许一个待发送文件夹。接受时只解析主进程持有的默认目录或 directoryToken，路径和 uploadKey 不暴露给 renderer。阶段 3 不注册文件夹 HTTP 路由。
 
+阶段 4 在同一 HTTP server 注册精确的 `/v2/folder-transfers/:transferId/files/:fileId` 路由。接收方接受时先校验目录与空间，独占创建 `.lindu-folder-<transferId>.part`，再创建 manifest 声明的空目录和文件父目录。任务级 uploadKey 只在两个主进程间传递，逐文件 bearer token 由 HMAC-SHA-256 绑定 transferId/fileId 派生；接收端还绑定当前连接、来源 IP、到期时间、精确长度、MIME、队首顺序和单次消费状态。
+
+发送端逐文件重新 `lstat`、打开并核对设备号、inode、mtime 和大小，然后用 Node stream 串行上传。接收文件先写入 staging 根内随机 `.part`，完整关闭后使用不覆盖硬链接放入已验证相对位置。双方的任务 DTO 在接受后包含可移植相对路径和逐文件进度，不包含绝对路径、staging 路径或授权 token。全部内容到齐后状态为 `publishing`；该状态明确表示内容完整但最终目录尚未由阶段 5 发布。失败、取消、超时、断线或退出会中止活动流并递归清理当前任务独占的 staging。
+
 接收内容先进入授权目录中的任务 staging 目录。整个树完整后独占创建新的最终目录，并以 ownership marker 约束发布失败和启动清理只能作用于当前任务创建的目录；不使用可能覆盖空目录的跨平台 rename 假设。详细设计见 [文件夹传输设计](folder-transfer.md)。
 
 ## 统一传输体验

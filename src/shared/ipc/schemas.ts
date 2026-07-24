@@ -133,13 +133,14 @@ export const ipcInvokeRequestSchemas = {
   'history:list': z
     .object({
       direction: z.enum(['send', 'receive']).optional(),
-      kind: z.enum(['text', 'link', 'file']).optional(),
+      kind: z.enum(['text', 'link', 'file', 'folder']).optional(),
       status: z
         .enum([
           'pending',
           'awaitingAcceptance',
           'accepted',
           'transferring',
+          'publishing',
           'completed',
           'failed',
           'cancelled',

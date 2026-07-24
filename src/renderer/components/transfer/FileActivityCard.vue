@@ -31,6 +31,7 @@ const statusLabels: Readonly<Record<TransferStatus, string>> = {
   awaitingAcceptance: '等待确认',
   accepted: '已接受',
   transferring: '传输中',
+  publishing: '等待发布',
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',
@@ -39,7 +40,9 @@ const statusLabels: Readonly<Record<TransferStatus, string>> = {
 
 const isIncomingOffer = computed(() => props.incomingOffer?.transferId === props.task.transferId)
 const isTaskActive = computed(() =>
-  ['awaitingAcceptance', 'accepted', 'transferring', 'pending'].includes(props.task.status),
+  ['awaitingAcceptance', 'accepted', 'transferring', 'publishing', 'pending'].includes(
+    props.task.status,
+  ),
 )
 const canRetry = computed(
   () =>
@@ -62,7 +65,7 @@ const canShowReceivedFile = computed(
 const tagType = computed(() => {
   if (props.task.status === 'completed') return 'success'
   if (['failed', 'rejected', 'cancelled'].includes(props.task.status)) return 'danger'
-  if (props.task.status === 'transferring') return 'primary'
+  if (['transferring', 'publishing'].includes(props.task.status)) return 'primary'
   return 'info'
 })
 </script>
@@ -115,7 +118,11 @@ const tagType = computed(() => {
     <template v-else>
       <el-progress
         :percentage="
-          getTransferPercentage(task.transferredBytes, task.totalBytes, task.status === 'completed')
+          getTransferPercentage(
+            task.transferredBytes,
+            task.totalBytes,
+            task.status === 'completed' || task.status === 'publishing',
+          )
         "
         :status="
           task.status === 'completed'
@@ -156,7 +163,7 @@ const tagType = computed(() => {
       </el-button>
     </div>
 
-    <details v-if="task.kind !== 'folder'" class="task-files">
+    <details v-if="task.files.length > 0" class="task-files">
       <summary>文件明细（{{ task.files.length }}）</summary>
       <div v-for="file in task.files" :key="file.fileId" class="task-file-row">
         <div class="file-row-heading">
@@ -175,7 +182,9 @@ const tagType = computed(() => {
         <div v-if="!isIncomingOffer" class="file-row-footer">
           <span>{{ formatBytes(file.transferredBytes) }} / {{ formatBytes(file.size) }}</span>
           <el-button
-            v-if="file.status === 'pending' || file.status === 'transferring'"
+            v-if="
+              task.kind === 'file' && (file.status === 'pending' || file.status === 'transferring')
+            "
             text
             type="danger"
             size="small"

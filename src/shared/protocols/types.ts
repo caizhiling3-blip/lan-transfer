@@ -13,8 +13,12 @@ import type {
   fileProgressMessageSchema,
   fileRejectMessageSchema,
   folderAcceptMessageSchema,
+  folderCancelMessageSchema,
+  folderCompleteMessageSchema,
+  folderErrorMessageSchema,
   folderManifestMessageSchema,
   folderOfferMessageSchema,
+  folderProgressMessageSchema,
   folderRejectMessageSchema,
   protocolMessageSchema,
   textAcknowledgementMessageSchema,
@@ -46,5 +50,9 @@ export type FolderOfferMessage = z.infer<typeof folderOfferMessageSchema>
 export type FolderManifestMessage = z.infer<typeof folderManifestMessageSchema>
 export type FolderAcceptMessage = z.infer<typeof folderAcceptMessageSchema>
 export type FolderRejectMessage = z.infer<typeof folderRejectMessageSchema>
+export type FolderCancelMessage = z.infer<typeof folderCancelMessageSchema>
+export type FolderProgressMessage = z.infer<typeof folderProgressMessageSchema>
+export type FolderCompleteMessage = z.infer<typeof folderCompleteMessageSchema>
+export type FolderErrorMessage = z.infer<typeof folderErrorMessageSchema>
 export type ProtocolMessage = z.infer<typeof protocolMessageSchema>
 export type MessageType = ProtocolMessage['type']

@@ -168,6 +168,40 @@ const validMessages: readonly Record<string, unknown>[] = [
     ...baseMessage,
     payload: { transferId: TRANSFER_ID, reason: 'user_rejected' },
   },
+  {
+    type: 'folder:cancel',
+    ...baseMessage,
+    payload: { transferId: TRANSFER_ID, reason: 'user_cancelled' },
+  },
+  {
+    type: 'folder:progress',
+    ...baseMessage,
+    payload: {
+      transferId: TRANSFER_ID,
+      fileId: FILE_ID,
+      transferredBytes: 512,
+      totalTransferredBytes: 512,
+    },
+  },
+  {
+    type: 'folder:complete',
+    ...baseMessage,
+    payload: {
+      scope: 'file',
+      transferId: TRANSFER_ID,
+      fileId: FILE_ID,
+      size: 1_024,
+    },
+  },
+  {
+    type: 'folder:error',
+    ...baseMessage,
+    payload: {
+      transferId: TRANSFER_ID,
+      fileId: FILE_ID,
+      errorCode: 'TRANSFER_FAILED',
+    },
+  },
 ]
 
 describe('protocolMessageSchema', () => {
@@ -291,6 +325,13 @@ describe('folder messages', () => {
   it('accepts a bounded folder offer and portable manifest paths', () => {
     expect(folderOfferMessageSchema.safeParse(offer).success).toBe(true)
     expect(folderManifestMessageSchema.safeParse(manifest).success).toBe(true)
+    expect(() =>
+      parseProtocolMessage({
+        type: 'folder:complete',
+        ...baseMessage,
+        payload: { scope: 'folder', transferId: TRANSFER_ID },
+      }),
+    ).not.toThrow()
   })
 
   it.each([
@@ -320,6 +361,25 @@ describe('folder messages', () => {
       payload: {
         ...(manifest?.payload as Record<string, unknown>),
         emptyDirectories: ['folder\\nested'],
+      },
+    },
+    {
+      type: 'folder:progress',
+      ...baseMessage,
+      payload: {
+        transferId: TRANSFER_ID,
+        fileId: FILE_ID,
+        transferredBytes: -1,
+        totalTransferredBytes: 0,
+      },
+    },
+    {
+      type: 'folder:complete',
+      ...baseMessage,
+      payload: {
+        scope: 'file',
+        transferId: TRANSFER_ID,
+        fileId: FILE_ID,
       },
     },
   ])('rejects invalid folder protocol payloads', (message) => {

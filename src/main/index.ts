@@ -129,6 +129,7 @@ void app.whenReady().then(() => {
     fileAccessRegistry,
     sessionHistory,
     () => settingsStore.getSettings().maxFileSizeBytes,
+    () => folderTransferCoordinator?.hasActiveTransfers() !== true,
   )
   const activeFolderTransferCoordinator = new FolderTransferCoordinator(
     activeConnectionManager,
@@ -272,8 +273,10 @@ void app.whenReady().then(() => {
   activeServiceManager.setConnectionHandler((webSocket, request) => {
     activeConnectionManager.acceptIncoming(webSocket, request)
   })
-  activeServiceManager.setRequestHandler((request, response) =>
-    activeFileTransferCoordinator.handleHttpRequest(request, response),
+  activeServiceManager.setRequestHandler(
+    (request, response) =>
+      activeFolderTransferCoordinator.handleHttpRequest(request, response) ||
+      activeFileTransferCoordinator.handleHttpRequest(request, response),
   )
   void activeServiceManager.start()
 

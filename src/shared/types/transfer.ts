@@ -10,6 +10,7 @@ export type TransferStatus =
   | 'awaitingAcceptance'
   | 'accepted'
   | 'transferring'
+  | 'publishing'
   | 'completed'
   | 'failed'
   | 'cancelled'

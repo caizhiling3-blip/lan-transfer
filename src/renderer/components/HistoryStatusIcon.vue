@@ -17,7 +17,7 @@ defineProps<{ readonly status: TransferStatus }>()
         d="m6.2 6.2 7.6 7.6m0-7.6-7.6 7.6"
       />
       <path
-        v-else-if="status === 'transferring'"
+        v-else-if="status === 'transferring' || status === 'publishing'"
         d="M5 7h8.5m-2.7-2.5L13.5 7l-2.7 2.5M15 13H6.5m2.7 2.5L6.5 13l2.7-2.5"
       />
       <path v-else d="M10 5.2v5l3.1 1.8" />
@@ -72,7 +72,8 @@ defineProps<{ readonly status: TransferStatus }>()
   background: #64748b;
 }
 
-.is-transferring {
+.is-transferring,
+.is-publishing {
   background: #3478f6;
 }
 

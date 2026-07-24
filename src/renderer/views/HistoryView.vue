@@ -16,6 +16,7 @@ const statusLabels: Readonly<Record<TransferStatus, string>> = {
   awaitingAcceptance: '等待接受',
   accepted: '已接受',
   transferring: '传输中',
+  publishing: '等待发布',
   completed: '成功',
   failed: '失败',
   cancelled: '已取消',
@@ -30,7 +31,9 @@ const formatSize = (size: number | undefined): string => {
 }
 
 const getSummary = (entry: HistoryEntryDto): string =>
-  entry.kind === 'file' ? (entry.displayName ?? '-') : (entry.textPreview ?? '-')
+  entry.kind === 'file' || entry.kind === 'folder'
+    ? (entry.displayName ?? '-')
+    : (entry.textPreview ?? '-')
 
 const clearHistory = async (): Promise<void> => {
   await ElMessageBox.confirm('清空后无法恢复，确定清空全部传输历史吗？', '清空历史', {
@@ -72,6 +75,7 @@ onMounted(() => void store.load(true))
           <el-option label="文字" value="text" />
           <el-option label="链接" value="link" />
           <el-option label="文件" value="file" />
+          <el-option label="文件夹" value="folder" />
         </el-select>
         <el-select v-model="store.filters.status" aria-label="状态" @change="store.load(true)">
           <el-option label="全部状态" value="all" />
@@ -104,7 +108,15 @@ onMounted(() => void store.load(true))
       </el-table-column>
       <el-table-column label="类型" width="80">
         <template #default="{ row }: { row: HistoryEntryDto }">
-          {{ row.kind === 'file' ? '文件' : row.kind === 'link' ? '链接' : '文字' }}
+          {{
+            row.kind === 'folder'
+              ? '文件夹'
+              : row.kind === 'file'
+                ? '文件'
+                : row.kind === 'link'
+                  ? '链接'
+                  : '文字'
+          }}
         </template>
       </el-table-column>
       <el-table-column label="内容" min-width="220" show-overflow-tooltip>

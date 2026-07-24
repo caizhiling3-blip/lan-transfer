@@ -313,6 +313,54 @@ export const folderRejectMessageSchema = createMessageSchema(
   z.object({ transferId: transferIdSchema, reason: z.literal('user_rejected') }).strict(),
 )
 
+export const folderCancelMessageSchema = createMessageSchema(
+  'folder:cancel',
+  z
+    .object({
+      transferId: transferIdSchema,
+      reason: z.enum(['user_cancelled', 'connection_closed', 'transfer_timeout']),
+    })
+    .strict(),
+)
+
+export const folderProgressMessageSchema = createMessageSchema(
+  'folder:progress',
+  z
+    .object({
+      transferId: transferIdSchema,
+      fileId: fileIdSchema,
+      transferredBytes: safeIntegerSchema.max(MAX_FILE_SIZE_BYTES),
+      totalTransferredBytes: safeIntegerSchema.max(MAX_FOLDER_TOTAL_SIZE_BYTES),
+    })
+    .strict(),
+)
+
+export const folderCompleteMessageSchema = createMessageSchema(
+  'folder:complete',
+  z.discriminatedUnion('scope', [
+    z
+      .object({
+        scope: z.literal('file'),
+        transferId: transferIdSchema,
+        fileId: fileIdSchema,
+        size: safeIntegerSchema.max(MAX_FILE_SIZE_BYTES),
+      })
+      .strict(),
+    z.object({ scope: z.literal('folder'), transferId: transferIdSchema }).strict(),
+  ]),
+)
+
+export const folderErrorMessageSchema = createMessageSchema(
+  'folder:error',
+  z
+    .object({
+      transferId: transferIdSchema,
+      fileId: fileIdSchema.optional(),
+      errorCode: errorCodeSchema,
+    })
+    .strict(),
+)
+
 export const protocolMessageSchema = z.discriminatedUnion('type', [
   deviceHelloMessageSchema,
   deviceWelcomeMessageSchema,
@@ -331,4 +379,8 @@ export const protocolMessageSchema = z.discriminatedUnion('type', [
   folderManifestMessageSchema,
   folderAcceptMessageSchema,
   folderRejectMessageSchema,
+  folderCancelMessageSchema,
+  folderProgressMessageSchema,
+  folderCompleteMessageSchema,
+  folderErrorMessageSchema,
 ])

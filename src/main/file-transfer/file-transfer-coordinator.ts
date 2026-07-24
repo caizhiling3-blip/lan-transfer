@@ -113,6 +113,7 @@ export class FileTransferCoordinator {
     private readonly fileAccess: FileAccessAdapter,
     private readonly history: SessionHistory,
     private readonly getMaximumFileSize: () => number = () => Number.MAX_SAFE_INTEGER,
+    private readonly canStartTransfer: () => boolean = () => true,
   ) {
     this.unsubscribeFromMessages = connectionManager.subscribeFileMessages((message) => {
       this.handleControlMessage(message)
@@ -347,7 +348,7 @@ export class FileTransferCoordinator {
     )
     if (peer === null || sources.length === 0 || sources.length > MAX_FILES_PER_TRANSFER)
       return null
-    if (hasActiveOutgoing) return null
+    if (hasActiveOutgoing || !this.canStartTransfer()) return null
     const transferId = transferIdSchema.parse(randomUUID())
     const files = sources.map(({ selection }): FileMetadata => ({
       fileId: selection.fileId,
@@ -477,7 +478,7 @@ export class FileTransferCoordinator {
     const hasActiveIncoming = [...this.incoming.values()].some(
       (transfer) => !TERMINAL_TASK_STATUSES.includes(transfer.task.status),
     )
-    if (hasActiveIncoming) {
+    if (hasActiveIncoming || !this.canStartTransfer()) {
       const firstFile = files[0]
       if (firstFile !== undefined) {
         void this.connectionManager.sendFileError(transferId, firstFile.fileId, 'TRANSFER_FAILED')
