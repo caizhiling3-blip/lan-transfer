@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_FILE_SIZE_BYTES, MAX_FILES_PER_TRANSFER, MAX_TEXT_BYTES } from '@shared/constants'
+import {
+  MAX_FILE_SIZE_BYTES,
+  MAX_FILES_PER_TRANSFER,
+  MAX_TEXT_BYTES,
+  PROTOCOL_VERSION,
+} from '@shared/constants'
 import {
   fileAcceptMessageSchema,
   fileCompleteMessageSchema,
   fileErrorMessageSchema,
   fileOfferMessageSchema,
   fileProgressMessageSchema,
+  folderManifestMessageSchema,
+  folderOfferMessageSchema,
   parseProtocolMessage,
   textSendMessageSchema,
 } from '@shared/protocols'
@@ -16,6 +23,7 @@ const MESSAGE_ID = '22222222-2222-4222-8222-222222222222'
 const CONNECTION_ID = '33333333-3333-4333-8333-333333333333'
 const TRANSFER_ID = '44444444-4444-4444-8444-444444444444'
 const FILE_ID = '55555555-5555-4555-8555-555555555555'
+const MANIFEST_ID = '66666666-6666-4666-8666-666666666666'
 
 const baseMessage = {
   messageId: MESSAGE_ID,
@@ -42,13 +50,13 @@ const validMessages: readonly Record<string, unknown>[] = [
   {
     type: 'device:hello',
     ...baseMessage,
-    payload: { protocolVersion: 1, device, connectionNonce: 'n'.repeat(32) },
+    payload: { protocolVersion: PROTOCOL_VERSION, device, connectionNonce: 'n'.repeat(32) },
   },
   {
     type: 'device:welcome',
     ...baseMessage,
     payload: {
-      protocolVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
       device,
       connectionNonce: 'n'.repeat(32),
       connectionId: CONNECTION_ID,
@@ -113,6 +121,52 @@ const validMessages: readonly Record<string, unknown>[] = [
     type: 'file:error',
     ...baseMessage,
     payload: { transferId: TRANSFER_ID, fileId: FILE_ID, errorCode: 'TRANSFER_FAILED' },
+  },
+  {
+    type: 'folder:offer',
+    ...baseMessage,
+    payload: {
+      transferId: TRANSFER_ID,
+      manifestId: MANIFEST_ID,
+      displayName: '项目资料',
+      totalSize: 1_024,
+      fileCount: 1,
+      emptyDirectoryCount: 1,
+      manifestChunkCount: 1,
+      manifestSha256: 'a'.repeat(64),
+    },
+  },
+  {
+    type: 'folder:manifest',
+    ...baseMessage,
+    payload: {
+      transferId: TRANSFER_ID,
+      manifestId: MANIFEST_ID,
+      chunkIndex: 0,
+      files: [
+        {
+          fileId: FILE_ID,
+          relativePath: '文档/示例文件.txt',
+          size: 1_024,
+          mimeType: 'text/plain',
+        },
+      ],
+      emptyDirectories: ['空目录'],
+    },
+  },
+  {
+    type: 'folder:accept',
+    ...baseMessage,
+    payload: {
+      transferId: TRANSFER_ID,
+      uploadKey: 'u'.repeat(43),
+      expiresAt: 1_700_000_060_000,
+    },
+  },
+  {
+    type: 'folder:reject',
+    ...baseMessage,
+    payload: { transferId: TRANSFER_ID, reason: 'user_rejected' },
   },
 ]
 
@@ -227,5 +281,48 @@ describe('file messages', () => {
 
     expect(fileAcceptMessageSchema.safeParse(invalidAccept).success).toBe(false)
     expect(fileErrorMessageSchema.safeParse(invalidError).success).toBe(false)
+  })
+})
+
+describe('folder messages', () => {
+  const offer = validMessages.find((message) => message.type === 'folder:offer')
+  const manifest = validMessages.find((message) => message.type === 'folder:manifest')
+
+  it('accepts a bounded folder offer and portable manifest paths', () => {
+    expect(folderOfferMessageSchema.safeParse(offer).success).toBe(true)
+    expect(folderManifestMessageSchema.safeParse(manifest).success).toBe(true)
+  })
+
+  it.each([
+    {
+      ...offer,
+      payload: {
+        ...(offer?.payload as Record<string, unknown>),
+        manifestSha256: 'not-a-hash',
+      },
+    },
+    {
+      ...manifest,
+      payload: {
+        ...(manifest?.payload as Record<string, unknown>),
+        files: [
+          {
+            fileId: FILE_ID,
+            relativePath: '../secret.txt',
+            size: 1,
+            mimeType: 'text/plain',
+          },
+        ],
+      },
+    },
+    {
+      ...manifest,
+      payload: {
+        ...(manifest?.payload as Record<string, unknown>),
+        emptyDirectories: ['folder\\nested'],
+      },
+    },
+  ])('rejects invalid folder protocol payloads', (message) => {
+    expect(() => parseProtocolMessage(message)).toThrow()
   })
 })

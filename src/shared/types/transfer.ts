@@ -3,7 +3,7 @@ import type { DeviceInfo } from './device'
 import type { FileId, TransferId } from './identifiers'
 
 export type TransferDirection = 'send' | 'receive'
-export type TransferKind = 'text' | 'link' | 'file'
+export type TransferKind = 'text' | 'link' | 'file' | 'folder'
 
 export type TransferStatus =
   | 'pending'
@@ -45,4 +45,9 @@ export interface TransferTaskDto {
   readonly createdAt: number
   readonly updatedAt: number
   readonly errorCode?: ErrorCode
+  readonly folder?: {
+    readonly displayName: string
+    readonly fileCount: number
+    readonly emptyDirectoryCount: number
+  }
 }

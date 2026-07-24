@@ -10,7 +10,11 @@ import type {
   SelectedTransferItemDto,
 } from '@shared/types'
 
-import type { FileAccessRegistry, FileTransferCoordinator } from '../file-transfer'
+import type {
+  FileAccessRegistry,
+  FileTransferCoordinator,
+  FolderTransferCoordinator,
+} from '../file-transfer'
 import { registerIpcHandler } from './register-handler'
 
 type WindowProvider = () => BrowserWindow | null
@@ -38,6 +42,7 @@ export const registerFileTransferIpcHandlers = (
   getWindow: WindowProvider,
   fileAccess: FileAccessRegistry,
   coordinator: FileTransferCoordinator,
+  folderCoordinator: FolderTransferCoordinator,
 ): void => {
   registerIpcHandler('transfer:select-files', getWindow, async ({ multiple }) => {
     const window = getWindow()
@@ -95,11 +100,20 @@ export const registerFileTransferIpcHandlers = (
       : { ok: true, data: task }
   })
 
+  registerIpcHandler('transfer:offer-folder', getWindow, async ({ selectionToken }) => {
+    const task = await folderCoordinator.offerFolder(selectionToken)
+    return task === null
+      ? { ok: false, error: { code: 'FOLDER_NOT_FOUND' } }
+      : { ok: true, data: task }
+  })
+
   registerIpcHandler(
     'transfer:respond-to-offer',
     getWindow,
     async ({ transferId, decision, directoryToken }) => {
-      const task = await coordinator.respondToOffer(transferId, decision, directoryToken)
+      const task = folderCoordinator.ownsTransfer(transferId)
+        ? await folderCoordinator.respondToOffer(transferId, decision, directoryToken)
+        : await coordinator.respondToOffer(transferId, decision, directoryToken)
       return task === null
         ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
         : { ok: true, data: task }

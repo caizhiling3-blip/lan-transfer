@@ -121,6 +121,7 @@ export const ipcInvokeRequestSchemas = {
     .object({ content: textSchema, contentType: z.enum(['text', 'link']) })
     .strict(),
   'transfer:offer-files': offerFilesRequestSchema,
+  'transfer:offer-folder': z.object({ selectionToken: tokenSchema }).strict(),
   'transfer:respond-to-offer': respondToOfferRequestSchema,
   'transfer:cancel': z
     .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })

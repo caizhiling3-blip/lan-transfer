@@ -104,7 +104,7 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 
 1.1 在文件任务进入 `transferring` 时由主进程启用 Electron `powerSaveBlocker` 的应用挂起阻止器，最后一个传输离开该状态后立即释放。退出应用若仍有 pending、awaitingAcceptance、accepted 或 transferring 文件任务，会要求用户继续传输或明确退出并取消。预计剩余时间由 renderer 使用剩余字节和当前任务速度计算，只作提示，不改变传输事实。接收成功后的实际发布路径只保存在协调器内部，“在文件夹中显示”IPC 只接受 transferId 和可选 fileId，不接受 renderer 路径。
 
-拖拽使用 Electron `webUtils.getPathForFile`，该调用封装在 Preload 内。renderer 只能把浏览器 `File` 对象交给具名 API，不能提交字符串路径；主进程重新执行数量、普通文件、大小和名称检查后才签发 selection token。文件夹拖入会被拒绝。
+拖拽使用 Electron `webUtils.getPathForFile`，该调用封装在 Preload 内。renderer 只能把浏览器 `File` 对象交给具名 API，不能提交字符串路径；主进程重新执行类型、数量、大小和名称检查后才签发 selection token。当前入口支持普通文件与一个文件夹，符号链接和其他条目会被拒绝。
 
 ## 1.2 文件夹传输架构
 
@@ -113,6 +113,8 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 主进程扫描器拥有真实根路径和逐文件身份快照；Preload/renderer 只持有短期 selectionToken 与摘要。最大 2 MiB manifest 以最多 32 个 WS 消息分片传输，接收端在有界 assembler 中校验后才投影 offer。HTTP 路由只使用 transferId/fileId 查找已验证相对路径，不接受 URL、header 或 renderer 提供的目标路径。
 
 阶段 2 已实现 `scanFolder` 和 FileAccessRegistry 文件夹授权。扫描对规范化路径使用跨平台确定性排序，逐项 lstat/realpath 并验证仍位于根目录；普通文件记录设备号、inode、大小和修改时间。混合拖拽先验证所有顶层项，全部成功后才把文件和文件夹 token 写入有界注册表，避免部分失败留下 renderer 不可见的授权。
+
+阶段 3 已实现独立 `FolderTransferCoordinator`。发送端消费 folder selectionToken，计算 manifest SHA-256 并按 96 KiB 目标大小分片；接收端按 manifestId 和 chunkIndex 有界组装，验证摘要、数量、总大小、fileId、可移植路径冲突以及“文件占用父目录”冲突后才产生 IPC offer。文件与文件夹协调器共享单活动发送约束，基础 UI 每次只允许一个待发送文件夹。接受时只解析主进程持有的默认目录或 directoryToken，路径和 uploadKey 不暴露给 renderer。阶段 3 不注册文件夹 HTTP 路由。
 
 接收内容先进入授权目录中的任务 staging 目录。整个树完整后独占创建新的最终目录，并以 ownership marker 约束发布失败和启动清理只能作用于当前任务创建的目录；不使用可能覆盖空目录的跨平台 rename 假设。详细设计见 [文件夹传输设计](folder-transfer.md)。
 

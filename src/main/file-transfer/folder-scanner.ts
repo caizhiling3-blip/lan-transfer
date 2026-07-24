@@ -14,9 +14,11 @@ import {
 } from '@shared/constants'
 import { fileIdSchema } from '@shared/types'
 import type { FolderManifestContents, FolderManifestFile } from '@shared/types'
-import { getUtf8ByteLength } from '@shared/utils'
-
-import { createPortablePathCollisionKey, normalizePortablePathSegment } from '../security'
+import {
+  createPortablePathCollisionKey,
+  getUtf8ByteLength,
+  normalizePortablePathSegment,
+} from '@shared/utils'
 import { getMimeType } from './mime-type'
 
 export interface AuthorizedFolderFile {

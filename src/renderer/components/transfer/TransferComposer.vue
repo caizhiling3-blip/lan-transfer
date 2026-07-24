@@ -116,7 +116,7 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
           </el-button>
         </div>
       </div>
-      <small> 选择授权保留 10 分钟；文件夹已完成安全扫描，发送能力将在下一阶段接入。 </small>
+      <small> 选择授权保留 10 分钟；发送文件或文件夹时仍需对方确认接收。 </small>
     </div>
 
     <el-input
@@ -146,6 +146,7 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
           :loading="selecting"
           :disabled="
             !connected ||
+            pendingFolders.length > 0 ||
             pendingFiles.length + pendingFolders.length >= MAX_TOP_LEVEL_TRANSFER_ITEMS
           "
           @click="$emit('addFolder')"

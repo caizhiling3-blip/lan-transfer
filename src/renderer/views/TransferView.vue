@@ -26,6 +26,7 @@ const activities = computed(() =>
 const contentBytes = computed(() => getUtf8ByteLength(content.value))
 const hasText = computed(() => content.value.trim().length > 0)
 const hasPendingFiles = computed(() => fileTransferStore.pendingFiles.length > 0)
+const hasPendingFolders = computed(() => fileTransferStore.pendingFolders.length > 0)
 const isConnected = computed(() => connectionStore.status.state === 'connected')
 const isSending = computed(() => textTransferStore.sending || fileTransferStore.offering)
 const canSend = computed(
@@ -33,7 +34,7 @@ const canSend = computed(
     isConnected.value &&
     !isSending.value &&
     contentBytes.value <= MAX_TEXT_BYTES &&
-    (hasText.value || hasPendingFiles.value),
+    (hasText.value || hasPendingFiles.value || hasPendingFolders.value),
 )
 const errorMessages = computed(() =>
   [...new Set([textTransferStore.errorMessage, fileTransferStore.errorMessage])].filter(Boolean),
@@ -67,7 +68,7 @@ const send = async (): Promise<void> => {
   } else if (content.value.length > 0) {
     content.value = ''
   }
-  if (hasPendingFiles.value) await fileTransferStore.sendPendingFiles()
+  if (hasPendingFiles.value || hasPendingFolders.value) await fileTransferStore.sendPendingItems()
 }
 
 const readClipboard = async (): Promise<void> => {

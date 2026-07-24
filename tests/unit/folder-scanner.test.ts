@@ -5,10 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { scanFolder } from '../../src/main/file-transfer/folder-scanner'
-import {
-  createPortablePathCollisionKey,
-  normalizePortablePathSegment,
-} from '../../src/main/security/portable-path'
+import { createPortablePathCollisionKey, normalizePortablePathSegment } from '@shared/utils'
 
 const temporaryDirectories: string[] = []
 

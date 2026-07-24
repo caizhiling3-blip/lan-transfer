@@ -17,6 +17,7 @@ export const IPC_INVOKE_CHANNELS = [
   'transfer:register-dropped-items',
   'transfer:send-text',
   'transfer:offer-files',
+  'transfer:offer-folder',
   'transfer:respond-to-offer',
   'transfer:cancel',
   'transfer:retry',

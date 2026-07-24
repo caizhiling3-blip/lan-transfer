@@ -79,7 +79,7 @@ manifest 文件按规范化 relativePath 升序排列，空目录同样排序。
 
 上传每个文件前重新打开并核对文件身份、大小和修改时间。文件夹扫描后新增、删除或替换内容不会被静默纳入原任务；不一致时任务失败并提示重新选择。
 
-阶段 2 已实现扫描器、系统文件夹选择、文件/文件夹混合拖拽、一次性 folder selectionToken 和 renderer 摘要预览。协议 offer、manifest 分片和 token 消费从阶段 3 开始实现。
+阶段 2 已实现扫描器、系统文件夹选择、文件/文件夹混合拖拽、一次性 folder selectionToken 和 renderer 摘要预览。阶段 3 已实现 offer、manifest 分片、完整性与路径冲突校验、接收确认和 token 消费；文件内容上传留到阶段 4。
 
 ## 协议版本与 Manifest 分片
 
@@ -171,10 +171,10 @@ Content-Length: <manifest-file-size>
 transfer.selectFolder()
 transfer.registerDroppedItems(files)
 transfer.offerFolder(selectionToken)
-transfer.onFolderOfferReceived(listener)
+transfer.onOfferReceived(listener)
 ```
 
-现有 `respondToOffer`、`cancel`、`retry` 和 `onTaskChanged` 扩展为文件与文件夹任务的判别联合，避免 renderer 使用任意 channel。SelectedFolderDto 只包含 selectionToken、displayName、fileCount、emptyDirectoryCount 和 totalSize，不包含路径或 manifest 明细。
+现有 `respondToOffer`、`onOfferReceived` 和 `onTaskChanged` 已扩展为文件与文件夹任务的判别联合，避免 renderer 使用任意 channel；文件夹取消和重试在对应业务阶段接入。SelectedFolderDto 只包含 selectionToken、displayName、fileCount、emptyDirectoryCount 和 totalSize，不包含路径或 manifest 明细。
 
 拖拽继续由 Preload 使用 `webUtils.getPathForFile` 获取受控路径，再交给具名 IPC；主进程必须 lstat 并重新扫描。renderer 不能提交字符串路径到通用读写 API。
 

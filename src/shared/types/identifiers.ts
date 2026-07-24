@@ -6,6 +6,7 @@ export const connectionIdSchema = z.uuid().brand<'ConnectionId'>()
 export const transferIdSchema = z.uuid().brand<'TransferId'>()
 export const fileIdSchema = z.uuid().brand<'FileId'>()
 export const requestIdSchema = z.uuid().brand<'RequestId'>()
+export const manifestIdSchema = z.uuid().brand<'ManifestId'>()
 
 export type DeviceId = z.infer<typeof deviceIdSchema>
 export type MessageId = z.infer<typeof messageIdSchema>
@@ -13,3 +14,4 @@ export type ConnectionId = z.infer<typeof connectionIdSchema>
 export type TransferId = z.infer<typeof transferIdSchema>
 export type FileId = z.infer<typeof fileIdSchema>
 export type RequestId = z.infer<typeof requestIdSchema>
+export type ManifestId = z.infer<typeof manifestIdSchema>

@@ -21,6 +21,7 @@ import {
   cleanupStaleTemporaryFiles,
   FileAccessRegistry,
   FileTransferCoordinator,
+  FolderTransferCoordinator,
   TransferPowerSaveController,
 } from './file-transfer'
 import {
@@ -43,6 +44,7 @@ let mainWindow: BrowserWindow | null = null
 let serviceManager: ServiceManager | null = null
 let connectionManager: ConnectionManager | null = null
 let fileTransferCoordinator: FileTransferCoordinator | null = null
+let folderTransferCoordinator: FolderTransferCoordinator | null = null
 let discoveryManager: DiscoveryManager | null = null
 let transferPowerSaveController: TransferPowerSaveController | null = null
 let unsubscribeFromService: (() => void) | null = null
@@ -73,12 +75,19 @@ const openMainWindow = (): void => {
     })
   })
   mainWindow.webContents.once('did-finish-load', () => {
-    if (fileTransferCoordinator === null) return
+    if (fileTransferCoordinator === null || folderTransferCoordinator === null) return
     for (const task of fileTransferCoordinator.getTasks()) {
       sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }
     const pendingOffer = fileTransferCoordinator.getPendingOffer()
     if (pendingOffer !== null) sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, pendingOffer)
+    for (const task of folderTransferCoordinator.getTasks()) {
+      sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
+    }
+    const pendingFolderOffer = folderTransferCoordinator.getPendingOffer()
+    if (pendingFolderOffer !== null) {
+      sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, pendingFolderOffer)
+    }
     if (discoveryManager !== null) {
       sendToRenderer(DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL, discoveryManager.getDevices())
     }
@@ -121,6 +130,11 @@ void app.whenReady().then(() => {
     sessionHistory,
     () => settingsStore.getSettings().maxFileSizeBytes,
   )
+  const activeFolderTransferCoordinator = new FolderTransferCoordinator(
+    activeConnectionManager,
+    fileAccessRegistry,
+    () => !activeFileTransferCoordinator.hasActiveTransfers(),
+  )
   const activeDiscoveryManager = new DiscoveryManager(
     () => deviceIdentity.getDeviceInfo(activeServiceManager.getStatus()),
     (error) => logger.warn('device_discovery_error', { error: String(error) }),
@@ -129,6 +143,7 @@ void app.whenReady().then(() => {
   serviceManager = activeServiceManager
   connectionManager = activeConnectionManager
   fileTransferCoordinator = activeFileTransferCoordinator
+  folderTransferCoordinator = activeFolderTransferCoordinator
   discoveryManager = activeDiscoveryManager
   transferPowerSaveController = activeTransferPowerSaveController
 
@@ -142,6 +157,7 @@ void app.whenReady().then(() => {
     () => mainWindow,
     fileAccessRegistry,
     activeFileTransferCoordinator,
+    activeFolderTransferCoordinator,
   )
   registerSettingsIpcHandlers(
     () => mainWindow,
@@ -224,6 +240,13 @@ void app.whenReady().then(() => {
       activeTransferPowerSaveController.sync(activeFileTransferCoordinator.getTasks())
       sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
+    activeFolderTransferCoordinator.subscribeTasks((task) => {
+      activeTransferPowerSaveController.sync([
+        ...activeFileTransferCoordinator.getTasks(),
+        ...activeFolderTransferCoordinator.getTasks(),
+      ])
+      sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
+    }),
     activeDiscoveryManager.subscribe((devices) => {
       sendToRenderer(DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL, devices)
     }),
@@ -233,6 +256,15 @@ void app.whenReady().then(() => {
         peerDeviceId: offer.peer.deviceId,
         fileCount: offer.files.length,
         totalBytes: offer.files.reduce((total, file) => total + file.size, 0),
+      })
+      sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
+    }),
+    activeFolderTransferCoordinator.subscribeOffers((offer) => {
+      logger.info('folder_offer_received', {
+        transferId: offer.transferId,
+        peerDeviceId: offer.peer.deviceId,
+        fileCount: offer.fileCount,
+        totalBytes: offer.totalSize,
       })
       sendToRenderer(FILE_OFFER_RECEIVED_EVENT_CHANNEL, offer)
     }),
@@ -261,7 +293,10 @@ app.on('before-quit', (event) => {
   }
   if (isQuitting) return
 
-  if (fileTransferCoordinator.hasActiveTransfers()) {
+  if (
+    fileTransferCoordinator.hasActiveTransfers() ||
+    folderTransferCoordinator?.hasActiveTransfers() === true
+  ) {
     const options = {
       type: 'warning' as const,
       title: '传输尚未完成',
@@ -290,6 +325,7 @@ app.on('before-quit', (event) => {
   connectionManager.disconnect('app_shutdown')
   void fileTransferCoordinator
     .shutdown()
+    .then(() => folderTransferCoordinator?.shutdown())
     .then(() => serviceManager?.stop())
     .finally(() => {
       unsubscribeFromService?.()

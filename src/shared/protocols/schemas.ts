@@ -5,6 +5,12 @@ import {
   HEARTBEAT_TIMEOUT_MS,
   MAX_FILE_SIZE_BYTES,
   MAX_FILES_PER_TRANSFER,
+  MAX_FOLDER_DEPTH,
+  MAX_FOLDER_EMPTY_DIRECTORIES,
+  MAX_FOLDER_FILES,
+  MAX_FOLDER_MANIFEST_CHUNKS,
+  MAX_FOLDER_RELATIVE_PATH_BYTES,
+  MAX_FOLDER_TOTAL_SIZE_BYTES,
   MAX_SERVICE_PORT,
   MAX_TEXT_BYTES,
   MIN_SERVICE_PORT,
@@ -16,9 +22,10 @@ import {
   deviceIdSchema,
   fileIdSchema,
   messageIdSchema,
+  manifestIdSchema,
   transferIdSchema,
 } from '../types'
-import { getUtf8ByteLength } from '../utils'
+import { getUtf8ByteLength, parsePortableRelativePath } from '../utils'
 
 const safeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 export const timestampSchema = safeIntegerSchema
@@ -232,6 +239,80 @@ export const fileErrorMessageSchema = createMessageSchema(
     .strict(),
 )
 
+const portableRelativePathSchema = z
+  .string()
+  .min(1)
+  .refine((value) => getUtf8ByteLength(value) <= MAX_FOLDER_RELATIVE_PATH_BYTES)
+  .refine((value) => {
+    try {
+      return parsePortableRelativePath(value).length <= MAX_FOLDER_DEPTH
+    } catch {
+      return false
+    }
+  }, 'Invalid portable relative path')
+
+export const folderManifestFileSchema = z
+  .object({
+    fileId: fileIdSchema,
+    relativePath: portableRelativePathSchema,
+    size: safeIntegerSchema.max(MAX_FILE_SIZE_BYTES),
+    mimeType: fileMetadataSchema.shape.mimeType,
+  })
+  .strict()
+
+export const folderOfferMessageSchema = createMessageSchema(
+  'folder:offer',
+  z
+    .object({
+      transferId: transferIdSchema,
+      manifestId: manifestIdSchema,
+      displayName: z.string().min(1).max(255).refine(isSafeDisplayName, 'Invalid folder name'),
+      totalSize: safeIntegerSchema.max(MAX_FOLDER_TOTAL_SIZE_BYTES),
+      fileCount: z.number().int().min(0).max(MAX_FOLDER_FILES),
+      emptyDirectoryCount: z.number().int().min(0).max(MAX_FOLDER_EMPTY_DIRECTORIES),
+      manifestChunkCount: z.number().int().min(1).max(MAX_FOLDER_MANIFEST_CHUNKS),
+      manifestSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+    })
+    .strict(),
+)
+
+export const folderManifestMessageSchema = createMessageSchema(
+  'folder:manifest',
+  z
+    .object({
+      transferId: transferIdSchema,
+      manifestId: manifestIdSchema,
+      chunkIndex: z
+        .number()
+        .int()
+        .min(0)
+        .max(MAX_FOLDER_MANIFEST_CHUNKS - 1),
+      files: z.array(folderManifestFileSchema).max(MAX_FOLDER_FILES),
+      emptyDirectories: z.array(portableRelativePathSchema).max(MAX_FOLDER_EMPTY_DIRECTORIES),
+    })
+    .strict(),
+)
+
+export const folderAcceptMessageSchema = createMessageSchema(
+  'folder:accept',
+  z
+    .object({
+      transferId: transferIdSchema,
+      uploadKey: z
+        .string()
+        .min(32)
+        .max(128)
+        .regex(/^[a-zA-Z0-9_-]+$/u),
+      expiresAt: timestampSchema,
+    })
+    .strict(),
+)
+
+export const folderRejectMessageSchema = createMessageSchema(
+  'folder:reject',
+  z.object({ transferId: transferIdSchema, reason: z.literal('user_rejected') }).strict(),
+)
+
 export const protocolMessageSchema = z.discriminatedUnion('type', [
   deviceHelloMessageSchema,
   deviceWelcomeMessageSchema,
@@ -246,4 +327,8 @@ export const protocolMessageSchema = z.discriminatedUnion('type', [
   fileProgressMessageSchema,
   fileCompleteMessageSchema,
   fileErrorMessageSchema,
+  folderOfferMessageSchema,
+  folderManifestMessageSchema,
+  folderAcceptMessageSchema,
+  folderRejectMessageSchema,
 ])

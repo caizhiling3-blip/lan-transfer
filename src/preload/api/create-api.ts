@@ -85,6 +85,7 @@ export const createLanTransferApi = (): LanTransferApi => {
         }),
       sendText: (content, contentType) => invoke('transfer:send-text', { content, contentType }),
       offerFiles: (selectionTokens) => invoke('transfer:offer-files', { selectionTokens }),
+      offerFolder: (selectionToken) => invoke('transfer:offer-folder', { selectionToken }),
       respondToOffer: (transferId, decision, directoryToken) =>
         decision === 'accept'
           ? invoke(

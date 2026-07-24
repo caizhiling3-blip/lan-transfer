@@ -61,6 +61,7 @@ export interface LanTransferApi {
     offerFiles(
       selectionTokens: readonly string[],
     ): Promise<IpcInvokeResponse<'transfer:offer-files'>>
+    offerFolder(selectionToken: string): Promise<IpcInvokeResponse<'transfer:offer-folder'>>
     respondToOffer(
       transferId: TransferId,
       decision: 'accept' | 'reject',

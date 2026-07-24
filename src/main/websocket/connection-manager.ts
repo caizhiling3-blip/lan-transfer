@@ -25,6 +25,10 @@ import {
   fileOfferMessageSchema,
   fileProgressMessageSchema,
   fileRejectMessageSchema,
+  folderAcceptMessageSchema,
+  folderManifestMessageSchema,
+  folderOfferMessageSchema,
+  folderRejectMessageSchema,
   parseProtocolMessage,
   textAcknowledgementMessageSchema,
   textSendMessageSchema,
@@ -37,6 +41,10 @@ import type {
   FileOfferMessage,
   FileProgressMessage,
   FileRejectMessage,
+  FolderAcceptMessage,
+  FolderManifestMessage,
+  FolderOfferMessage,
+  FolderRejectMessage,
 } from '@shared/protocols'
 import {
   connectionIdSchema,
@@ -77,6 +85,9 @@ export type FileControlMessage =
   | FileCompleteMessage
   | FileErrorMessage
 type FileMessageListener = (message: FileControlMessage) => void
+export type FolderControlMessage =
+  FolderOfferMessage | FolderManifestMessage | FolderAcceptMessage | FolderRejectMessage
+type FolderMessageListener = (message: FolderControlMessage) => void
 
 interface PendingConnection {
   readonly requestId: RequestId
@@ -119,6 +130,7 @@ export class ConnectionManager {
   private readonly requestListeners = new Set<RequestListener>()
   private readonly textListeners = new Set<TextListener>()
   private readonly fileMessageListeners = new Set<FileMessageListener>()
+  private readonly folderMessageListeners = new Set<FolderMessageListener>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private connectionId: ConnectionId | null = null
@@ -157,6 +169,27 @@ export class ConnectionManager {
   public subscribeFileMessages(listener: FileMessageListener): () => void {
     this.fileMessageListeners.add(listener)
     return () => this.fileMessageListeners.delete(listener)
+  }
+
+  public subscribeFolderMessages(listener: FolderMessageListener): () => void {
+    this.folderMessageListeners.add(listener)
+    return () => this.folderMessageListeners.delete(listener)
+  }
+
+  public sendFolderOffer(payload: FolderOfferMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:offer', folderOfferMessageSchema, payload)
+  }
+
+  public sendFolderManifest(payload: FolderManifestMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:manifest', folderManifestMessageSchema, payload)
+  }
+
+  public sendFolderAccept(payload: FolderAcceptMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:accept', folderAcceptMessageSchema, payload)
+  }
+
+  public sendFolderReject(payload: FolderRejectMessage['payload']): Promise<boolean> {
+    return this.sendFolderMessage('folder:reject', folderRejectMessageSchema, payload)
   }
 
   public getPeer(): DeviceInfo | null {
@@ -582,6 +615,13 @@ export class ConnectionManager {
         this.sendTextAcknowledgement(message.messageId)
       } else if (message.type === 'text:ack') {
         this.pendingTextAcknowledgements.get(message.payload.messageId)?.complete(true)
+      } else if (
+        message.type === 'folder:offer' ||
+        message.type === 'folder:manifest' ||
+        message.type === 'folder:accept' ||
+        message.type === 'folder:reject'
+      ) {
+        for (const listener of this.folderMessageListeners) listener(message)
       } else {
         for (const listener of this.fileMessageListeners) listener(message)
       }
@@ -629,7 +669,25 @@ export class ConnectionManager {
     )
   }
 
-  private async sendProtocolMessage(message: FileControlMessage): Promise<boolean> {
+  private sendFolderMessage<
+    TMessage extends FolderControlMessage,
+    TSchema extends { parse(input: unknown): TMessage },
+  >(type: TMessage['type'], schema: TSchema, payload: TMessage['payload']): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      schema.parse({
+        type,
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload,
+      }),
+    )
+  }
+
+  private async sendProtocolMessage(
+    message: FileControlMessage | FolderControlMessage,
+  ): Promise<boolean> {
     const socket = this.socket
     if (socket === null || socket.readyState !== WebSocket.OPEN) return false
     return new Promise((resolve) => {

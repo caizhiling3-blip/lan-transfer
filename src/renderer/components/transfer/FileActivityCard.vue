@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
-import type { FileOfferReceivedDto } from '@shared/ipc'
+import type { TransferOfferReceivedDto } from '@shared/ipc'
 import type { FileId, TransferStatus, TransferTaskDto } from '@shared/types'
 
 import {
@@ -14,7 +14,7 @@ import {
 
 const props = defineProps<{
   readonly task: TransferTaskDto
-  readonly incomingOffer: FileOfferReceivedDto | null
+  readonly incomingOffer: TransferOfferReceivedDto | null
   readonly responding: boolean
 }>()
 
@@ -72,8 +72,13 @@ const tagType = computed(() => {
     <div class="task-heading">
       <div>
         <strong>
-          {{ task.files[0]?.displayName ?? '未知文件' }}
-          <template v-if="task.files.length > 1">等 {{ task.files.length }} 个文件</template>
+          <template v-if="task.kind === 'folder'">{{
+            task.folder?.displayName ?? '文件夹'
+          }}</template>
+          <template v-else>
+            {{ task.files[0]?.displayName ?? '未知文件' }}
+            <template v-if="task.files.length > 1">等 {{ task.files.length }} 个文件</template>
+          </template>
         </strong>
         <p :title="new Date(task.createdAt).toLocaleString()">
           {{
@@ -89,7 +94,11 @@ const tagType = computed(() => {
 
     <div v-if="isIncomingOffer" class="accept-panel">
       <strong>是否接收这些文件？</strong>
-      <span>默认不会自动接收或打开文件。</span>
+      <span v-if="task.kind === 'folder'">
+        文件夹包含 {{ task.folder?.fileCount ?? 0 }} 个文件和
+        {{ task.folder?.emptyDirectoryCount ?? 0 }} 个空目录。
+      </span>
+      <span v-else>默认不会自动接收或打开文件。</span>
       <div class="offer-actions">
         <el-button type="primary" :loading="responding" @click="$emit('respond', 'accept')">
           接收到默认目录
@@ -147,7 +156,7 @@ const tagType = computed(() => {
       </el-button>
     </div>
 
-    <details class="task-files">
+    <details v-if="task.kind !== 'folder'" class="task-files">
       <summary>文件明细（{{ task.files.length }}）</summary>
       <div v-for="file in task.files" :key="file.fileId" class="task-file-row">
         <div class="file-row-heading">

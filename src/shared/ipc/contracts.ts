@@ -67,6 +67,10 @@ export interface IpcInvokeMap {
     { readonly selectionTokens: readonly string[] },
     TransferTaskDto
   >
+  readonly 'transfer:offer-folder': InvokeContract<
+    { readonly selectionToken: string },
+    TransferTaskDto
+  >
   readonly 'transfer:respond-to-offer': InvokeContract<
     {
       readonly transferId: TransferId
@@ -115,13 +119,25 @@ export interface FileOfferReceivedDto {
   readonly receivedAt: number
 }
 
+export interface FolderOfferReceivedDto {
+  readonly transferId: TransferId
+  readonly peer: DeviceInfo
+  readonly displayName: string
+  readonly fileCount: number
+  readonly emptyDirectoryCount: number
+  readonly totalSize: number
+  readonly receivedAt: number
+}
+
+export type TransferOfferReceivedDto = FileOfferReceivedDto | FolderOfferReceivedDto
+
 export interface IpcEventMap {
   readonly 'service:status-changed': ServiceStatusDto
   readonly 'connection:state-changed': ConnectionStatusDto
   readonly 'connection:incoming-request': IncomingConnectionRequestDto
   readonly 'transfer:task-changed': TransferTaskDto
   readonly 'transfer:text-received': TextReceivedDto
-  readonly 'transfer:offer-received': FileOfferReceivedDto
+  readonly 'transfer:offer-received': TransferOfferReceivedDto
   readonly 'settings:changed': AppSettingsDto
   readonly 'discovery:devices-changed': readonly DiscoveredDeviceDto[]
 }

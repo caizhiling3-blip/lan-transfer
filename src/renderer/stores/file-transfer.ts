@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 
 import { MAX_FILES_PER_TRANSFER, MAX_TOP_LEVEL_TRANSFER_ITEMS } from '@shared/constants'
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
-import type { FileOfferReceivedDto } from '@shared/ipc'
+import type { TransferOfferReceivedDto } from '@shared/ipc'
 import type { SelectedFileDto, SelectedFolderDto, TransferTaskDto } from '@shared/types'
 
 const upsertTask = (tasks: TransferTaskDto[], task: TransferTaskDto): TransferTaskDto[] => {
@@ -16,7 +16,7 @@ export const useFileTransferStore = defineStore('fileTransfer', {
     tasks: [] as TransferTaskDto[],
     pendingFiles: [] as SelectedFileDto[],
     pendingFolders: [] as SelectedFolderDto[],
-    incomingOffer: null as FileOfferReceivedDto | null,
+    incomingOffer: null as TransferOfferReceivedDto | null,
     selecting: false,
     offering: false,
     responding: false,
@@ -53,6 +53,10 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       this.addPendingFiles(selectionResult.data)
     },
     async selectFolder(): Promise<void> {
+      if (this.pendingFolders.length > 0) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
+        return
+      }
       if (this.pendingFiles.length + this.pendingFolders.length >= MAX_TOP_LEVEL_TRANSFER_ITEMS) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
         return
@@ -95,6 +99,10 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       const folders = selectionResult.data.flatMap((item) =>
         item.kind === 'folder' ? [item.folder] : [],
       )
+      if (folders.length + this.pendingFolders.length > 1) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
+        return
+      }
       if (
         folders.length > 0 &&
         this.pendingFiles.length + this.pendingFolders.length + files.length + folders.length >
@@ -119,6 +127,10 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       this.pendingFiles = [...this.pendingFiles, ...selections]
     },
     addPendingFolders(selections: readonly SelectedFolderDto[]): void {
+      if (this.pendingFolders.length + selections.length > 1) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN.FILE_COUNT_EXCEEDED
+        return
+      }
       if (
         this.pendingFiles.length + this.pendingFolders.length + selections.length >
         MAX_TOP_LEVEL_TRANSFER_ITEMS
@@ -143,19 +155,34 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       this.pendingFiles = []
       this.pendingFolders = []
     },
-    async sendPendingFiles(): Promise<boolean> {
-      if (this.pendingFiles.length === 0 || this.offering) return false
-      this.offering = true
-      this.errorMessage = ''
-      const selectionTokens = this.pendingFiles.map(({ selectionToken }) => selectionToken)
-      const offerResult = await window.lanTransfer.transfer.offerFiles(selectionTokens)
-      this.offering = false
-      if (!offerResult.ok) {
-        this.errorMessage = ERROR_MESSAGES_ZH_CN[offerResult.error.code]
+    async sendPendingItems(): Promise<boolean> {
+      if ((this.pendingFiles.length === 0 && this.pendingFolders.length === 0) || this.offering) {
         return false
       }
-      this.tasks = upsertTask(this.tasks, offerResult.data)
-      this.pendingFiles = []
+      this.offering = true
+      this.errorMessage = ''
+      if (this.pendingFiles.length > 0) {
+        const selectionTokens = this.pendingFiles.map(({ selectionToken }) => selectionToken)
+        const offerResult = await window.lanTransfer.transfer.offerFiles(selectionTokens)
+        if (!offerResult.ok) {
+          this.offering = false
+          this.errorMessage = ERROR_MESSAGES_ZH_CN[offerResult.error.code]
+          return false
+        }
+        this.tasks = upsertTask(this.tasks, offerResult.data)
+        this.pendingFiles = []
+      }
+      for (const folder of this.pendingFolders) {
+        const offerResult = await window.lanTransfer.transfer.offerFolder(folder.selectionToken)
+        if (!offerResult.ok) {
+          this.offering = false
+          this.errorMessage = ERROR_MESSAGES_ZH_CN[offerResult.error.code]
+          return false
+        }
+        this.tasks = upsertTask(this.tasks, offerResult.data)
+      }
+      this.pendingFolders = []
+      this.offering = false
       return true
     },
     async respond(decision: 'accept' | 'reject', chooseDirectory = false): Promise<void> {

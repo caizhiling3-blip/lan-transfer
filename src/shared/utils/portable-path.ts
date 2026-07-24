@@ -1,4 +1,4 @@
-import { getUtf8ByteLength } from '@shared/utils'
+import { getUtf8ByteLength } from './text'
 
 const INVALID_CHARACTERS = /[<>:"/\\|?*]/u
 const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu
@@ -27,3 +27,12 @@ export const normalizePortablePathSegment = (value: string): string => {
 
 export const createPortablePathCollisionKey = (segments: readonly string[]): string =>
   segments.map((segment) => segment.normalize('NFC').toLowerCase()).join('/')
+
+export const parsePortableRelativePath = (value: string): readonly string[] => {
+  if (value === '' || value.startsWith('/') || value.startsWith('\\') || value.includes('\\')) {
+    throw new Error('FOLDER_PATH_INVALID')
+  }
+  const segments = value.split('/').map(normalizePortablePathSegment)
+  if (segments.join('/') !== value.normalize('NFC')) throw new Error('FOLDER_PATH_INVALID')
+  return segments
+}

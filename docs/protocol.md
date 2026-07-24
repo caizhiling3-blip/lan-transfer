@@ -2,9 +2,9 @@
 
 ## 版本与传输
 
-当前 1.1 协议版本为 `1`。1.2 文件夹能力会将握手协议升级为 `2`；严格 schema 无法与旧 hello/welcome 安全协商，因此 v1 与 v2 明确不兼容，不维护双协议栈。WebSocket 路径仍为 `/v1/ws`，路径只表示传输入口版本；hello 中的 protocolVersion 才决定消息能力。HTTP 负责文件流，文件内容不得转成 Base64 后通过 WebSocket 发送。
+当前握手协议版本为 `2`。文件夹能力改变了 strict 消息联合，因此 v1 与 v2 明确不兼容，不维护双协议栈。WebSocket 路径仍为 `/v1/ws`，路径只表示现有传输入口；hello 中的 protocolVersion 才决定消息能力。HTTP 负责文件流，文件内容不得转成 Base64 后通过 WebSocket 发送。
 
-`GET /health` 返回 `{ "status": "ok", "protocolVersion": 1 }`，其他未注册 HTTP 路由返回 404。`/v1/ws` 由设备连接管理器接管；已有活动连接时，新 socket 使用 WebSocket close code 1013 关闭。
+`GET /health` 返回 `{ "status": "ok", "protocolVersion": 2 }`，其他未注册 HTTP 路由返回 404。`/v1/ws` 由设备连接管理器接管；已有活动连接时，新 socket 使用 WebSocket close code 1013 关闭。
 
 所有消息使用统一 envelope：
 
@@ -27,7 +27,7 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳，并且只能�
 ```ts
 interface DiscoveryAnnouncement {
   appId: 'lan-drop'
-  protocolVersion: 1
+  protocolVersion: 2
   messageId: string
   deviceId: string
   deviceName: string
@@ -93,9 +93,9 @@ Content-Length: <accepted-file-size>
 
 ## 1.2 文件夹消息
 
-文件夹协议新增 `folder:offer`、`folder:manifest`、`folder:accept`、`folder:reject`、`folder:cancel`、`folder:progress`、`folder:complete` 和 `folder:error`。offer 只发送摘要；最大 2 MiB manifest 拆成最多 32 个、每个不超过现有 128 KiB WS 限制的严格分片，接收端完成顺序、容量、汇总值和 SHA-256 校验后才允许用户确认。
+阶段 3 已实现 `folder:offer`、`folder:manifest`、`folder:accept` 和 `folder:reject`。offer 只发送摘要；最大 2 MiB manifest 拆成最多 32 个、单个目标上限 96 KiB 的严格分片，接收端完成索引、容量、汇总值、SHA-256、重复 ID 和跨平台路径冲突校验后才允许用户确认。
 
-文件夹接受消息发送一个任务级 uploadKey；逐文件 token 由 HMAC-SHA-256 绑定 transferId 和 fileId 派生，接收端仍只接受当前队首文件且每个 token 只消费一次。文件通过 `POST /v2/folder-transfers/:transferId/files/:fileId` 串行上传，URL 不携带相对路径，目标位置只能来自已验证 manifest。
+文件夹接受消息发送一个任务级 uploadKey 和过期时间，但阶段 3 不消费该授权，也不上传文件内容；双方任务在 `accepted` 停止。阶段 4 将增加 `folder:cancel`、`folder:progress`、`folder:complete`、`folder:error` 和 `POST /v2/folder-transfers/:transferId/files/:fileId` 串行上传。URL 不携带相对路径，目标位置只能来自已验证 manifest。
 
 相对路径在协议中统一使用 `/`，拒绝绝对路径、盘符、UNC、反斜杠、空段、`.`、`..`、非法跨平台文件名、超深和规范化冲突。详细 manifest、状态机和发布规则见 [文件夹传输设计](folder-transfer.md)。
 

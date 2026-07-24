@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { LocalServer } from '../../src/main/server/local-server'
 import { ServiceManager } from '../../src/main/server/service-manager'
+import { PROTOCOL_VERSION } from '@shared/constants'
 
 const runningServers: LocalServer[] = []
 
@@ -22,7 +23,10 @@ describe('LocalServer', () => {
     const healthResponse = await fetch(`http://127.0.0.1:${String(port)}/health`)
     expect(healthResponse.status).toBe(200)
     expect(healthResponse.headers.get('cache-control')).toBe('no-store')
-    await expect(healthResponse.json()).resolves.toEqual({ status: 'ok', protocolVersion: 1 })
+    await expect(healthResponse.json()).resolves.toEqual({
+      status: 'ok',
+      protocolVersion: PROTOCOL_VERSION,
+    })
 
     const unknownResponse = await fetch(`http://127.0.0.1:${String(port)}/unknown`)
     expect(unknownResponse.status).toBe(404)

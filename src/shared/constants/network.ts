@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 1 as const
+export const PROTOCOL_VERSION = 2 as const
 
 export const DEFAULT_SERVICE_PORT = 53_317
 export const DISCOVERY_PORT = 53_318
@@ -21,8 +21,11 @@ export const MAX_FOLDER_TOTAL_SIZE_BYTES = 10 * 1_024 * 1_024 * 1_024
 export const MAX_FOLDER_DEPTH = 20
 export const MAX_FOLDER_RELATIVE_PATH_BYTES = 512
 export const MAX_FOLDER_MANIFEST_BYTES = 2 * 1_024 * 1_024
+export const MAX_FOLDER_MANIFEST_CHUNKS = 32
 export const MAX_TOP_LEVEL_TRANSFER_ITEMS = 10
 export const FOLDER_SCAN_TIMEOUT_MS = 30_000
+export const FOLDER_TRANSFER_TIMEOUT_MS = 4 * 60 * 60_000
+export const MAX_FOLDER_MANIFEST_CHUNK_BYTES = 96 * 1_024
 
 export const HEARTBEAT_INTERVAL_MS = 10_000
 export const HEARTBEAT_TIMEOUT_MS = 30_000

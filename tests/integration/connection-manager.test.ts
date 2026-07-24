@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { LocalServer } from '../../src/main/server/local-server'
 import { ConnectionManager } from '../../src/main/websocket/connection-manager'
+import { PROTOCOL_VERSION } from '@shared/constants'
 import type { TextReceivedDto } from '@shared/ipc'
 import { parseProtocolMessage } from '@shared/protocols'
 import { deviceIdSchema } from '@shared/types'
@@ -170,7 +171,11 @@ describe('ConnectionManager', () => {
         messageId: '77777777-7777-4777-8777-777777777777',
         senderId: rawDevice.deviceId,
         timestamp: Date.now(),
-        payload: { protocolVersion: 1, device: rawDevice, connectionNonce: 'n'.repeat(32) },
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          device: rawDevice,
+          connectionNonce: 'n'.repeat(32),
+        },
       }),
     )
     const request = await requestPromise
@@ -279,7 +284,7 @@ describe('ConnectionManager', () => {
           senderId: '44444444-4444-4444-8444-444444444444',
           timestamp: Date.now(),
           payload: {
-            protocolVersion: 1,
+            protocolVersion: PROTOCOL_VERSION,
             device: createDevice('55555555-5555-4555-8555-555555555555', 'Spoofed', 54_000),
             connectionNonce: 'n'.repeat(32),
           },
@@ -309,7 +314,11 @@ describe('ConnectionManager', () => {
           messageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
           senderId: device.deviceId,
           timestamp: Date.now() - 6 * 60_000,
-          payload: { protocolVersion: 1, device, connectionNonce: 'n'.repeat(32) },
+          payload: {
+            protocolVersion: PROTOCOL_VERSION,
+            device,
+            connectionNonce: 'n'.repeat(32),
+          },
         }),
       )
     })
