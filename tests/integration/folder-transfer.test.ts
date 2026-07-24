@@ -103,6 +103,7 @@ const createConnectedPair = async (
   receiverPort: number
   senderHistory: SessionHistory
   receiverHistory: SessionHistory
+  senderManager: ConnectionManager
 }> => {
   const server = new LocalServer()
   servers.push(server)
@@ -138,7 +139,7 @@ const createConnectedPair = async (
   const request = await requestPromise
   receiverManager.respondToRequest(request.requestId, 'accept')
   await connectionPromise
-  return { sender, receiver, receiverPort, senderHistory, receiverHistory }
+  return { sender, receiver, receiverPort, senderHistory, receiverHistory, senderManager }
 }
 
 afterEach(async () => {
@@ -322,6 +323,33 @@ describe('folder transfer', () => {
 
     await expect(senderFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
     await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
+    await expect(
+      stat(join(receiveDirectory, `.lindu-folder-${offer.transferId}.part`)),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('cleans staging when the connection closes during an active upload', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'lindu-interrupted-source-'))
+    const sourcePath = join(sourceRoot, '中断测试')
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lindu-interrupted-receive-'))
+    temporaryDirectories.push(sourceRoot, receiveDirectory)
+    await mkdir(sourcePath)
+    await writeFile(join(sourcePath, 'large.bin'), Buffer.alloc(16 * 1_024 * 1_024, 7))
+    const source = await createSource(sourcePath, 'i'.repeat(43))
+    const { sender, receiver, senderManager } = await createConnectedPair(source, receiveDirectory)
+    const offerPromise = waitForOffer(receiver)
+    const receiverTransferring = waitForStatus(receiver, 'transferring')
+    const senderFailed = waitForStatus(sender, 'failed')
+    const receiverFailed = waitForStatus(receiver, 'failed')
+
+    await sender.offerFolder(source.selection.selectionToken)
+    const offer = await offerPromise
+    await receiver.respondToOffer(offer.transferId, 'accept')
+    await receiverTransferring
+    senderManager.disconnect()
+
+    await expect(senderFailed).resolves.toMatchObject({ errorCode: 'CONNECTION_CLOSED' })
+    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'CONNECTION_CLOSED' })
     await expect(
       stat(join(receiveDirectory, `.lindu-folder-${offer.transferId}.part`)),
     ).rejects.toMatchObject({ code: 'ENOENT' })

@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { link, lstat, mkdir, open, rm, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -8,10 +8,12 @@ import { pipeline } from 'node:stream/promises'
 
 import {
   FOLDER_TRANSFER_TIMEOUT_MS,
-  MAX_FOLDER_MANIFEST_BYTES,
   MAX_FOLDER_MANIFEST_CHUNK_BYTES,
   MAX_FOLDER_MANIFEST_CHUNKS,
+  MAX_IN_MEMORY_TRANSFER_TASKS,
+  MAX_RETIRED_TRANSFER_IDS,
   TRANSFER_IDLE_TIMEOUT_MS,
+  TRANSFER_ID_RETENTION_MS,
   TRANSFER_PROGRESS_MESSAGE_INTERVAL_MS,
   TRANSFER_PROGRESS_UPDATE_INTERVAL_MS,
 } from '@shared/constants'
@@ -29,7 +31,7 @@ import type {
   TransferStatus,
   TransferTaskDto,
 } from '@shared/types'
-import { createPortablePathCollisionKey, parsePortableRelativePath } from '@shared/utils'
+import { parsePortableRelativePath } from '@shared/utils'
 
 import { assertSafeReceiveDirectory, assertSufficientDiskSpace } from '../security'
 import type { SessionHistory } from '../storage'
@@ -37,6 +39,11 @@ import type { ConnectionManager, FolderControlMessage } from '../websocket'
 import type { AuthorizedSourceFolder } from './file-access-registry'
 import type { AuthorizedFolderFile } from './folder-scanner'
 import { mapFileError } from './file-system'
+import {
+  assertFolderManifestChunkAllowed,
+  hashFolderManifest,
+  validateFolderManifest,
+} from './folder-manifest-validation'
 import { publishFolderStaging } from './folder-publish'
 import { rebuildTask, updateAllNonTerminalFiles, updateFile } from './task-state'
 
@@ -105,9 +112,6 @@ const TERMINAL_TASK_STATUSES: readonly TransferStatus[] = [
   'cancelled',
   'rejected',
 ]
-
-const hashManifest = (manifest: FolderManifestContents): string =>
-  createHash('sha256').update(JSON.stringify(manifest)).digest('hex')
 
 const deriveUploadToken = (uploadKey: string, transferId: TransferId, fileId: FileId): string =>
   createHmac('sha256', uploadKey).update(`${transferId}:${fileId}`).digest('base64url')
@@ -206,7 +210,8 @@ export class FolderTransferCoordinator {
   private readonly incoming = new Map<TransferId, IncomingFolderTransfer>()
   private readonly taskListeners = new Set<TaskListener>()
   private readonly offerListeners = new Set<OfferListener>()
-  private readonly recordedTransfers = new Set<TransferId>()
+  private readonly recordedTransfers = new Map<TransferId, number>()
+  private readonly retiredTransferIds = new Map<TransferId, number>()
   private readonly unsubscribeMessages: () => void
   private readonly unsubscribeConnection: () => void
 
@@ -325,7 +330,7 @@ export class FolderTransferCoordinator {
     if (peer === null) return null
     const transferId = transferIdSchema.parse(randomUUID())
     const manifestId = manifestIdSchema.parse(randomUUID())
-    const manifestSha256 = hashManifest(source.manifest)
+    const manifestSha256 = hashFolderManifest(source.manifest)
     const chunks = buildManifestChunks(source.manifest)
     const transfer: OutgoingFolderTransfer = {
       task: createFolderTask(transferId, 'send', peer, source.manifest),
@@ -565,6 +570,7 @@ export class FolderTransferCoordinator {
       connectionId === undefined ||
       hasActiveIncoming ||
       !this.canStartTransfer() ||
+      this.isRetiredTransfer(offer.transferId) ||
       this.incoming.has(offer.transferId) ||
       this.outgoing.has(offer.transferId)
     ) {
@@ -596,10 +602,20 @@ export class FolderTransferCoordinator {
       if (transfer !== undefined) void this.failIncoming(transfer, 'PROTOCOL_INVALID', true)
       return
     }
-    transfer.chunks.set(chunk.chunkIndex, {
+    const candidateChunk: ManifestChunk = {
       files: chunk.files,
       emptyDirectories: chunk.emptyDirectories,
-    })
+    }
+    try {
+      assertFolderManifestChunkAllowed(transfer.offer, [
+        ...transfer.chunks.values(),
+        candidateChunk,
+      ])
+    } catch {
+      void this.failIncoming(transfer, 'PROTOCOL_INVALID', true)
+      return
+    }
+    transfer.chunks.set(chunk.chunkIndex, candidateChunk)
     if (transfer.chunks.size !== transfer.offer.manifestChunkCount) return
     try {
       const ordered = [...transfer.chunks.entries()].sort((left, right) => left[0] - right[0])
@@ -609,7 +625,7 @@ export class FolderTransferCoordinator {
         files: ordered.flatMap(([, value]) => value.files),
         emptyDirectories: ordered.flatMap(([, value]) => value.emptyDirectories),
       }
-      this.validateManifest(transfer, manifest)
+      validateFolderManifest(transfer.offer, manifest)
       transfer.manifest = manifest
       for (const file of manifest.files) {
         transfer.files.set(file.fileId, { manifest: file, tokenUsed: false })
@@ -625,49 +641,6 @@ export class FolderTransferCoordinator {
       for (const listener of this.offerListeners) listener(this.toOfferDto(transfer.task))
     } catch {
       void this.failIncoming(transfer, 'PROTOCOL_INVALID', true)
-    }
-  }
-
-  private validateManifest(
-    transfer: IncomingFolderTransfer,
-    manifest: FolderManifestContents,
-  ): void {
-    if (
-      manifest.files.length !== transfer.offer.fileCount ||
-      manifest.emptyDirectories.length !== transfer.offer.emptyDirectoryCount ||
-      manifest.files.reduce((total, file) => total + file.size, 0) !== transfer.offer.totalSize ||
-      hashManifest(manifest) !== transfer.offer.manifestSha256 ||
-      Buffer.byteLength(JSON.stringify(manifest)) > MAX_FOLDER_MANIFEST_BYTES
-    ) {
-      throw new Error('PROTOCOL_INVALID')
-    }
-    const pathKeys = new Set<string>()
-    const terminalPathKeys = new Set<string>()
-    const fileIds = new Set<string>()
-    for (const file of manifest.files) {
-      if (fileIds.has(file.fileId)) throw new Error('PROTOCOL_INVALID')
-      fileIds.add(file.fileId)
-      const key = createPortablePathCollisionKey(parsePortableRelativePath(file.relativePath))
-      if (pathKeys.has(key)) throw new Error('PROTOCOL_INVALID')
-      pathKeys.add(key)
-      terminalPathKeys.add(key)
-    }
-    for (const directory of manifest.emptyDirectories) {
-      const key = createPortablePathCollisionKey(parsePortableRelativePath(directory))
-      if (pathKeys.has(key)) throw new Error('PROTOCOL_INVALID')
-      pathKeys.add(key)
-      terminalPathKeys.add(key)
-    }
-    for (const path of [
-      ...manifest.files.map(({ relativePath }) => relativePath),
-      ...manifest.emptyDirectories,
-    ]) {
-      const segments = parsePortableRelativePath(path)
-      for (let depth = 1; depth < segments.length; depth += 1) {
-        if (terminalPathKeys.has(createPortablePathCollisionKey(segments.slice(0, depth)))) {
-          throw new Error('PROTOCOL_INVALID')
-        }
-      }
     }
   }
 
@@ -1153,7 +1126,10 @@ export class FolderTransferCoordinator {
         errorCode,
       })
     }
-    if (transfer.task === undefined) this.incoming.delete(transfer.offer.transferId)
+    if (transfer.task === undefined) {
+      this.retireTransfer(transfer.offer.transferId)
+      this.incoming.delete(transfer.offer.transferId)
+    }
   }
 
   private toOfferDto(task: TransferTaskDto): FolderOfferReceivedDto {
@@ -1169,6 +1145,7 @@ export class FolderTransferCoordinator {
   }
 
   private recordHistory(task: TransferTaskDto): void {
+    this.retireTransfer(task.transferId)
     if (this.history === undefined || this.recordedTransfers.has(task.transferId)) return
     const entry: Omit<HistoryEntryDto, 'id'> = {
       transferId: task.transferId,
@@ -1182,7 +1159,52 @@ export class FolderTransferCoordinator {
       ...(task.errorCode === undefined ? {} : { errorCode: task.errorCode }),
     }
     this.history.add(entry)
-    this.recordedTransfers.add(task.transferId)
+    this.recordedTransfers.set(task.transferId, Date.now())
+    this.pruneIdentifierMap(this.recordedTransfers, MAX_RETIRED_TRANSFER_IDS)
+  }
+
+  private isRetiredTransfer(transferId: TransferId): boolean {
+    this.pruneIdentifierMap(this.retiredTransferIds, MAX_RETIRED_TRANSFER_IDS)
+    return this.retiredTransferIds.has(transferId)
+  }
+
+  private retireTransfer(transferId: TransferId): void {
+    this.retiredTransferIds.set(transferId, Date.now())
+    this.pruneIdentifierMap(this.retiredTransferIds, MAX_RETIRED_TRANSFER_IDS)
+    this.pruneTransfers()
+  }
+
+  private pruneIdentifierMap(
+    identifiers: Map<TransferId, number>,
+    maximumEntries: number,
+    now = Date.now(),
+  ): void {
+    for (const [transferId, retiredAt] of identifiers) {
+      if (now - retiredAt > TRANSFER_ID_RETENTION_MS) identifiers.delete(transferId)
+    }
+    while (identifiers.size > maximumEntries) {
+      const oldest = identifiers.keys().next().value
+      if (oldest === undefined) return
+      identifiers.delete(oldest)
+    }
+  }
+
+  private pruneTransfers(): void {
+    const prune = <T extends { task?: TransferTaskDto }>(transfers: Map<TransferId, T>): void => {
+      const terminal = [...transfers.entries()]
+        .filter(([, transfer]) => {
+          const status = transfer.task?.status
+          return status !== undefined && TERMINAL_TASK_STATUSES.includes(status)
+        })
+        .sort((left, right) => (left[1].task?.updatedAt ?? 0) - (right[1].task?.updatedAt ?? 0))
+      while (transfers.size > MAX_IN_MEMORY_TRANSFER_TASKS) {
+        const oldest = terminal.shift()
+        if (oldest === undefined) return
+        transfers.delete(oldest[0])
+      }
+    }
+    prune(this.outgoing)
+    prune(this.incoming)
   }
 
   private emitTask(task: TransferTaskDto): void {

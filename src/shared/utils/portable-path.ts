@@ -1,7 +1,8 @@
 import { getUtf8ByteLength } from './text'
 
 const INVALID_CHARACTERS = /[<>:"/\\|?*]/u
-const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu
+const WINDOWS_RESERVED_NAME =
+  /^(?:con|prn|aux|nul|com(?:[1-9]|[¹²³])|lpt(?:[1-9]|[¹²³]))(?:\..*)?$/iu
 
 export const normalizePortablePathSegment = (value: string): string => {
   const normalized = value.normalize('NFC')

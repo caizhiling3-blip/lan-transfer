@@ -41,6 +41,21 @@ describe('folder scanner', () => {
     expect(scanned.files.every(({ path }) => path.startsWith(canonicalRoot))).toBe(true)
   })
 
+  it('sorts complete relative paths instead of relying on traversal order', async () => {
+    const root = await createTemporaryDirectory()
+    await mkdir(join(root, 'a'))
+    await writeFile(join(root, 'a', 'z.txt'), 'nested')
+    await writeFile(join(root, 'a.txt'), 'root')
+
+    const scanned = await scanFolder(root)
+
+    expect(scanned.manifest.files.map(({ relativePath }) => relativePath)).toEqual([
+      'a.txt',
+      'a/z.txt',
+    ])
+    expect(scanned.files.map(({ manifest }) => manifest.relativePath)).toEqual(['a.txt', 'a/z.txt'])
+  })
+
   it('rejects symbolic links instead of following them', async () => {
     const root = await createTemporaryDirectory()
     const outside = await createTemporaryDirectory()
@@ -89,7 +104,10 @@ describe('portable folder paths', () => {
     expect(createPortablePathCollisionKey(['Folder', 'Report.TXT'])).toBe('folder/report.txt')
   })
 
-  it.each(['..', 'CON', 'name.', 'name ', 'a/b', 'a\\b'])('rejects unsafe segment %s', (name) => {
-    expect(() => normalizePortablePathSegment(name)).toThrow('FOLDER_PATH_INVALID')
-  })
+  it.each(['..', 'CON', 'COM¹.txt', 'LPT³', 'name.', 'name ', 'a/b', 'a\\b'])(
+    'rejects unsafe segment %s',
+    (name) => {
+      expect(() => normalizePortablePathSegment(name)).toThrow('FOLDER_PATH_INVALID')
+    },
+  )
 })

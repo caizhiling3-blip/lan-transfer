@@ -61,8 +61,18 @@ export const scanFolder = async (
   if (!rootMetadata.isDirectory()) throw new Error('FOLDER_NOT_FOUND')
 
   const rootPath = await realpath(folderPath)
+  const currentRootMetadata = await lstat(folderPath)
   const canonicalRootMetadata = await lstat(rootPath)
-  if (!canonicalRootMetadata.isDirectory() || canonicalRootMetadata.isSymbolicLink()) {
+  if (
+    currentRootMetadata.isSymbolicLink() ||
+    !currentRootMetadata.isDirectory() ||
+    currentRootMetadata.dev !== rootMetadata.dev ||
+    currentRootMetadata.ino !== rootMetadata.ino ||
+    !canonicalRootMetadata.isDirectory() ||
+    canonicalRootMetadata.isSymbolicLink() ||
+    canonicalRootMetadata.dev !== currentRootMetadata.dev ||
+    canonicalRootMetadata.ino !== currentRootMetadata.ino
+  ) {
     throw new Error('FOLDER_SYMLINK_UNSUPPORTED')
   }
 
@@ -119,18 +129,37 @@ export const scanFolder = async (
       if (metadata.isSymbolicLink()) throw new Error('FOLDER_SYMLINK_UNSUPPORTED')
       const canonicalPath = await realpath(entryPath)
       if (!isWithinRoot(rootPath, canonicalPath)) throw new Error('FOLDER_PATH_INVALID')
+      const currentMetadata = await lstat(entryPath)
+      if (
+        currentMetadata.isSymbolicLink() ||
+        currentMetadata.dev !== metadata.dev ||
+        currentMetadata.ino !== metadata.ino
+      ) {
+        throw new Error('FOLDER_SYMLINK_UNSUPPORTED')
+      }
 
       if (metadata.isDirectory()) {
         const canonicalMetadata = await lstat(canonicalPath)
-        if (!canonicalMetadata.isDirectory() || canonicalMetadata.isSymbolicLink()) {
+        if (
+          !currentMetadata.isDirectory() ||
+          !canonicalMetadata.isDirectory() ||
+          canonicalMetadata.isSymbolicLink() ||
+          canonicalMetadata.dev !== currentMetadata.dev ||
+          canonicalMetadata.ino !== currentMetadata.ino
+        ) {
           throw new Error('FOLDER_SYMLINK_UNSUPPORTED')
         }
         await walk(canonicalPath, segments)
         continue
       }
-      if (!metadata.isFile()) throw new Error('FOLDER_PATH_INVALID')
+      if (!metadata.isFile() || !currentMetadata.isFile()) throw new Error('FOLDER_PATH_INVALID')
       const canonicalMetadata = await lstat(canonicalPath)
-      if (!canonicalMetadata.isFile() || canonicalMetadata.isSymbolicLink()) {
+      if (
+        !canonicalMetadata.isFile() ||
+        canonicalMetadata.isSymbolicLink() ||
+        canonicalMetadata.dev !== currentMetadata.dev ||
+        canonicalMetadata.ino !== currentMetadata.ino
+      ) {
         throw new Error('FOLDER_SYMLINK_UNSUPPORTED')
       }
       if (canonicalMetadata.size > maximumFileSize) throw new Error('FILE_TOO_LARGE')
@@ -157,6 +186,14 @@ export const scanFolder = async (
   }
 
   await walk(rootPath, [])
+  files.sort((left, right) =>
+    left.manifest.relativePath < right.manifest.relativePath
+      ? -1
+      : left.manifest.relativePath > right.manifest.relativePath
+        ? 1
+        : 0,
+  )
+  emptyDirectories.sort()
   const manifest: FolderManifestContents = {
     displayName,
     totalSize,
