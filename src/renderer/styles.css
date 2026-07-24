@@ -215,26 +215,31 @@ body {
   scrollbar-gutter: stable;
 }
 
-.main-content.is-transfer-page {
+.main-content.is-fixed-page {
   overflow: hidden;
   padding-top: 24px;
   padding-bottom: 24px;
   scrollbar-gutter: auto;
 }
 
-.main-content.is-transfer-page .content-container {
+.main-content.is-fixed-page .content-container {
   display: flex;
   height: 100%;
   min-height: 0;
   flex-direction: column;
 }
 
-.main-content.is-transfer-page .page-header {
+.main-content.is-fixed-page .page-header {
   flex: 0 0 auto;
   margin-bottom: 14px;
 }
 
 .main-content.is-transfer-page .transfer-layout {
+  min-height: 0;
+  flex: 1;
+}
+
+.main-content.is-history-page .history-card {
   min-height: 0;
   flex: 1;
 }

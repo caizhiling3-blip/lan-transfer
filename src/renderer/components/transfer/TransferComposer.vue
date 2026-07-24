@@ -169,8 +169,8 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
     <el-input
       v-model="content"
       type="textarea"
-      :autosize="{ minRows: 2, maxRows: 4 }"
-      resize="none"
+      :rows="2"
+      resize="vertical"
       placeholder="输入文字或链接，也可以添加或拖入文件"
       @keydown="handleComposerKeydown"
     />
@@ -375,6 +375,11 @@ details[open] > .compact-summary::before {
 
 .composer-footer {
   margin-top: 8px;
+}
+
+:deep(.el-textarea__inner) {
+  min-height: 52px;
+  max-height: min(280px, 40vh);
 }
 
 .send-area .limit-exceeded {

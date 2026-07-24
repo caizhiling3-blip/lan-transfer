@@ -48,7 +48,7 @@ onMounted(() => void store.load(true))
 </script>
 
 <template>
-  <el-card shadow="never">
+  <el-card class="history-card" shadow="never" body-class="history-card-body">
     <div class="history-toolbar">
       <div class="history-filters">
         <el-input
@@ -100,53 +100,64 @@ onMounted(() => void store.load(true))
       :closable="false"
     />
 
-    <el-table v-loading="store.loading" :data="store.entries" empty-text="暂无历史记录">
-      <el-table-column label="方向" width="80">
-        <template #default="{ row }: { row: HistoryEntryDto }">
-          {{ row.direction === 'send' ? '发送' : '接收' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="类型" width="80">
-        <template #default="{ row }: { row: HistoryEntryDto }">
-          {{
-            row.kind === 'folder'
-              ? '文件夹'
-              : row.kind === 'file'
-                ? '文件'
-                : row.kind === 'link'
-                  ? '链接'
-                  : '文字'
-          }}
-        </template>
-      </el-table-column>
-      <el-table-column label="内容" min-width="220" show-overflow-tooltip>
-        <template #default="{ row }: { row: HistoryEntryDto }">{{ getSummary(row) }}</template>
-      </el-table-column>
-      <el-table-column label="对方设备" min-width="150">
-        <template #default="{ row }: { row: HistoryEntryDto }">{{ row.peer.deviceName }}</template>
-      </el-table-column>
-      <el-table-column label="大小" width="100">
-        <template #default="{ row }: { row: HistoryEntryDto }">{{ formatSize(row.size) }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="110">
-        <template #default="{ row }: { row: HistoryEntryDto }">
-          <el-tooltip
-            :disabled="row.errorCode === undefined"
-            :content="row.errorCode === undefined ? '' : ERROR_MESSAGES_ZH_CN[row.errorCode]"
-          >
-            <span class="status-cell">
-              <HistoryStatusIcon :status="row.status" />
-              {{ statusLabels[row.status] }}
-            </span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="时间" width="180">
-        <template #default="{ row }: { row: HistoryEntryDto }">
-          {{ new Date(row.createdAt).toLocaleString() }}
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="history-table-area">
+      <el-table
+        v-loading="store.loading"
+        height="100%"
+        :data="store.entries"
+        empty-text="暂无历史记录"
+      >
+        <el-table-column label="方向" width="80">
+          <template #default="{ row }: { row: HistoryEntryDto }">
+            {{ row.direction === 'send' ? '发送' : '接收' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="80">
+          <template #default="{ row }: { row: HistoryEntryDto }">
+            {{
+              row.kind === 'folder'
+                ? '文件夹'
+                : row.kind === 'file'
+                  ? '文件'
+                  : row.kind === 'link'
+                    ? '链接'
+                    : '文字'
+            }}
+          </template>
+        </el-table-column>
+        <el-table-column label="内容" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }: { row: HistoryEntryDto }">{{ getSummary(row) }}</template>
+        </el-table-column>
+        <el-table-column label="对方设备" min-width="150">
+          <template #default="{ row }: { row: HistoryEntryDto }">{{
+            row.peer.deviceName
+          }}</template>
+        </el-table-column>
+        <el-table-column label="大小" width="100">
+          <template #default="{ row }: { row: HistoryEntryDto }">{{
+            formatSize(row.size)
+          }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }: { row: HistoryEntryDto }">
+            <el-tooltip
+              :disabled="row.errorCode === undefined"
+              :content="row.errorCode === undefined ? '' : ERROR_MESSAGES_ZH_CN[row.errorCode]"
+            >
+              <span class="status-cell">
+                <HistoryStatusIcon :status="row.status" />
+                {{ statusLabels[row.status] }}
+              </span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="时间" width="180">
+          <template #default="{ row }: { row: HistoryEntryDto }">
+            {{ new Date(row.createdAt).toLocaleString() }}
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
     <div class="history-pagination">
       <el-button :disabled="store.page <= 1" @click="store.previousPage">上一页</el-button>
@@ -157,6 +168,22 @@ onMounted(() => void store.load(true))
 </template>
 
 <style scoped>
+.history-card {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+:deep(.history-card-body) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .history-toolbar,
 .history-filters,
 .history-pagination {
@@ -180,6 +207,11 @@ onMounted(() => void store.load(true))
 
 .history-error {
   margin-bottom: 16px;
+}
+
+.history-table-area {
+  min-height: 0;
+  flex: 1;
 }
 
 .status-cell {

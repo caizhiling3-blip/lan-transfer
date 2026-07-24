@@ -94,7 +94,14 @@ onBeforeUnmount(() => {
         仅在局域网内通信
       </div>
     </el-aside>
-    <el-main class="main-content" :class="{ 'is-transfer-page': activePage === 'transfer' }">
+    <el-main
+      class="main-content"
+      :class="{
+        'is-fixed-page': activePage === 'transfer' || activePage === 'history',
+        'is-transfer-page': activePage === 'transfer',
+        'is-history-page': activePage === 'history',
+      }"
+    >
       <div class="content-container">
         <header class="page-header">
           <p>邻近设备 · 安全直传</p>
