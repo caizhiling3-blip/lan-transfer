@@ -130,14 +130,18 @@ export const registerFileTransferIpcHandlers = (
   })
 
   registerIpcHandler('transfer:retry', getWindow, async ({ transferId }) => {
-    const task = await coordinator.retry(transferId)
+    const task = folderCoordinator.ownsTransfer(transferId)
+      ? await folderCoordinator.retry(transferId)
+      : await coordinator.retry(transferId)
     return task === null
       ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
       : { ok: true, data: task }
   })
 
   registerIpcHandler('transfer:show-received-file', getWindow, ({ transferId, fileId }) => {
-    const filePath = coordinator.getReceivedFilePath(transferId, fileId)
+    const filePath = folderCoordinator.ownsTransfer(transferId)
+      ? folderCoordinator.getReceivedFolderPath(transferId)
+      : coordinator.getReceivedFilePath(transferId, fileId)
     if (filePath === null) return { ok: false, error: { code: 'FILE_NOT_FOUND' } }
     shell.showItemInFolder(filePath)
     return { ok: true, data: undefined }

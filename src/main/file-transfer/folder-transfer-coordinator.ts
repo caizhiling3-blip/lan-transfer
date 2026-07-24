@@ -23,6 +23,7 @@ import type {
   DeviceInfo,
   FileId,
   FolderManifestContents,
+  HistoryEntryDto,
   ManifestId,
   TransferId,
   TransferStatus,
@@ -31,10 +32,12 @@ import type {
 import { createPortablePathCollisionKey, parsePortableRelativePath } from '@shared/utils'
 
 import { assertSafeReceiveDirectory, assertSufficientDiskSpace } from '../security'
+import type { SessionHistory } from '../storage'
 import type { ConnectionManager, FolderControlMessage } from '../websocket'
 import type { AuthorizedSourceFolder } from './file-access-registry'
 import type { AuthorizedFolderFile } from './folder-scanner'
 import { mapFileError } from './file-system'
+import { publishFolderStaging } from './folder-publish'
 import { rebuildTask, updateAllNonTerminalFiles, updateFile } from './task-state'
 
 type TaskListener = (task: TransferTaskDto) => void
@@ -88,6 +91,8 @@ interface IncomingFolderTransfer {
   uploadKey?: string
   tokenExpiresAt?: number
   activeFileId?: FileId
+  publishedPath?: string
+  publishPromise?: Promise<void>
   timeout?: ReturnType<typeof setTimeout>
 }
 
@@ -201,6 +206,7 @@ export class FolderTransferCoordinator {
   private readonly incoming = new Map<TransferId, IncomingFolderTransfer>()
   private readonly taskListeners = new Set<TaskListener>()
   private readonly offerListeners = new Set<OfferListener>()
+  private readonly recordedTransfers = new Set<TransferId>()
   private readonly unsubscribeMessages: () => void
   private readonly unsubscribeConnection: () => void
 
@@ -208,6 +214,7 @@ export class FolderTransferCoordinator {
     private readonly connectionManager: ConnectionManager,
     private readonly fileAccess: FolderAccessAdapter,
     private readonly canStartTransfer: () => boolean = () => true,
+    private readonly history?: SessionHistory,
   ) {
     this.unsubscribeMessages = connectionManager.subscribeFolderMessages((message) =>
       this.handleMessage(message),
@@ -251,14 +258,67 @@ export class FolderTransferCoordinator {
     return this.getTasks().some((task) => !TERMINAL_TASK_STATUSES.includes(task.status))
   }
 
+  public getReceivedFolderPath(transferId: TransferId): string | null {
+    const transfer = this.incoming.get(transferId)
+    return transfer?.task?.status === 'completed' ? (transfer.publishedPath ?? null) : null
+  }
+
   public async offerFolder(selectionToken: string): Promise<TransferTaskDto | null> {
     const hasActiveOutgoing = [...this.outgoing.values()].some(
       ({ task }) => !TERMINAL_TASK_STATUSES.includes(task.status),
     )
     if (hasActiveOutgoing || !this.canStartTransfer()) return null
     const source = this.fileAccess.consumeFolder(selectionToken)
+    if (source === null) return null
+    return this.createAndSendOffer(source)
+  }
+
+  public async retry(transferId: TransferId): Promise<TransferTaskDto | null> {
+    const previous = this.outgoing.get(transferId)
+    if (
+      previous === undefined ||
+      !['failed', 'cancelled', 'rejected'].includes(previous.task.status)
+    ) {
+      return null
+    }
+    const manifestFiles = previous.source.manifest.files.map((file) => ({
+      ...file,
+      fileId: fileIdSchema.parse(randomUUID()),
+    }))
+    const fileByPreviousId = new Map(
+      previous.source.files.map((file) => [file.manifest.fileId, file]),
+    )
+    const source: AuthorizedSourceFolder = {
+      ...previous.source,
+      selection: {
+        ...previous.source.selection,
+        selectionToken: `retry-${randomUUID()}`,
+      },
+      manifest: {
+        ...previous.source.manifest,
+        files: manifestFiles,
+      },
+      files: previous.source.manifest.files.map((previousManifest, index) => {
+        const previousFile = fileByPreviousId.get(previousManifest.fileId)
+        const manifest = manifestFiles[index]
+        if (previousFile === undefined || manifest === undefined) {
+          throw new Error('FILE_NOT_FOUND')
+        }
+        return { ...previousFile, manifest }
+      }),
+    }
+    return this.createAndSendOffer(source)
+  }
+
+  private async createAndSendOffer(
+    source: AuthorizedSourceFolder,
+  ): Promise<TransferTaskDto | null> {
+    const hasActiveOutgoing = [...this.outgoing.values()].some(
+      ({ task }) => !TERMINAL_TASK_STATUSES.includes(task.status),
+    )
+    if (hasActiveOutgoing || !this.canStartTransfer()) return null
     const peer = this.connectionManager.getPeer()
-    if (source === null || peer === null) return null
+    if (peer === null) return null
     const transferId = transferIdSchema.parse(randomUUID())
     const manifestId = manifestIdSchema.parse(randomUUID())
     const manifestSha256 = hashManifest(source.manifest)
@@ -326,6 +386,7 @@ export class FolderTransferCoordinator {
         'FILE_REJECTED',
       )
       this.emitTask(transfer.task)
+      this.recordHistory(transfer.task)
       return transfer.task
     }
 
@@ -383,6 +444,10 @@ export class FolderTransferCoordinator {
     const incoming = this.incoming.get(transferId)
     if (incoming?.task === undefined || TERMINAL_TASK_STATUSES.includes(incoming.task.status)) {
       return null
+    }
+    if (incoming.publishPromise !== undefined) {
+      await incoming.publishPromise.catch(() => undefined)
+      return incoming.task
     }
     await this.connectionManager.sendFolderCancel({
       transferId,
@@ -631,6 +696,7 @@ export class FolderTransferCoordinator {
       'FILE_REJECTED',
     )
     this.emitTask(transfer.task)
+    this.recordHistory(transfer.task)
   }
 
   private handleProgress(
@@ -687,7 +753,7 @@ export class FolderTransferCoordinator {
       return
     }
     transfer.remoteFolderComplete = true
-    this.markOutgoingAwaitingPublication(transfer)
+    this.completeOutgoingFolder(transfer)
   }
 
   private async runOutgoingQueue(transfer: OutgoingFolderTransfer): Promise<void> {
@@ -702,10 +768,12 @@ export class FolderTransferCoordinator {
       if (outcome !== 'completed') break
     }
     if (
-      transfer.task.files.every((file) => file.status === 'completed') &&
-      transfer.remoteFolderComplete
+      transfer.task.status !== 'completed' &&
+      transfer.task.files.every((file) => file.status === 'completed')
     ) {
-      this.markOutgoingAwaitingPublication(transfer)
+      transfer.task = rebuildTask(transfer.task, transfer.task.files, 'publishing')
+      this.emitTask(transfer.task)
+      if (transfer.remoteFolderComplete) this.completeOutgoingFolder(transfer)
     }
   }
 
@@ -935,14 +1003,59 @@ export class FolderTransferCoordinator {
   }
 
   private async finishIncomingContent(transfer: IncomingFolderTransfer): Promise<void> {
-    if (transfer.task === undefined) return
+    if (
+      transfer.task === undefined ||
+      transfer.stagingRoot === undefined ||
+      transfer.receiveDirectory === undefined
+    ) {
+      return
+    }
+    if (transfer.publishPromise !== undefined) return transfer.publishPromise
+    const publishPromise = this.publishIncomingContent(transfer)
+    transfer.publishPromise = publishPromise
+    await publishPromise.finally(() => delete transfer.publishPromise)
+  }
+
+  private async publishIncomingContent(transfer: IncomingFolderTransfer): Promise<void> {
+    if (
+      transfer.task === undefined ||
+      transfer.stagingRoot === undefined ||
+      transfer.receiveDirectory === undefined
+    ) {
+      return
+    }
     this.clearTimeout(transfer)
     transfer.task = rebuildTask(transfer.task, transfer.task.files, 'publishing')
     this.emitTask(transfer.task)
-    await this.connectionManager.sendFolderComplete({
-      scope: 'folder',
-      transferId: transfer.offer.transferId,
-    })
+    try {
+      transfer.publishedPath = await publishFolderStaging(
+        transfer.stagingRoot,
+        transfer.receiveDirectory,
+        transfer.manifest?.displayName ?? '文件夹',
+        transfer.offer.transferId,
+      )
+      delete transfer.stagingRoot
+      transfer.task = rebuildTask(transfer.task, transfer.task.files, 'completed')
+      this.emitTask(transfer.task)
+      this.recordHistory(transfer.task)
+      await this.connectionManager.sendFolderComplete({
+        scope: 'folder',
+        transferId: transfer.offer.transferId,
+      })
+    } catch {
+      transfer.task = updateAllNonTerminalFiles(
+        transfer.task,
+        'failed',
+        'failed',
+        'FOLDER_PUBLISH_FAILED',
+      )
+      this.emitTask(transfer.task)
+      this.recordHistory(transfer.task)
+      await this.connectionManager.sendFolderError({
+        transferId: transfer.offer.transferId,
+        errorCode: 'FOLDER_PUBLISH_FAILED',
+      })
+    }
   }
 
   private completeOutgoingFile(transfer: OutgoingFolderTransfer, fileId: FileId): void {
@@ -952,10 +1065,12 @@ export class FolderTransferCoordinator {
     this.emitTask(transfer.task)
   }
 
-  private markOutgoingAwaitingPublication(transfer: OutgoingFolderTransfer): void {
+  private completeOutgoingFolder(transfer: OutgoingFolderTransfer): void {
+    if (transfer.task.status === 'completed') return
     this.clearTimeout(transfer)
-    transfer.task = rebuildTask(transfer.task, transfer.task.files, 'publishing')
+    transfer.task = rebuildTask(transfer.task, transfer.task.files, 'completed')
     this.emitTask(transfer.task)
+    this.recordHistory(transfer.task)
   }
 
   private async failActiveTransfers(
@@ -986,6 +1101,7 @@ export class FolderTransferCoordinator {
       errorCode,
     )
     this.emitTask(transfer.task)
+    this.recordHistory(transfer.task)
     if (notifyPeer) {
       await this.connectionManager.sendFolderError({
         transferId: transfer.task.transferId,
@@ -1000,6 +1116,10 @@ export class FolderTransferCoordinator {
     errorCode: ErrorCode,
     notifyPeer = false,
   ): Promise<void> {
+    if (transfer.publishPromise !== undefined) {
+      await transfer.publishPromise.catch(() => undefined)
+      return
+    }
     this.clearTimeout(transfer)
     if (transfer.activeFileId !== undefined) {
       const activeFile = transfer.files.get(transfer.activeFileId)
@@ -1020,6 +1140,7 @@ export class FolderTransferCoordinator {
         errorCode,
       )
       this.emitTask(transfer.task)
+      this.recordHistory(transfer.task)
     }
     if (notifyPeer) {
       await this.connectionManager.sendFolderError({
@@ -1041,6 +1162,23 @@ export class FolderTransferCoordinator {
       totalSize: task.totalBytes,
       receivedAt: task.createdAt,
     }
+  }
+
+  private recordHistory(task: TransferTaskDto): void {
+    if (this.history === undefined || this.recordedTransfers.has(task.transferId)) return
+    const entry: Omit<HistoryEntryDto, 'id'> = {
+      transferId: task.transferId,
+      direction: task.direction,
+      kind: 'folder',
+      peer: task.peer,
+      status: task.status,
+      displayName: task.folder?.displayName ?? '文件夹',
+      size: task.totalBytes,
+      createdAt: task.createdAt,
+      ...(task.errorCode === undefined ? {} : { errorCode: task.errorCode }),
+    }
+    this.history.add(entry)
+    this.recordedTransfers.add(task.transferId)
   }
 
   private emitTask(task: TransferTaskDto): void {

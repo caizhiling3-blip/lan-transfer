@@ -151,6 +151,8 @@ Content-Length: <manifest-file-size>
 
 阶段 4 完成内容写入后，文件夹任务进入 `publishing`，而不是提前标记 `completed`。接收审批前 renderer 只获得文件夹摘要；接受后任务 DTO 才包含可移植相对路径和逐文件进度。任务取消为整个文件夹粒度，已写入 staging 的内容一并删除，不提供“保留已完成文件”的语义。
 
+阶段 5 已接入最终发布。接收端只有在最终目录占位、内容移动和 ownership marker 删除全部成功后才发送 folder-scope complete；双方随后记录一条文件夹历史。失败、拒绝和取消任务的重试使用全新 transferId、manifestId、fileId 和授权，旧任务及 token 保持终态。
+
 ## 接收暂存与发布
 
 接受任务后，在用户授权接收目录下独占创建 `.lindu-folder-<transferId>.part` staging 目录。所有目录与文件都在该目录内创建，文件仍先写随机 `.part`，长度吻合并关闭后才发布到 staging 中对应相对位置。
@@ -158,12 +160,12 @@ Content-Length: <manifest-file-size>
 跨平台 Node API 没有可靠的“目录原子重命名且绝不覆盖”能力，因此不承诺整个文件夹一次原子出现。安全优先的发布流程为：
 
 1. 在接收目录中为 `displayName`、`displayName (1)` 等候选名执行独占 mkdir；
-2. 在新建最终目录写入仅含 transferId 的隐藏 ownership marker；
+2. 在新建最终目录写入文件名和内容均包含 transferId 的隐藏 ownership marker；
 3. 从 staging 把已经完整的树移动到这个由当前任务独占的新目录；
 4. 全部成功后删除 marker，再将任务标记 completed；
 5. 发布失败时只清理 marker 仍匹配当前 transferId 的目录，绝不删除未知或用户已有目录。
 
-最终目录可能在本地发布的短时间内可见，但任务完成前始终带有内部 marker。应用启动时只清理超过 24 小时、名称严格匹配且 ownership marker 合法的 staging/未完成目录。
+最终目录可能在本地发布的短时间内可见，但任务完成前始终带有内部 marker。应用启动时只清理超过 24 小时、名称严格匹配的 staging，或 marker 文件名 UUID、内容 UUID、文件类型和时限均匹配的未完成目录。无 marker、marker 不匹配、符号链接或近期目录不会被清理。
 
 ## IPC 契约
 

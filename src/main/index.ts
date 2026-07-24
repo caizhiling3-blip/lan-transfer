@@ -19,6 +19,7 @@ import { createMainWindow, DeviceIdentity } from './app'
 import { DiscoveryManager } from './discovery'
 import {
   cleanupStaleTemporaryFiles,
+  cleanupStaleFolderArtifacts,
   FileAccessRegistry,
   FileTransferCoordinator,
   FolderTransferCoordinator,
@@ -135,6 +136,7 @@ void app.whenReady().then(() => {
     activeConnectionManager,
     fileAccessRegistry,
     () => !activeFileTransferCoordinator.hasActiveTransfers(),
+    sessionHistory,
   )
   const activeDiscoveryManager = new DiscoveryManager(
     () => deviceIdentity.getDeviceInfo(activeServiceManager.getStatus()),
@@ -171,9 +173,24 @@ void app.whenReady().then(() => {
 
   void fileAccessRegistry
     .resolveReceiveDirectory()
-    .then((directoryPath) => cleanupStaleTemporaryFiles(directoryPath))
-    .then((removedFiles) => {
-      if (removedFiles > 0) logger.info('stale_temporary_files_removed', { removedFiles })
+    .then(async (directoryPath) => {
+      const [removedFiles, removedFolders] = await Promise.all([
+        cleanupStaleTemporaryFiles(directoryPath),
+        cleanupStaleFolderArtifacts(directoryPath),
+      ])
+      return { removedFiles, removedFolders }
+    })
+    .then(({ removedFiles, removedFolders }) => {
+      if (
+        removedFiles > 0 ||
+        removedFolders.stagingDirectories > 0 ||
+        removedFolders.incompleteDirectories > 0
+      ) {
+        logger.info('stale_temporary_artifacts_removed', {
+          removedFiles,
+          ...removedFolders,
+        })
+      }
     })
     .catch((error: unknown) => logger.error('temporary_file_cleanup_failed', error))
 
@@ -242,6 +259,18 @@ void app.whenReady().then(() => {
       sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
     activeFolderTransferCoordinator.subscribeTasks((task) => {
+      if (loggedTaskStatuses.get(task.transferId) !== task.status) {
+        loggedTaskStatuses.set(task.transferId, task.status)
+        logger.info('transfer_status_changed', {
+          transferId: task.transferId,
+          direction: task.direction,
+          kind: task.kind,
+          status: task.status,
+          totalBytes: task.totalBytes,
+          fileCount: task.files.length,
+          errorCode: task.errorCode,
+        })
+      }
       activeTransferPowerSaveController.sync([
         ...activeFileTransferCoordinator.getTasks(),
         ...activeFolderTransferCoordinator.getTasks(),

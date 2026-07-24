@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { AuthorizedSourceFolder, FolderAccessAdapter } from '../../src/main/file-transfer'
 import { FolderTransferCoordinator, scanFolder } from '../../src/main/file-transfer'
 import { LocalServer } from '../../src/main/server/local-server'
+import { SessionHistory } from '../../src/main/storage/session-history'
 import { ConnectionManager } from '../../src/main/websocket/connection-manager'
 import type { FolderOfferReceivedDto } from '@shared/ipc'
 import { deviceIdSchema } from '@shared/types'
@@ -100,6 +101,8 @@ const createConnectedPair = async (
   sender: FolderTransferCoordinator
   receiver: FolderTransferCoordinator
   receiverPort: number
+  senderHistory: SessionHistory
+  receiverHistory: SessionHistory
 }> => {
   const server = new LocalServer()
   servers.push(server)
@@ -111,13 +114,19 @@ const createConnectedPair = async (
     createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
   )
   managers.push(senderManager, receiverManager)
+  const senderHistory = new SessionHistory()
+  const receiverHistory = new SessionHistory()
   const sender = new FolderTransferCoordinator(
     senderManager,
     new TestFolderAccess([source], receiveDirectory),
+    () => true,
+    senderHistory,
   )
   const receiver = new FolderTransferCoordinator(
     receiverManager,
     new TestFolderAccess([], receiveDirectory),
+    () => true,
+    receiverHistory,
   )
   coordinators.push(sender, receiver)
   server.setConnectionHandler((socket, request) => receiverManager.acceptIncoming(socket, request))
@@ -129,7 +138,7 @@ const createConnectedPair = async (
   const request = await requestPromise
   receiverManager.respondToRequest(request.requestId, 'accept')
   await connectionPromise
-  return { sender, receiver, receiverPort }
+  return { sender, receiver, receiverPort, senderHistory, receiverHistory }
 }
 
 afterEach(async () => {
@@ -142,7 +151,7 @@ afterEach(async () => {
 })
 
 describe('folder transfer', () => {
-  it('streams nested files serially and creates empty directories in staging', async () => {
+  it('publishes nested files without overwriting an existing folder', async () => {
     const sourceRoot = await mkdtemp(join(tmpdir(), 'lindu-folder-source-'))
     const sourcePath = join(sourceRoot, '项目资料')
     const receiveDirectory = await mkdtemp(join(tmpdir(), 'lindu-folder-receive-'))
@@ -151,29 +160,46 @@ describe('folder transfer', () => {
     await mkdir(join(sourcePath, '空目录', '子目录'), { recursive: true })
     await writeFile(join(sourcePath, '文档', '说明.txt'), 'folder transfer')
     await writeFile(join(sourcePath, 'zero.bin'), '')
+    await mkdir(join(receiveDirectory, '项目资料'))
+    await writeFile(join(receiveDirectory, '项目资料', 'existing.txt'), 'existing')
     const source = await createSource(sourcePath, 's'.repeat(43))
-    const { sender, receiver, receiverPort } = await createConnectedPair(source, receiveDirectory)
+    const { sender, receiver, receiverPort, senderHistory, receiverHistory } =
+      await createConnectedPair(source, receiveDirectory)
     const offerPromise = waitForOffer(receiver)
-    const senderPublishing = waitForStatus(sender, 'publishing')
-    const receiverPublishing = waitForStatus(receiver, 'publishing')
+    const senderCompleted = waitForStatus(sender, 'completed')
+    const receiverCompleted = waitForStatus(receiver, 'completed')
 
     await sender.offerFolder(source.selection.selectionToken)
     const offer = await offerPromise
     await receiver.respondToOffer(offer.transferId, 'accept')
 
-    const senderTask = await senderPublishing
-    const receiverTask = await receiverPublishing
-    const stagingRoot = join(receiveDirectory, `.lindu-folder-${offer.transferId}.part`)
-    await expect(readFile(join(stagingRoot, '文档', '说明.txt'), 'utf8')).resolves.toBe(
+    const senderTask = await senderCompleted
+    const receiverTask = await receiverCompleted
+    const publishedPath = join(receiveDirectory, '项目资料 (1)')
+    await expect(readFile(join(publishedPath, '文档', '说明.txt'), 'utf8')).resolves.toBe(
       'folder transfer',
     )
-    await expect(readFile(join(stagingRoot, 'zero.bin'))).resolves.toHaveLength(0)
-    expect((await stat(join(stagingRoot, '空目录', '子目录'))).isDirectory()).toBe(true)
+    await expect(readFile(join(publishedPath, 'zero.bin'))).resolves.toHaveLength(0)
+    expect((await stat(join(publishedPath, '空目录', '子目录'))).isDirectory()).toBe(true)
+    await expect(
+      readFile(join(receiveDirectory, '项目资料', 'existing.txt'), 'utf8'),
+    ).resolves.toBe('existing')
+    expect(receiver.getReceivedFolderPath(offer.transferId)).toBe(publishedPath)
     expect(senderTask.files.every((file) => file.status === 'completed')).toBe(true)
     expect(receiverTask).toMatchObject({
-      status: 'publishing',
+      status: 'completed',
       transferredBytes: Buffer.byteLength('folder transfer'),
       totalBytes: Buffer.byteLength('folder transfer'),
+    })
+    expect(senderHistory.list({ offset: 0, limit: 10 })[0]).toMatchObject({
+      kind: 'folder',
+      status: 'completed',
+      displayName: '项目资料',
+    })
+    expect(receiverHistory.list({ offset: 0, limit: 10 })[0]).toMatchObject({
+      kind: 'folder',
+      status: 'completed',
+      displayName: '项目资料',
     })
     const firstFile = source.manifest.files[0]
     if (firstFile === undefined) throw new Error('Expected a manifest file')
@@ -189,6 +215,9 @@ describe('folder transfer', () => {
       },
     )
     expect(replayResponse.status).toBe(409)
+    expect(sender.getTasks().find((task) => task.transferId === offer.transferId)?.status).toBe(
+      'completed',
+    )
   })
 
   it('creates an empty folder tree without opening an upload request', async () => {
@@ -200,18 +229,17 @@ describe('folder transfer', () => {
     const source = await createSource(sourcePath, 'e'.repeat(43))
     const { sender, receiver } = await createConnectedPair(source, receiveDirectory)
     const offerPromise = waitForOffer(receiver)
-    const senderPublishing = waitForStatus(sender, 'publishing')
+    const senderCompleted = waitForStatus(sender, 'completed')
 
     await sender.offerFolder(source.selection.selectionToken)
     const offer = await offerPromise
     await receiver.respondToOffer(offer.transferId, 'accept')
 
-    await expect(senderPublishing).resolves.toMatchObject({
-      status: 'publishing',
+    await expect(senderCompleted).resolves.toMatchObject({
+      status: 'completed',
       totalBytes: 0,
     })
-    const stagingRoot = join(receiveDirectory, `.lindu-folder-${offer.transferId}.part`)
-    expect((await stat(join(stagingRoot, '一级', '二级'))).isDirectory()).toBe(true)
+    expect((await stat(join(receiveDirectory, '空项目', '一级', '二级'))).isDirectory()).toBe(true)
   })
 
   it('propagates cancellation without leaving staging content', async () => {
@@ -261,6 +289,16 @@ describe('folder transfer', () => {
       status: 'rejected',
       errorCode: 'FILE_REJECTED',
     })
+
+    const retryOfferPromise = waitForOffer(receiver)
+    const senderCompleted = waitForStatus(sender, 'completed')
+    const retried = await sender.retry(offer.transferId)
+    const retryOffer = await retryOfferPromise
+    if (retried === null) throw new Error('Expected retried task')
+    expect(retried.transferId).not.toBe(offer.transferId)
+    expect(retried.files[0]?.fileId).not.toBe(source.manifest.files[0]?.fileId)
+    await receiver.respondToOffer(retryOffer.transferId, 'accept')
+    await expect(senderCompleted).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('fails both peers and removes staging when a scanned source changes', async () => {

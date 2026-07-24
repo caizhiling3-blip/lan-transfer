@@ -120,6 +120,10 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 
 发送端逐文件重新 `lstat`、打开并核对设备号、inode、mtime 和大小，然后用 Node stream 串行上传。接收文件先写入 staging 根内随机 `.part`，完整关闭后使用不覆盖硬链接放入已验证相对位置。双方的任务 DTO 在接受后包含可移植相对路径和逐文件进度，不包含绝对路径、staging 路径或授权 token。全部内容到齐后状态为 `publishing`；该状态明确表示内容完整但最终目录尚未由阶段 5 发布。失败、取消、超时、断线或退出会中止活动流并递归清理当前任务独占的 staging。
 
+阶段 5 新增独立 `folder-publish` 模块。它先以 `mkdir` 独占保留 `displayName`、`displayName (1)` 等候选目录，再写入文件名和内容都绑定 transferId 的 ownership marker，最后把 staging 的顶层条目逐项移动到该目录。成功后删除 staging 和 marker，再把接收任务标记完成并发送 folder-scope complete；发送方收到该消息后才完成。发布失败只在 marker 内容仍匹配当前 transferId 时递归清理目标，绝不删除无 marker 或 marker 不匹配的目录。
+
+主进程启动时会扫描默认接收目录：严格命名的 `.lindu-folder-<uuid>.part` 目录超过 24 小时后可清理；普通目录只有在自身与唯一 marker 都超过时限、marker 文件名 UUID 与内容完全一致时才视为未完成发布目录。文件夹完成、失败、取消和拒绝分别写入有上限的 SessionHistory；重试创建新的 transferId、manifestId、fileId 和 HMAC 授权。接收最终路径只保存在协调器内，“在文件夹中显示”IPC 仍只接受 transferId。
+
 接收内容先进入授权目录中的任务 staging 目录。整个树完整后独占创建新的最终目录，并以 ownership marker 约束发布失败和启动清理只能作用于当前任务创建的目录；不使用可能覆盖空目录的跨平台 rename 假设。详细设计见 [文件夹传输设计](folder-transfer.md)。
 
 ## 统一传输体验

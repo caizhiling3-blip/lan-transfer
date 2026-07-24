@@ -170,3 +170,5 @@ macOS 或 Windows 防火墙提示应只允许受信任的专用网络。阶段 6
 阶段 3 不新增依赖，协议升级为 v2。`FolderTransferCoordinator` 负责 folder offer、manifest 有界分片与重组、接收审批和任务投影；renderer 每次只允许一个待发送文件夹，并继续通过统一 offer 事件响应文件或文件夹。接受后的 uploadKey 只保存在主进程，本阶段不注册文件夹 HTTP 上传路由，因此任务停留在“已接受”。阶段 4 才实现逐文件流和空目录落盘。
 
 阶段 4 不新增依赖，复用 Node `crypto`、`http`、`fs` 和 stream。任务级 uploadKey 通过 HMAC-SHA-256 派生逐文件 bearer token，HTTP 路由按 manifest 顺序逐个消费。接收内容写入授权目录内的独占隐藏 staging 树；进度和速度通过既有任务事件展示，文件夹取消只支持整个任务。全部内容完成后状态为 `publishing`，阶段 5 前不会显示为最终完成，也不会写入历史。
+
+阶段 5 不新增依赖。`folder-publish` 负责独占最终目录、同名递增、ownership marker、顶层内容移动和严格残留清理；协调器只在发布成功后发送 folder-scope complete、保存最终路径并记录历史。文件夹重试复用已授权源快照，但生成全新的任务/文件 ID 和网络授权，上传前仍会再次核对源文件身份。下一阶段才实现文字、文件与文件夹之间的通用串行任务队列。

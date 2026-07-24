@@ -97,7 +97,9 @@ Content-Length: <accepted-file-size>
 
 阶段 4 已实现 `folder:cancel`、`folder:progress`、`folder:complete` 和 `folder:error`。progress 同时携带当前 fileId、当前文件字节数和任务累计字节数，接收端与发送端执行单调性、文件上限、任务上限和队列状态校验。complete 使用 `file | folder` scope：逐文件确认精确大小，folder scope 确认全部内容已进入暂存树。cancel 当前取消整个文件夹任务，不支持保留其中部分文件。
 
-文件夹接受消息发送一个任务级 uploadKey 和过期时间。逐文件 token 由 HMAC-SHA-256 绑定 transferId 和 fileId 派生；HTTP 请求还绑定活动连接、来源 IP、当前队首、精确 Content-Length、固定 Content-Type 和一次性消费状态。文件通过 `POST /v2/folder-transfers/:transferId/files/:fileId` 串行上传，URL 不携带相对路径，目标位置只能来自已验证 manifest。全部内容完成后双方进入 `publishing`，最终发布消息留到阶段 5。
+文件夹接受消息发送一个任务级 uploadKey 和过期时间。逐文件 token 由 HMAC-SHA-256 绑定 transferId 和 fileId 派生；HTTP 请求还绑定活动连接、来源 IP、当前队首、精确 Content-Length、固定 Content-Type 和一次性消费状态。文件通过 `POST /v2/folder-transfers/:transferId/files/:fileId` 串行上传，URL 不携带相对路径，目标位置只能来自已验证 manifest。
+
+阶段 5 起，接收端内容完整时先进入 `publishing`，只有最终目录安全发布成功后才发送 folder-scope `folder:complete`；发送端收到该消息后进入 `completed`。发布失败使用 `folder:error` 携带 `FOLDER_PUBLISH_FAILED`，双方都不得把 staging 内容显示为成功。重试是新的 offer，必须更换 transferId、manifestId、全部 fileId 和 uploadKey。
 
 相对路径在协议中统一使用 `/`，拒绝绝对路径、盘符、UNC、反斜杠、空段、`.`、`..`、非法跨平台文件名、超深和规范化冲突。详细 manifest、状态机和发布规则见 [文件夹传输设计](folder-transfer.md)。
 
