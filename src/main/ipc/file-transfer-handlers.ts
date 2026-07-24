@@ -14,6 +14,7 @@ import type {
   FileAccessRegistry,
   FileTransferCoordinator,
   FolderTransferCoordinator,
+  TransferQueueCoordinator,
 } from '../file-transfer'
 import { registerIpcHandler } from './register-handler'
 
@@ -43,6 +44,7 @@ export const registerFileTransferIpcHandlers = (
   fileAccess: FileAccessRegistry,
   coordinator: FileTransferCoordinator,
   folderCoordinator: FolderTransferCoordinator,
+  queueCoordinator: TransferQueueCoordinator,
 ): void => {
   registerIpcHandler('transfer:select-files', getWindow, async ({ multiple }) => {
     const window = getWindow()
@@ -106,6 +108,19 @@ export const registerFileTransferIpcHandlers = (
       ? { ok: false, error: { code: 'FOLDER_NOT_FOUND' } }
       : { ok: true, data: task }
   })
+
+  registerIpcHandler('transfer:enqueue', getWindow, (request) => {
+    const result = queueCoordinator.enqueue(request)
+    return result.ok
+      ? { ok: true, data: result.items }
+      : { ok: false, error: { code: result.errorCode } }
+  })
+
+  registerIpcHandler('transfer:cancel-queued', getWindow, ({ queueItemId }) =>
+    queueCoordinator.cancelQueued(queueItemId)
+      ? { ok: true, data: queueCoordinator.getItems() }
+      : { ok: false, error: { code: 'MESSAGE_INVALID' } },
+  )
 
   registerIpcHandler(
     'transfer:respond-to-offer',

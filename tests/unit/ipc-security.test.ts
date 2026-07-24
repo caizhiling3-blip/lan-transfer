@@ -113,6 +113,36 @@ describe('IPC request schemas', () => {
     ).toThrow()
   })
 
+  it('validates unified queue batches and queue item identifiers', () => {
+    const fileToken = 'a'.repeat(32)
+    const folderToken = 'b'.repeat(32)
+    expect(() =>
+      parseIpcInvokeRequest('transfer:enqueue', {
+        text: { content: 'hello', contentType: 'text' },
+        fileSelectionTokens: [fileToken],
+        folderSelectionTokens: [folderToken],
+      }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('transfer:enqueue', {
+        fileSelectionTokens: [],
+        folderSelectionTokens: [],
+      }),
+    ).toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('transfer:enqueue', {
+        fileSelectionTokens: [fileToken],
+        folderSelectionTokens: [fileToken],
+      }),
+    ).toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('transfer:cancel-queued', { queueItemId: REQUEST_ID }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('transfer:cancel-queued', { queueItemId: 'not-a-uuid' }),
+    ).toThrow()
+  })
+
   it('bounds and deduplicates preload-only dropped file paths', () => {
     expect(() =>
       parseIpcInvokeRequest('transfer:register-dropped-files', {

@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 
 import { MAX_TEXT_BYTES } from '@shared/constants'
 import type { FileId } from '@shared/types'
-import { getUtf8ByteLength } from '@shared/utils'
+import { classifyTextContent, getUtf8ByteLength } from '@shared/utils'
 
 import FileActivityCard from '../components/transfer/FileActivityCard.vue'
 import TextActivityCard from '../components/transfer/TextActivityCard.vue'
@@ -28,7 +28,7 @@ const hasText = computed(() => content.value.trim().length > 0)
 const hasPendingFiles = computed(() => fileTransferStore.pendingFiles.length > 0)
 const hasPendingFolders = computed(() => fileTransferStore.pendingFolders.length > 0)
 const isConnected = computed(() => connectionStore.status.state === 'connected')
-const isSending = computed(() => textTransferStore.sending || fileTransferStore.offering)
+const isSending = computed(() => fileTransferStore.offering)
 const canSend = computed(
   () =>
     isConnected.value &&
@@ -61,14 +61,10 @@ watch(isConnected, (connected, wasConnected) => {
 
 const send = async (): Promise<void> => {
   if (!canSend.value) return
-  if (hasText.value) {
-    const value = content.value
-    if (!(await textTransferStore.send(value))) return
-    content.value = ''
-  } else if (content.value.length > 0) {
-    content.value = ''
-  }
-  if (hasPendingFiles.value || hasPendingFolders.value) await fileTransferStore.sendPendingItems()
+  const text = hasText.value
+    ? { content: content.value, contentType: classifyTextContent(content.value) }
+    : undefined
+  if (await fileTransferStore.enqueuePendingItems(text)) content.value = ''
 }
 
 const readClipboard = async (): Promise<void> => {
@@ -175,6 +171,7 @@ onBeforeUnmount(() => {
         v-model="content"
         :pending-files="fileTransferStore.pendingFiles"
         :pending-folders="fileTransferStore.pendingFolders"
+        :queue-items="fileTransferStore.queueItems"
         :content-bytes="contentBytes"
         :connected="isConnected"
         :selecting="fileTransferStore.selecting"
@@ -186,6 +183,7 @@ onBeforeUnmount(() => {
         @remove-file="fileTransferStore.removePendingFile"
         @remove-folder="fileTransferStore.removePendingFolder"
         @clear-items="fileTransferStore.clearPendingItems"
+        @cancel-queued="fileTransferStore.cancelQueued"
         @read-clipboard="readClipboard"
         @send="send"
       />

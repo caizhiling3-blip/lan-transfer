@@ -5,6 +5,7 @@ import type {
   IpcEventMap,
   IpcInvokeResponse,
   OperatingSystem,
+  QueueItemId,
   RequestId,
   TransferId,
 } from '@shared/index'
@@ -62,6 +63,15 @@ export interface LanTransferApi {
       selectionTokens: readonly string[],
     ): Promise<IpcInvokeResponse<'transfer:offer-files'>>
     offerFolder(selectionToken: string): Promise<IpcInvokeResponse<'transfer:offer-folder'>>
+    enqueue(request: {
+      readonly text?: {
+        readonly content: string
+        readonly contentType: 'text' | 'link'
+      }
+      readonly fileSelectionTokens: readonly string[]
+      readonly folderSelectionTokens: readonly string[]
+    }): Promise<IpcInvokeResponse<'transfer:enqueue'>>
+    cancelQueued(queueItemId: QueueItemId): Promise<IpcInvokeResponse<'transfer:cancel-queued'>>
     respondToOffer(
       transferId: TransferId,
       decision: 'accept' | 'reject',
@@ -74,6 +84,8 @@ export interface LanTransferApi {
       fileId?: FileId,
     ): Promise<IpcInvokeResponse<'transfer:show-received-file'>>
     onTaskChanged(listener: EventListener<'transfer:task-changed'>): Unsubscribe
+    onQueueChanged(listener: EventListener<'transfer:queue-changed'>): Unsubscribe
+    onTextTaskChanged(listener: EventListener<'transfer:text-task-changed'>): Unsubscribe
     onTextReceived(listener: EventListener<'transfer:text-received'>): Unsubscribe
     onOfferReceived(listener: EventListener<'transfer:offer-received'>): Unsubscribe
   }

@@ -56,6 +56,46 @@ describe('FileAccessRegistry dropped files', () => {
 })
 
 describe('FileAccessRegistry folders', () => {
+  it('claims mixed selections atomically for a long-running queue', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'lan-transfer-folder-queue-'))
+    temporaryDirectories.push(directory)
+    const filePath = join(directory, 'single.txt')
+    const folderPath = join(directory, '资料')
+    await writeFile(filePath, 'single')
+    await mkdir(folderPath)
+    const registry = new FileAccessRegistry(() => directory)
+    const selections = await registry.registerDroppedItems([filePath, folderPath])
+    const file = selections.find((item) => item.kind === 'file')
+    const folder = selections.find((item) => item.kind === 'folder')
+    if (file?.kind !== 'file' || folder?.kind !== 'folder') {
+      throw new Error('Expected mixed selections')
+    }
+
+    expect(
+      registry.consumeTransferSelections(
+        [file.file.selectionToken],
+        [folder.folder.selectionToken],
+      ),
+    ).toMatchObject({ files: [{ selection: { displayName: 'single.txt' } }], folders: [{}] })
+    expect(registry.consumeSource(file.file.selectionToken)).toBeNull()
+    expect(registry.consumeFolder(folder.folder.selectionToken)).toBeNull()
+  })
+
+  it('does not consume valid selections when a queue token is invalid', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'lan-transfer-folder-queue-'))
+    temporaryDirectories.push(directory)
+    const filePath = join(directory, 'single.txt')
+    await writeFile(filePath, 'single')
+    const registry = new FileAccessRegistry(() => directory)
+    const [selection] = await registry.registerDroppedFiles([filePath])
+    if (selection === undefined) throw new Error('Expected file selection')
+
+    expect(
+      registry.consumeTransferSelections([selection.selectionToken], ['missing-token']),
+    ).toBeNull()
+    expect(registry.consumeSource(selection.selectionToken)).not.toBeNull()
+  })
+
   it('registers a mixed drop without exposing source paths', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'lan-transfer-folder-drop-'))
     temporaryDirectories.push(directory)

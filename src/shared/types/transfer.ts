@@ -1,6 +1,6 @@
 import type { ErrorCode } from '../errors'
 import type { DeviceInfo } from './device'
-import type { FileId, TransferId } from './identifiers'
+import type { FileId, QueueItemId, TransferId } from './identifiers'
 
 export type TransferDirection = 'send' | 'receive'
 export type TransferKind = 'text' | 'link' | 'file' | 'folder'
@@ -51,4 +51,24 @@ export interface TransferTaskDto {
     readonly fileCount: number
     readonly emptyDirectoryCount: number
   }
+}
+
+export type TransferQueueItemStatus = 'queued' | 'active' | 'failed'
+
+export interface TransferQueueItemDto {
+  readonly queueItemId: QueueItemId
+  readonly kind: TransferKind
+  readonly displayName: string
+  readonly itemCount: number
+  readonly totalBytes: number
+  readonly status: TransferQueueItemStatus
+  readonly position: number
+  readonly createdAt: number
+  readonly transferId?: TransferId
+  readonly errorCode?: ErrorCode
+}
+
+export interface TextTransferTaskDto {
+  readonly task: TransferTaskDto
+  readonly content: string
 }

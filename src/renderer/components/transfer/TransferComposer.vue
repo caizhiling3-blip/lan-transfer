@@ -6,7 +6,13 @@ import {
   MAX_TEXT_BYTES,
   MAX_TOP_LEVEL_TRANSFER_ITEMS,
 } from '@shared/constants'
-import type { FileId, SelectedFileDto, SelectedFolderDto } from '@shared/types'
+import type {
+  FileId,
+  QueueItemId,
+  SelectedFileDto,
+  SelectedFolderDto,
+  TransferQueueItemDto,
+} from '@shared/types'
 
 import { formatBytes } from '../../utils/transfer-activity'
 
@@ -14,6 +20,7 @@ const content = defineModel<string>({ required: true })
 const props = defineProps<{
   readonly pendingFiles: readonly SelectedFileDto[]
   readonly pendingFolders: readonly SelectedFolderDto[]
+  readonly queueItems: readonly TransferQueueItemDto[]
   readonly contentBytes: number
   readonly connected: boolean
   readonly selecting: boolean
@@ -28,6 +35,7 @@ const emit = defineEmits<{
   removeFile: [fileId: FileId]
   removeFolder: [selectionToken: string]
   clearItems: []
+  cancelQueued: [queueItemId: QueueItemId]
   readClipboard: []
   send: []
 }>()
@@ -73,6 +81,41 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
     @dragleave.prevent="handleDragLeave"
     @drop.prevent="handleDrop"
   >
+    <div v-if="queueItems.length > 0" class="transfer-queue">
+      <div class="pending-heading">
+        <span>发送队列 · {{ queueItems.length }} 项</span>
+        <small>文字、文件和文件夹将严格串行发送</small>
+      </div>
+      <div class="queue-items">
+        <div v-for="item in queueItems" :key="item.queueItemId" class="queue-item">
+          <el-tag
+            :type="
+              item.status === 'failed' ? 'danger' : item.status === 'active' ? 'primary' : 'info'
+            "
+            size="small"
+          >
+            {{
+              item.status === 'active'
+                ? '发送中'
+                : item.status === 'failed'
+                  ? '失败'
+                  : `排队 ${item.position}`
+            }}
+          </el-tag>
+          <span :title="item.displayName">{{ item.displayName }}</span>
+          <el-button
+            v-if="item.status !== 'active'"
+            text
+            type="danger"
+            size="small"
+            @click="$emit('cancelQueued', item.queueItemId)"
+          >
+            移除
+          </el-button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="pendingFiles.length > 0 || pendingFolders.length > 0" class="pending-tray">
       <div class="pending-heading">
         <span>
@@ -189,6 +232,43 @@ const handleComposerKeydown = (event: KeyboardEvent): void => {
   border: 1px solid var(--app-primary-border);
   border-radius: 10px;
   background: var(--app-primary-soft);
+}
+
+.transfer-queue {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-surface-muted);
+}
+
+.transfer-queue small {
+  color: var(--app-text-muted);
+}
+
+.queue-items {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.queue-item {
+  display: flex;
+  min-width: 220px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--app-surface-raised);
+}
+
+.queue-item > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pending-heading,

@@ -171,4 +171,6 @@ macOS 或 Windows 防火墙提示应只允许受信任的专用网络。阶段 6
 
 阶段 4 不新增依赖，复用 Node `crypto`、`http`、`fs` 和 stream。任务级 uploadKey 通过 HMAC-SHA-256 派生逐文件 bearer token，HTTP 路由按 manifest 顺序逐个消费。接收内容写入授权目录内的独占隐藏 staging 树；进度和速度通过既有任务事件展示，文件夹取消只支持整个任务。全部内容完成后状态为 `publishing`，阶段 5 前不会显示为最终完成，也不会写入历史。
 
-阶段 5 不新增依赖。`folder-publish` 负责独占最终目录、同名递增、ownership marker、顶层内容移动和严格残留清理；协调器只在发布成功后发送 folder-scope complete、保存最终路径并记录历史。文件夹重试复用已授权源快照，但生成全新的任务/文件 ID 和网络授权，上传前仍会再次核对源文件身份。下一阶段才实现文字、文件与文件夹之间的通用串行任务队列。
+阶段 5 不新增依赖。`folder-publish` 负责独占最终目录、同名递增、ownership marker、顶层内容移动和严格残留清理；协调器只在发布成功后发送 folder-scope complete、保存最终路径并记录历史。文件夹重试复用已授权源快照，但生成全新的任务/文件 ID 和网络授权，上传前仍会再次核对源文件身份。
+
+阶段 6 不新增依赖。`TransferQueueCoordinator` 是出站组合发送的队列事实来源：一次点击按文字、文件批次、文件夹顺序入队，入队时原子消费全部 selection token 并持有主进程授权快照。队列等待文件或文件夹任务进入 completed、failed、cancelled 或 rejected 后再启动下一项；活动接收任务占用协调器时只等待。断线删除尚未启动的项，队列项绑定入队时的 peer deviceId，不能在重连后发给另一设备。renderer 只接收队列摘要和位置，可移除等待/失败项，不能看到路径或授权。

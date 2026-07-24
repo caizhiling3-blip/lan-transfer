@@ -45,6 +45,11 @@ export interface AuthorizedSourceFolder {
   readonly files: readonly AuthorizedFolderFile[]
 }
 
+export interface AuthorizedTransferSelections {
+  readonly files: readonly AuthorizedSourceFile[]
+  readonly folders: readonly AuthorizedSourceFolder[]
+}
+
 interface ExpiringValue<T> {
   readonly value: T
   readonly expiresAt: number
@@ -217,6 +222,27 @@ export class FileAccessRegistry {
     this.sourceFiles.delete(selectionToken)
     if (entry === undefined || entry.expiresAt < Date.now()) return null
     return entry.value
+  }
+
+  public consumeTransferSelections(
+    fileSelectionTokens: readonly string[],
+    folderSelectionTokens: readonly string[],
+  ): AuthorizedTransferSelections | null {
+    this.pruneExpired()
+    const files = fileSelectionTokens.map((token) => this.sourceFiles.get(token)?.value)
+    const folders = folderSelectionTokens.map((token) => this.sourceFolders.get(token)?.value)
+    if (
+      files.some((file) => file === undefined) ||
+      folders.some((folder) => folder === undefined)
+    ) {
+      return null
+    }
+    for (const token of fileSelectionTokens) this.sourceFiles.delete(token)
+    for (const token of folderSelectionTokens) this.sourceFolders.delete(token)
+    return {
+      files: files.filter((file) => file !== undefined),
+      folders: folders.filter((folder) => folder !== undefined),
+    }
   }
 
   public consumeFolder(selectionToken: string): AuthorizedSourceFolder | null {

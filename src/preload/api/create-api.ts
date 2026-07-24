@@ -86,6 +86,8 @@ export const createLanTransferApi = (): LanTransferApi => {
       sendText: (content, contentType) => invoke('transfer:send-text', { content, contentType }),
       offerFiles: (selectionTokens) => invoke('transfer:offer-files', { selectionTokens }),
       offerFolder: (selectionToken) => invoke('transfer:offer-folder', { selectionToken }),
+      enqueue: (request) => invoke('transfer:enqueue', request),
+      cancelQueued: (queueItemId) => invoke('transfer:cancel-queued', { queueItemId }),
       respondToOffer: (transferId, decision, directoryToken) =>
         decision === 'accept'
           ? invoke(
@@ -104,6 +106,8 @@ export const createLanTransferApi = (): LanTransferApi => {
           fileId === undefined ? { transferId } : { transferId, fileId },
         ),
       onTaskChanged: (listener) => subscribe('transfer:task-changed', listener),
+      onQueueChanged: (listener) => subscribe('transfer:queue-changed', listener),
+      onTextTaskChanged: (listener) => subscribe('transfer:text-task-changed', listener),
       onTextReceived: (listener) => subscribe('transfer:text-received', listener),
       onOfferReceived: (listener) => subscribe('transfer:offer-received', listener),
     }),

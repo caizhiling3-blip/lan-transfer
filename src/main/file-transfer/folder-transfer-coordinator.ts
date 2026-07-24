@@ -273,6 +273,10 @@ export class FolderTransferCoordinator {
     return this.createAndSendOffer(source)
   }
 
+  public offerAuthorizedFolder(source: AuthorizedSourceFolder): Promise<TransferTaskDto | null> {
+    return this.createAndSendOffer(source)
+  }
+
   public async retry(transferId: TransferId): Promise<TransferTaskDto | null> {
     const previous = this.outgoing.get(transferId)
     if (

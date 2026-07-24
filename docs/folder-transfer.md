@@ -175,12 +175,17 @@ Content-Length: <manifest-file-size>
 transfer.selectFolder()
 transfer.registerDroppedItems(files)
 transfer.offerFolder(selectionToken)
+transfer.enqueue({ text?, fileSelectionTokens, folderSelectionTokens })
+transfer.cancelQueued(queueItemId)
 transfer.onOfferReceived(listener)
+transfer.onQueueChanged(listener)
 ```
 
 现有 `respondToOffer`、`onOfferReceived` 和 `onTaskChanged` 已扩展为文件与文件夹任务的判别联合，避免 renderer 使用任意 channel；文件夹取消和重试在对应业务阶段接入。SelectedFolderDto 只包含 selectionToken、displayName、fileCount、emptyDirectoryCount 和 totalSize，不包含路径或 manifest 明细。
 
 拖拽继续由 Preload 使用 `webUtils.getPathForFile` 获取受控路径，再交给具名 IPC；主进程必须 lstat 并重新扫描。renderer 不能提交字符串路径到通用读写 API。
+
+阶段 6 的统一队列在入队时原子认领文件和文件夹授权，避免前置大任务超过 10 分钟后使后续 token 失效。一个文件选择集合对应一个文件队列项，每个文件夹对应一个队列项，文字对应一个队列项；顺序固定为文字、文件批次、文件夹。队列只在内存中保存，最多 50 项。断线会移除等待项，活动任务仍由原协调器按既有取消/失败流程结束。
 
 ## 错误码
 
@@ -208,6 +213,6 @@ FOLDER_PUBLISH_FAILED
 3. offer、manifest 分片、接收确认和 UI；
 4. 逐文件 HTTP 流、空目录和总进度；
 5. 安全发布、同名处理、失败清理和历史；
-6. 多任务串行队列；
+6. 多任务串行队列（已完成）；
 7. 后台通知和完成摘要；
 8. 安全完善与 Windows/macOS 双平台验收。

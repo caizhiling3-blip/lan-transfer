@@ -39,14 +39,30 @@ export const useTextTransferStore = defineStore('textTransfer', {
     messages: [] as TextMessageItem[],
     sending: false,
     errorMessage: '',
-    unsubscribe: null as (() => void) | null,
+    unsubscribers: [] as (() => void)[],
   }),
   actions: {
     async initialize(): Promise<void> {
       this.dispose()
-      this.unsubscribe = window.lanTransfer.transfer.onTextReceived((message) => {
-        this.messages.push(fromReceivedMessage(message))
-      })
+      this.unsubscribers = [
+        window.lanTransfer.transfer.onTextReceived((message) => {
+          this.messages.push(fromReceivedMessage(message))
+        }),
+        window.lanTransfer.transfer.onTextTaskChanged(({ task, content }) => {
+          this.messages.push({
+            id: task.transferId,
+            direction: 'send',
+            peer: task.peer,
+            content,
+            contentType: task.kind === 'link' ? 'link' : 'text',
+            createdAt: task.createdAt,
+            status: task.status === 'completed' ? 'completed' : 'failed',
+          })
+          if (task.errorCode !== undefined) {
+            this.errorMessage = ERROR_MESSAGES_ZH_CN[task.errorCode]
+          }
+        }),
+      ]
       const result = await window.lanTransfer.history.list({ offset: 0, limit: 100 })
       if (result.ok) {
         this.messages = result.data.filter(isTextHistoryEntry).map(fromHistoryEntry).reverse()
@@ -79,8 +95,8 @@ export const useTextTransferStore = defineStore('textTransfer', {
       return result.data.status === 'completed'
     },
     dispose(): void {
-      this.unsubscribe?.()
-      this.unsubscribe = null
+      for (const unsubscribe of this.unsubscribers) unsubscribe()
+      this.unsubscribers = []
     },
   },
 })

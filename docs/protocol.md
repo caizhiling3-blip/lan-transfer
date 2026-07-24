@@ -101,6 +101,8 @@ Content-Length: <accepted-file-size>
 
 阶段 5 起，接收端内容完整时先进入 `publishing`，只有最终目录安全发布成功后才发送 folder-scope `folder:complete`；发送端收到该消息后进入 `completed`。发布失败使用 `folder:error` 携带 `FOLDER_PUBLISH_FAILED`，双方都不得把 staging 内容显示为成功。重试是新的 offer，必须更换 transferId、manifestId、全部 fileId 和 uploadKey。
 
+阶段 6 的串行队列是本机主进程调度能力，不新增或改变网络消息。队列逐项调用既有 text、file 或 folder 流程；下一项只有在上一项收到确认并进入终态后才开始，因此对端看到的仍是独立、可准确失败和重试的协议任务。
+
 相对路径在协议中统一使用 `/`，拒绝绝对路径、盘符、UNC、反斜杠、空段、`.`、`..`、非法跨平台文件名、超深和规范化冲突。详细 manifest、状态机和发布规则见 [文件夹传输设计](folder-transfer.md)。
 
 ## 错误

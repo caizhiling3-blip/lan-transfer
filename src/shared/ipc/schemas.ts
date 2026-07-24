@@ -5,12 +5,13 @@ import {
   MAX_FILES_PER_TRANSFER,
   MAX_HISTORY_LIMIT,
   MAX_HISTORY_SEARCH_LENGTH,
+  MAX_QUEUED_TRANSFER_ITEMS,
   MAX_SERVICE_PORT,
   MAX_TEXT_BYTES,
   MIN_HISTORY_LIMIT,
   MIN_SERVICE_PORT,
 } from '../constants'
-import { fileIdSchema, requestIdSchema, transferIdSchema } from '../types'
+import { fileIdSchema, queueItemIdSchema, requestIdSchema, transferIdSchema } from '../types'
 import { getUtf8ByteLength } from '../utils'
 import type { IpcInvokeChannel } from './channels'
 import type { IpcInvokeRequest } from './contracts'
@@ -122,6 +123,28 @@ export const ipcInvokeRequestSchemas = {
     .strict(),
   'transfer:offer-files': offerFilesRequestSchema,
   'transfer:offer-folder': z.object({ selectionToken: tokenSchema }).strict(),
+  'transfer:enqueue': z
+    .object({
+      text: z
+        .object({ content: textSchema, contentType: z.enum(['text', 'link']) })
+        .strict()
+        .optional(),
+      fileSelectionTokens: z.array(tokenSchema).max(MAX_FILES_PER_TRANSFER),
+      folderSelectionTokens: z.array(tokenSchema).max(MAX_QUEUED_TRANSFER_ITEMS),
+    })
+    .strict()
+    .refine(
+      ({ text, fileSelectionTokens, folderSelectionTokens }) =>
+        text !== undefined || fileSelectionTokens.length > 0 || folderSelectionTokens.length > 0,
+      'At least one transfer item is required',
+    )
+    .refine(
+      ({ fileSelectionTokens, folderSelectionTokens }) =>
+        new Set([...fileSelectionTokens, ...folderSelectionTokens]).size ===
+        fileSelectionTokens.length + folderSelectionTokens.length,
+      'Selection tokens must be unique',
+    ),
+  'transfer:cancel-queued': z.object({ queueItemId: queueItemIdSchema }).strict(),
   'transfer:respond-to-offer': respondToOfferRequestSchema,
   'transfer:cancel': z
     .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })

@@ -3,7 +3,12 @@ import { defineStore } from 'pinia'
 import { MAX_FILES_PER_TRANSFER, MAX_TOP_LEVEL_TRANSFER_ITEMS } from '@shared/constants'
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
 import type { TransferOfferReceivedDto } from '@shared/ipc'
-import type { SelectedFileDto, SelectedFolderDto, TransferTaskDto } from '@shared/types'
+import type {
+  SelectedFileDto,
+  SelectedFolderDto,
+  TransferQueueItemDto,
+  TransferTaskDto,
+} from '@shared/types'
 
 const upsertTask = (tasks: TransferTaskDto[], task: TransferTaskDto): TransferTaskDto[] => {
   const index = tasks.findIndex((candidate) => candidate.transferId === task.transferId)
@@ -14,6 +19,7 @@ const upsertTask = (tasks: TransferTaskDto[], task: TransferTaskDto): TransferTa
 export const useFileTransferStore = defineStore('fileTransfer', {
   state: () => ({
     tasks: [] as TransferTaskDto[],
+    queueItems: [] as TransferQueueItemDto[],
     pendingFiles: [] as SelectedFileDto[],
     pendingFolders: [] as SelectedFolderDto[],
     incomingOffer: null as TransferOfferReceivedDto | null,
@@ -38,6 +44,9 @@ export const useFileTransferStore = defineStore('fileTransfer', {
         }),
         window.lanTransfer.transfer.onOfferReceived((offer) => {
           this.incomingOffer = offer
+        }),
+        window.lanTransfer.transfer.onQueueChanged((items) => {
+          this.queueItems = [...items]
         }),
       ]
     },
@@ -155,35 +164,41 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       this.pendingFiles = []
       this.pendingFolders = []
     },
-    async sendPendingItems(): Promise<boolean> {
-      if ((this.pendingFiles.length === 0 && this.pendingFolders.length === 0) || this.offering) {
+    async enqueuePendingItems(text?: {
+      readonly content: string
+      readonly contentType: 'text' | 'link'
+    }): Promise<boolean> {
+      if (
+        (text === undefined &&
+          this.pendingFiles.length === 0 &&
+          this.pendingFolders.length === 0) ||
+        this.offering
+      ) {
         return false
       }
       this.offering = true
       this.errorMessage = ''
-      if (this.pendingFiles.length > 0) {
-        const selectionTokens = this.pendingFiles.map(({ selectionToken }) => selectionToken)
-        const offerResult = await window.lanTransfer.transfer.offerFiles(selectionTokens)
-        if (!offerResult.ok) {
-          this.offering = false
-          this.errorMessage = ERROR_MESSAGES_ZH_CN[offerResult.error.code]
-          return false
-        }
-        this.tasks = upsertTask(this.tasks, offerResult.data)
-        this.pendingFiles = []
-      }
-      for (const folder of this.pendingFolders) {
-        const offerResult = await window.lanTransfer.transfer.offerFolder(folder.selectionToken)
-        if (!offerResult.ok) {
-          this.offering = false
-          this.errorMessage = ERROR_MESSAGES_ZH_CN[offerResult.error.code]
-          return false
-        }
-        this.tasks = upsertTask(this.tasks, offerResult.data)
-      }
-      this.pendingFolders = []
+      const result = await window.lanTransfer.transfer.enqueue({
+        ...(text === undefined ? {} : { text }),
+        fileSelectionTokens: this.pendingFiles.map(({ selectionToken }) => selectionToken),
+        folderSelectionTokens: this.pendingFolders.map(({ selectionToken }) => selectionToken),
+      })
       this.offering = false
+      if (!result.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+        return false
+      }
+      this.queueItems = [...result.data]
+      this.clearPendingItems()
       return true
+    },
+    async cancelQueued(queueItemId: TransferQueueItemDto['queueItemId']): Promise<void> {
+      const result = await window.lanTransfer.transfer.cancelQueued(queueItemId)
+      if (!result.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+        return
+      }
+      this.queueItems = [...result.data]
     },
     async respond(decision: 'accept' | 'reject', chooseDirectory = false): Promise<void> {
       const offer = this.incomingOffer

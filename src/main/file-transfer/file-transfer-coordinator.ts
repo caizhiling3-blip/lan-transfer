@@ -176,6 +176,12 @@ export class FileTransferCoordinator {
     return this.createAndSendOffer(sources.filter((source) => source !== null))
   }
 
+  public offerAuthorizedFiles(
+    sources: readonly AuthorizedSourceFile[],
+  ): Promise<TransferTaskDto | null> {
+    return this.createAndSendOffer(sources)
+  }
+
   public async respondToOffer(
     transferId: TransferId,
     decision: 'accept' | 'reject',
@@ -380,6 +386,8 @@ export class FileTransferCoordinator {
         'CONNECTION_CLOSED',
       )
       this.finishTask(transfer.task)
+    } else {
+      this.emitTask(transfer.task)
     }
     return transfer.task
   }

@@ -10,6 +10,7 @@ import type {
   IncomingConnectionRequestDto,
   MessageId,
   OperationResult,
+  QueueItemId,
   RequestId,
   RecentDeviceDto,
   RuntimeInfoDto,
@@ -20,6 +21,8 @@ import type {
   ServiceStatusDto,
   TransferId,
   TransferTaskDto,
+  TransferQueueItemDto,
+  TextTransferTaskDto,
 } from '../types'
 
 interface InvokeContract<TRequest, TResponse> {
@@ -70,6 +73,21 @@ export interface IpcInvokeMap {
   readonly 'transfer:offer-folder': InvokeContract<
     { readonly selectionToken: string },
     TransferTaskDto
+  >
+  readonly 'transfer:enqueue': InvokeContract<
+    {
+      readonly text?: {
+        readonly content: string
+        readonly contentType: 'text' | 'link'
+      }
+      readonly fileSelectionTokens: readonly string[]
+      readonly folderSelectionTokens: readonly string[]
+    },
+    readonly TransferQueueItemDto[]
+  >
+  readonly 'transfer:cancel-queued': InvokeContract<
+    { readonly queueItemId: QueueItemId },
+    readonly TransferQueueItemDto[]
   >
   readonly 'transfer:respond-to-offer': InvokeContract<
     {
@@ -136,6 +154,8 @@ export interface IpcEventMap {
   readonly 'connection:state-changed': ConnectionStatusDto
   readonly 'connection:incoming-request': IncomingConnectionRequestDto
   readonly 'transfer:task-changed': TransferTaskDto
+  readonly 'transfer:queue-changed': readonly TransferQueueItemDto[]
+  readonly 'transfer:text-task-changed': TextTransferTaskDto
   readonly 'transfer:text-received': TextReceivedDto
   readonly 'transfer:offer-received': TransferOfferReceivedDto
   readonly 'settings:changed': AppSettingsDto

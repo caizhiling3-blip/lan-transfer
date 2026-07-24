@@ -12,6 +12,8 @@ import {
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   SETTINGS_CHANGED_EVENT_CHANNEL,
   TEXT_RECEIVED_EVENT_CHANNEL,
+  TEXT_TASK_CHANGED_EVENT_CHANNEL,
+  TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL,
   TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
 } from '@shared/ipc'
 
@@ -24,6 +26,7 @@ import {
   FileTransferCoordinator,
   FolderTransferCoordinator,
   TransferPowerSaveController,
+  TransferQueueCoordinator,
 } from './file-transfer'
 import {
   registerConnectionIpcHandlers,
@@ -48,6 +51,7 @@ let fileTransferCoordinator: FileTransferCoordinator | null = null
 let folderTransferCoordinator: FolderTransferCoordinator | null = null
 let discoveryManager: DiscoveryManager | null = null
 let transferPowerSaveController: TransferPowerSaveController | null = null
+let transferQueueCoordinator: TransferQueueCoordinator | null = null
 let unsubscribeFromService: (() => void) | null = null
 let applicationUnsubscribers: readonly (() => void)[] = []
 let isQuitting = false
@@ -91,6 +95,9 @@ const openMainWindow = (): void => {
     }
     if (discoveryManager !== null) {
       sendToRenderer(DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL, discoveryManager.getDevices())
+    }
+    if (transferQueueCoordinator !== null) {
+      sendToRenderer(TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL, transferQueueCoordinator.getItems())
     }
   })
 }
@@ -143,12 +150,20 @@ void app.whenReady().then(() => {
     (error) => logger.warn('device_discovery_error', { error: String(error) }),
   )
   const activeTransferPowerSaveController = new TransferPowerSaveController()
+  const activeTransferQueueCoordinator = new TransferQueueCoordinator(
+    activeConnectionManager,
+    fileAccessRegistry,
+    activeFileTransferCoordinator,
+    activeFolderTransferCoordinator,
+    sessionHistory,
+  )
   serviceManager = activeServiceManager
   connectionManager = activeConnectionManager
   fileTransferCoordinator = activeFileTransferCoordinator
   folderTransferCoordinator = activeFolderTransferCoordinator
   discoveryManager = activeDiscoveryManager
   transferPowerSaveController = activeTransferPowerSaveController
+  transferQueueCoordinator = activeTransferQueueCoordinator
 
   registerFoundationIpcHandlers(() => mainWindow)
   registerServiceIpcHandlers(() => mainWindow, activeServiceManager, settingsStore)
@@ -161,6 +176,7 @@ void app.whenReady().then(() => {
     fileAccessRegistry,
     activeFileTransferCoordinator,
     activeFolderTransferCoordinator,
+    activeTransferQueueCoordinator,
   )
   registerSettingsIpcHandlers(
     () => mainWindow,
@@ -241,6 +257,12 @@ void app.whenReady().then(() => {
         createdAt: message.receivedAt,
       })
       sendToRenderer(TEXT_RECEIVED_EVENT_CHANNEL, message)
+    }),
+    activeTransferQueueCoordinator.subscribe((items) => {
+      sendToRenderer(TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL, items)
+    }),
+    activeTransferQueueCoordinator.subscribeTextTasks((task) => {
+      sendToRenderer(TEXT_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
     activeFileTransferCoordinator.subscribeTasks((task) => {
       if (loggedTaskStatuses.get(task.transferId) !== task.status) {
@@ -327,7 +349,8 @@ app.on('before-quit', (event) => {
 
   if (
     fileTransferCoordinator.hasActiveTransfers() ||
-    folderTransferCoordinator?.hasActiveTransfers() === true
+    folderTransferCoordinator?.hasActiveTransfers() === true ||
+    transferQueueCoordinator?.hasPendingItems() === true
   ) {
     const options = {
       type: 'warning' as const,
@@ -354,6 +377,7 @@ app.on('before-quit', (event) => {
   logger.info('application_stopping')
   discoveryManager?.stop()
   transferPowerSaveController?.stop()
+  transferQueueCoordinator?.shutdown()
   connectionManager.disconnect('app_shutdown')
   void fileTransferCoordinator
     .shutdown()
