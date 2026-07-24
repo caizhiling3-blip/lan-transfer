@@ -2,7 +2,7 @@
 
 ## 版本与传输
 
-第一版协议版本为 `1`。WebSocket 路径为 `/v1/ws`，负责握手、心跳、文字和文件控制消息；HTTP 负责文件流。文件内容不得转成 Base64 后通过 WebSocket 发送。
+当前 1.1 协议版本为 `1`。1.2 文件夹能力会将握手协议升级为 `2`；严格 schema 无法与旧 hello/welcome 安全协商，因此 v1 与 v2 明确不兼容，不维护双协议栈。WebSocket 路径仍为 `/v1/ws`，路径只表示传输入口版本；hello 中的 protocolVersion 才决定消息能力。HTTP 负责文件流，文件内容不得转成 Base64 后通过 WebSocket 发送。
 
 `GET /health` 返回 `{ "status": "ok", "protocolVersion": 1 }`，其他未注册 HTTP 路由返回 404。`/v1/ws` 由设备连接管理器接管；已有活动连接时，新 socket 使用 WebSocket close code 1013 关闭。
 
@@ -90,6 +90,14 @@ Content-Length: <accepted-file-size>
 接收方接受前检查目录和可用空间，上传写入接收目录内以 `0600` 独占创建的随机 `.part` 文件；收到超过 offer 的字节数会立即中止。完整关闭并核对大小后才以不覆盖方式发布最终文件；失败响应不会返回本机路径或内部错误详情。HTTP 请求与 WebSocket Upgrade 按来源进行有界限流，触发 HTTP 限流时返回 429。
 
 `file:cancel` 不带 fileId 时取消整个任务，携带 fileId 时只取消该文件。已完成文件不回滚。重试不是协议内恢复操作，而是发送方创建全新的 `file:offer`，不得复用原 transferId、fileId 或 upload token。
+
+## 1.2 文件夹消息
+
+文件夹协议新增 `folder:offer`、`folder:manifest`、`folder:accept`、`folder:reject`、`folder:cancel`、`folder:progress`、`folder:complete` 和 `folder:error`。offer 只发送摘要；最大 2 MiB manifest 拆成最多 32 个、每个不超过现有 128 KiB WS 限制的严格分片，接收端完成顺序、容量、汇总值和 SHA-256 校验后才允许用户确认。
+
+文件夹接受消息发送一个任务级 uploadKey；逐文件 token 由 HMAC-SHA-256 绑定 transferId 和 fileId 派生，接收端仍只接受当前队首文件且每个 token 只消费一次。文件通过 `POST /v2/folder-transfers/:transferId/files/:fileId` 串行上传，URL 不携带相对路径，目标位置只能来自已验证 manifest。
+
+相对路径在协议中统一使用 `/`，拒绝绝对路径、盘符、UNC、反斜杠、空段、`.`、`..`、非法跨平台文件名、超深和规范化冲突。详细 manifest、状态机和发布规则见 [文件夹传输设计](folder-transfer.md)。
 
 ## 错误
 

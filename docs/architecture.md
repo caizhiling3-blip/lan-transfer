@@ -106,6 +106,14 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 
 拖拽使用 Electron `webUtils.getPathForFile`，该调用封装在 Preload 内。renderer 只能把浏览器 `File` 对象交给具名 API，不能提交字符串路径；主进程重新执行数量、普通文件、大小和名称检查后才签发 selection token。文件夹拖入会被拒绝。
 
+## 1.2 文件夹传输架构
+
+文件夹传输复用现有 ConnectionManager、HTTP 服务、接收目录授权、任务事件和历史边界，但使用独立 FolderTransferCoordinator，避免把目录扫描、manifest 分片和目录发布状态塞进现有单文件协调器。两类协调器输出 shared 中的判别联合任务 DTO，renderer 继续只显示主进程事实状态。
+
+主进程扫描器拥有真实根路径和逐文件身份快照；Preload/renderer 只持有短期 selectionToken 与摘要。最大 2 MiB manifest 以最多 32 个 WS 消息分片传输，接收端在有界 assembler 中校验后才投影 offer。HTTP 路由只使用 transferId/fileId 查找已验证相对路径，不接受 URL、header 或 renderer 提供的目标路径。
+
+接收内容先进入授权目录中的任务 staging 目录。整个树完整后独占创建新的最终目录，并以 ownership marker 约束发布失败和启动清理只能作用于当前任务创建的目录；不使用可能覆盖空目录的跨平台 rename 假设。详细设计见 [文件夹传输设计](folder-transfer.md)。
+
 ## 统一传输体验
 
 阶段 11.5 只合并 renderer 的交互投影，不改变网络协议或传输事实来源。文字、链接和文件任务按 `createdAt` 合并为一个有判别字段的 `TransferActivity` 时间线；文件任务仍由主进程协调器维护，文字和文件仍分别使用 WebSocket 控制与 HTTP 流式上传。
