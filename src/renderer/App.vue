@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useConnectionStore } from './stores/connection'
 import { useFileTransferStore } from './stores/file-transfer'
@@ -17,15 +17,6 @@ const activePage = ref<PageKey>('home')
 const connectionStore = useConnectionStore()
 const fileTransferStore = useFileTransferStore()
 const activeApprovalRequestId = ref<string | null>(null)
-
-const pageTitles: Readonly<Record<PageKey, string>> = {
-  home: '首页',
-  transfer: '传输',
-  history: '历史记录',
-  settings: '设置',
-}
-
-const currentTitle = computed(() => pageTitles[activePage.value])
 
 watch(
   () => fileTransferStore.incomingOffer,
@@ -106,10 +97,7 @@ onBeforeUnmount(() => {
     <el-main class="main-content" :class="{ 'is-transfer-page': activePage === 'transfer' }">
       <div class="content-container">
         <header class="page-header">
-          <div>
-            <p>邻近设备 · 安全直传</p>
-            <h1>{{ currentTitle }}</h1>
-          </div>
+          <p>邻近设备 · 安全直传</p>
           <ThemeToggle />
         </header>
         <HomeView v-if="activePage === 'home'" />

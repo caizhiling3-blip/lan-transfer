@@ -253,17 +253,11 @@ body {
 }
 
 .page-header p {
-  margin: 0 0 5px;
+  margin: 0;
   color: var(--app-primary);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.14em;
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 26px;
-  line-height: 1.3;
 }
 
 .main-content .el-card {
