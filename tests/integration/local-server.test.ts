@@ -95,6 +95,23 @@ describe('LocalServer', () => {
     await expect(limited.json()).resolves.toEqual({ error: 'RATE_LIMITED' })
   })
 
+  it('uses an independent bounded rate limit for transfer upload routes', async () => {
+    const server = new LocalServer({
+      httpRequestsPerWindow: 1,
+      transferHttpRequestsPerWindow: 2,
+      rateLimitWindowMs: 60_000,
+    })
+    runningServers.push(server)
+    const port = await server.start(0, '127.0.0.1')
+    const uploadUrl = `http://127.0.0.1:${String(port)}/v2/folder-transfers/transfer/files/file`
+
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health`)).status).toBe(200)
+    expect((await fetch(uploadUrl, { method: 'POST' })).status).toBe(404)
+    expect((await fetch(uploadUrl, { method: 'POST' })).status).toBe(404)
+    expect((await fetch(uploadUrl, { method: 'POST' })).status).toBe(429)
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health`)).status).toBe(429)
+  })
+
   it('rate limits repeated WebSocket upgrades from one source', async () => {
     const server = new LocalServer({
       rateLimitWindowMs: 60_000,

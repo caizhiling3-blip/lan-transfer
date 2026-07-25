@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws'
 import {
   MAX_HTTP_REQUESTS_PER_WINDOW,
   MAX_SERVER_CONNECTIONS,
+  MAX_TRANSFER_HTTP_REQUESTS_PER_WINDOW,
   MAX_WEBSOCKET_UPGRADES_PER_WINDOW,
   MAX_WEBSOCKET_MESSAGE_BYTES,
   PROTOCOL_VERSION,
@@ -19,6 +20,8 @@ import { FixedWindowRateLimiter } from '../security'
 
 const HEALTH_PATH = '/health'
 const WEBSOCKET_PATH = '/v1/ws'
+const FILE_UPLOAD_PATH = /^\/v1\/transfers\/[^/?]+\/files\/[^/?]+$/u
+const FOLDER_UPLOAD_PATH = /^\/v2\/folder-transfers\/[^/?]+\/files\/[^/?]+$/u
 
 const writeJson = (response: ServerResponse, statusCode: number, body: unknown): void => {
   const content = JSON.stringify(body)
@@ -36,6 +39,7 @@ export type HttpRequestHandler = (request: IncomingMessage, response: ServerResp
 
 export interface LocalServerOptions {
   readonly httpRequestsPerWindow?: number
+  readonly transferHttpRequestsPerWindow?: number
   readonly webSocketUpgradesPerWindow?: number
   readonly rateLimitWindowMs?: number
 }
@@ -44,6 +48,10 @@ const getRemoteIdentity = (request: IncomingMessage): string => {
   const address = request.socket.remoteAddress ?? 'unknown'
   return address.startsWith('::ffff:') ? address.slice(7) : address
 }
+
+const isTransferUploadRequest = (request: IncomingMessage): boolean =>
+  request.method === 'POST' &&
+  (FILE_UPLOAD_PATH.test(request.url ?? '') || FOLDER_UPLOAD_PATH.test(request.url ?? ''))
 
 const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string): void => {
   socket.end(
@@ -62,12 +70,17 @@ export class LocalServer {
     webSocket.close(1013, 'Device connection handler is unavailable')
   }
   private readonly httpRateLimiter: FixedWindowRateLimiter
+  private readonly transferHttpRateLimiter: FixedWindowRateLimiter
   private readonly upgradeRateLimiter: FixedWindowRateLimiter
 
   public constructor(options: LocalServerOptions = {}) {
     const windowMs = options.rateLimitWindowMs ?? RATE_LIMIT_WINDOW_MS
     this.httpRateLimiter = new FixedWindowRateLimiter(
       options.httpRequestsPerWindow ?? MAX_HTTP_REQUESTS_PER_WINDOW,
+      windowMs,
+    )
+    this.transferHttpRateLimiter = new FixedWindowRateLimiter(
+      options.transferHttpRequestsPerWindow ?? MAX_TRANSFER_HTTP_REQUESTS_PER_WINDOW,
       windowMs,
     )
     this.upgradeRateLimiter = new FixedWindowRateLimiter(
@@ -98,7 +111,10 @@ export class LocalServer {
     const httpServer = createServer(
       { insecureHTTPParser: false, maxHeaderSize: 16 * 1_024, requireHostHeader: true },
       (request, response) => {
-        if (!this.httpRateLimiter.allow(getRemoteIdentity(request))) {
+        const rateLimiter = isTransferUploadRequest(request)
+          ? this.transferHttpRateLimiter
+          : this.httpRateLimiter
+        if (!rateLimiter.allow(getRemoteIdentity(request))) {
           writeJson(response, 429, { error: 'RATE_LIMITED' })
           return
         }
@@ -201,6 +217,7 @@ export class LocalServer {
     this.httpServer = null
     this.webSocketServer = null
     this.httpRateLimiter.clear()
+    this.transferHttpRateLimiter.clear()
     this.upgradeRateLimiter.clear()
 
     if (httpServer === null || webSocketServer === null) {

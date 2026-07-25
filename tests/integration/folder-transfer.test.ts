@@ -75,6 +75,15 @@ const waitForStatus = (
     })
   })
 
+const waitForTerminalStatus = (coordinator: FolderTransferCoordinator): Promise<TransferTaskDto> =>
+  new Promise((resolve) => {
+    const unsubscribe = coordinator.subscribeTasks((task) => {
+      if (!['completed', 'failed', 'cancelled', 'rejected'].includes(task.status)) return
+      unsubscribe()
+      resolve(task)
+    })
+  })
+
 const createSource = async (
   sourcePath: string,
   selectionToken: string,
@@ -152,6 +161,32 @@ afterEach(async () => {
 })
 
 describe('folder transfer', () => {
+  it('transfers more files than the generic HTTP request rate limit', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'lindu-many-files-source-'))
+    const sourcePath = join(sourceRoot, '大量小文件')
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lindu-many-files-receive-'))
+    temporaryDirectories.push(sourceRoot, receiveDirectory)
+    await mkdir(sourcePath)
+    await Promise.all(
+      Array.from({ length: 130 }, (_, index) =>
+        writeFile(join(sourcePath, `file-${String(index).padStart(3, '0')}.txt`), ''),
+      ),
+    )
+    const source = await createSource(sourcePath, 'q'.repeat(43))
+    const { sender, receiver } = await createConnectedPair(source, receiveDirectory)
+    const offerPromise = waitForOffer(receiver)
+    const senderTerminal = waitForTerminalStatus(sender)
+    const receiverTerminal = waitForTerminalStatus(receiver)
+
+    await sender.offerFolder(source.selection.selectionToken)
+    const offer = await offerPromise
+    await receiver.respondToOffer(offer.transferId, 'accept')
+
+    await expect(senderTerminal).resolves.toMatchObject({ status: 'completed' })
+    await expect(receiverTerminal).resolves.toMatchObject({ status: 'completed' })
+    expect((await stat(join(receiveDirectory, '大量小文件', 'file-129.txt'))).isFile()).toBe(true)
+  })
+
   it('publishes nested files without overwriting an existing folder', async () => {
     const sourceRoot = await mkdtemp(join(tmpdir(), 'lindu-folder-source-'))
     const sourcePath = join(sourceRoot, '项目资料')

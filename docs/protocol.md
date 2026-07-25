@@ -87,7 +87,7 @@ Content-Length: <accepted-file-size>
 
 文件名和保存路径不出现在 URL。服务端核对一次性 token、来源 IP、connectionId、transferId、fileId、精确 Content-Length、固定 Content-Type 和过期时间，不接受 `Transfer-Encoding`。token 在第一次合法上传尝试时立即消费，重复上传返回 HTTP 409。上传双方使用 30 秒空闲超时。
 
-接收方接受前检查目录和可用空间，上传写入接收目录内以 `0600` 独占创建的随机 `.part` 文件；收到超过 offer 的字节数会立即中止。完整关闭并核对大小后才以不覆盖方式发布最终文件；失败响应不会返回本机路径或内部错误详情。HTTP 请求与 WebSocket Upgrade 按来源进行有界限流，触发 HTTP 限流时返回 429。
+接收方接受前检查目录和可用空间，上传写入接收目录内以 `0600` 独占创建的随机 `.part` 文件；收到超过 offer 的字节数会立即中止。完整关闭并核对大小后才以不覆盖方式发布最终文件；失败响应不会返回本机路径或内部错误详情。HTTP 请求与 WebSocket Upgrade 按来源进行有界限流，触发 HTTP 限流时返回 429。严格匹配文件上传路由的请求使用独立的高容量速率桶，以支持文件夹内大量小文件；健康检查、未知路径和其他请求继续使用低容量通用速率桶。上传路由仍必须通过 session、来源 IP、传输状态、一次性 token、文件顺序和长度校验。
 
 `file:cancel` 不带 fileId 时取消整个任务，携带 fileId 时只取消该文件。已完成文件不回滚。重试不是协议内恢复操作，而是发送方创建全新的 `file:offer`，不得复用原 transferId、fileId 或 upload token。
 
