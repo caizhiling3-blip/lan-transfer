@@ -244,6 +244,13 @@ describe('IPC request schemas', () => {
       }),
     ).not.toThrow()
     expect(() => historyCleanupCriteriaSchema.parse({})).toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('history:get-stats', { criteria: { statuses: ['failed'] } }),
+    ).not.toThrow()
+    expect(() => parseIpcInvokeRequest('history:get-stats', {})).not.toThrow()
+    expect(() => parseIpcInvokeRequest('history:delete', { historyIds: [historyId] })).not.toThrow()
+    expect(() => parseIpcInvokeRequest('history:cleanup', { before: Date.now() })).not.toThrow()
+    expect(() => parseIpcInvokeRequest('history:cleanup', {})).toThrow()
     expect(recentDeviceAliasSchema.parse('  Office PC  ')).toBe('Office PC')
     expect(() => recentDeviceAliasSchema.parse('')).toThrow()
   })

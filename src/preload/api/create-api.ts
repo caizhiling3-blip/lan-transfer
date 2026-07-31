@@ -113,6 +113,11 @@ export const createLanTransferApi = (): LanTransferApi => {
     }),
     history: Object.freeze({
       list: (filter) => invoke('history:list', filter),
+      getStats: (criteria) =>
+        invoke('history:get-stats', criteria === undefined ? {} : { criteria }),
+      delete: (historyIds) => invoke('history:delete', { historyIds }),
+      previewCleanup: (criteria) => invoke('history:preview-cleanup', criteria),
+      cleanup: (criteria) => invoke('history:cleanup', criteria),
       clear: () => invoke('history:clear', undefined),
     }),
     settings: Object.freeze({

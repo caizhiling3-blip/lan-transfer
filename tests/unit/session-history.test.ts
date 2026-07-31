@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { SessionHistory } from '../../src/main/storage/session-history'
 import { deviceIdSchema } from '@shared/types'
-import type { DeviceInfo } from '@shared/types'
+import type { DeviceInfo, HistoryEntryDto } from '@shared/types'
 
 const peer: DeviceInfo = {
   deviceId: deviceIdSchema.parse('22222222-2222-4222-8222-222222222222'),
@@ -69,5 +69,69 @@ describe('SessionHistory', () => {
     history.clear()
 
     expect(history.list({ offset: 0, limit: 100 })).toEqual([])
+  })
+
+  it('reports matching statistics and deletes selected entries', () => {
+    const history = new SessionHistory()
+    const first = addEntry(history, 'first report', 'send')
+    addEntry(history, 'second', 'receive')
+
+    expect(history.getStats({ query: 'report' }, 128)).toEqual({
+      totalEntries: 2,
+      matchingEntries: 1,
+      storageBytes: 128,
+    })
+    expect(history.delete([first.id])).toBe(1)
+    expect(history.delete([first.id])).toBe(0)
+    expect(history.getStats()).toMatchObject({ totalEntries: 1 })
+  })
+
+  it('previews and applies compound cleanup criteria', () => {
+    const history = new SessionHistory()
+    addEntry(history, 'keep', 'send')
+    history.add({
+      direction: 'receive',
+      kind: 'file',
+      peer,
+      status: 'failed',
+      displayName: 'old-report.pdf',
+      createdAt: Date.now() - 10_000,
+    })
+
+    const criteria = {
+      direction: 'receive' as const,
+      statuses: ['failed' as const],
+      query: 'report',
+    }
+    expect(history.previewCleanup(criteria)).toBe(1)
+    expect(history.cleanup(criteria)).toBe(1)
+    expect(history.list({ offset: 0, limit: 100 })).toHaveLength(1)
+  })
+
+  it('removes expired entries at startup without deleting current entries', () => {
+    const now = Date.now()
+    const persisted: HistoryEntryDto[] = [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        direction: 'send',
+        kind: 'text',
+        peer,
+        status: 'completed',
+        createdAt: now - 3 * 86_400_000,
+      },
+      {
+        id: '44444444-4444-4444-8444-444444444444',
+        direction: 'receive',
+        kind: 'text',
+        peer,
+        status: 'completed',
+        createdAt: now,
+      },
+    ]
+    const history = new SessionHistory(100, persisted, () => undefined, 1)
+
+    expect(history.list({ offset: 0, limit: 100 }).map((entry) => entry.id)).toEqual([
+      '44444444-4444-4444-8444-444444444444',
+    ])
   })
 })

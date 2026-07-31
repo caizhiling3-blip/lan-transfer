@@ -1,4 +1,6 @@
 import ElectronStore from 'electron-store'
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
 
 import type { HistoryEntryDto } from '@shared/types'
 
@@ -11,8 +13,10 @@ type HistoryStoreData = {
 
 export class HistoryStore {
   private readonly store: ElectronStore<HistoryStoreData>
+  private readonly filePath: string
 
   public constructor(directory: string) {
+    this.filePath = join(directory, 'history.json')
     backupInvalidStoreFile(directory, 'history', historyStoreSchema)
     this.store = new ElectronStore<HistoryStoreData>({
       cwd: directory,
@@ -29,5 +33,13 @@ export class HistoryStore {
   public save(entries: readonly HistoryEntryDto[]): void {
     const data = historyStoreSchema.parse({ schemaVersion: 1, entries })
     this.store.set('entries', data.entries)
+  }
+
+  public getStorageBytes(): number {
+    try {
+      return statSync(this.filePath).size
+    } catch {
+      return 0
+    }
   }
 }

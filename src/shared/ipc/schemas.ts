@@ -225,6 +225,10 @@ export const ipcInvokeRequestSchemas = {
       limit: z.number().int().min(1).max(100),
     })
     .strict(),
+  'history:get-stats': z.object({ criteria: historyCleanupCriteriaSchema.optional() }).strict(),
+  'history:delete': historyDeleteRequestSchema,
+  'history:preview-cleanup': historyCleanupCriteriaSchema,
+  'history:cleanup': historyCleanupCriteriaSchema,
   'history:clear': noRequestSchema,
   'settings:get': noRequestSchema,
   'settings:update': updateSettingsRequestSchema,

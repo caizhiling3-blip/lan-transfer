@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 
 import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
 import { MAX_HISTORY_SEARCH_LENGTH } from '@shared/constants'
-import type { HistoryEntryDto, TransferStatus } from '@shared/types'
+import type { HistoryCleanupCriteriaDto, HistoryEntryDto, TransferStatus } from '@shared/types'
 
 import HistoryStatusIcon from '../components/HistoryStatusIcon.vue'
 import { useHistoryStore } from '../stores/history'
 
 const store = useHistoryStore()
+const selectedEntries = ref<HistoryEntryDto[]>([])
+const MILLISECONDS_PER_DAY = 86_400_000
 
 const statusLabels: Readonly<Record<TransferStatus, string>> = {
   pending: '等待中',
@@ -36,13 +38,83 @@ const getSummary = (entry: HistoryEntryDto): string =>
     : (entry.textPreview ?? '-')
 
 const clearHistory = async (): Promise<void> => {
-  await ElMessageBox.confirm('清空后无法恢复，确定清空全部传输历史吗？', '清空历史', {
-    type: 'warning',
-    confirmButtonText: '清空',
-    cancelButtonText: '取消',
-  })
-  if (await store.clear()) ElMessage.success('历史记录已清空')
+  try {
+    await ElMessageBox.confirm('清空后无法恢复，确定清空全部传输历史吗？', '清空历史', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+    })
+    if (await store.clear()) ElMessage.success('历史记录已清空')
+  } catch {
+    // 用户取消确认时无需提示错误。
+  }
 }
+
+const deleteEntries = async (entries: readonly HistoryEntryDto[]): Promise<void> => {
+  if (entries.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${String(entries.length)} 条历史记录吗？`,
+      '删除历史',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      },
+    )
+    const removed = await store.delete(entries.map((entry) => entry.id))
+    if (removed > 0) ElMessage.success(`已删除 ${String(removed)} 条历史记录`)
+  } catch {
+    // 用户取消确认时无需提示错误。
+  }
+}
+
+const cleanupByCriteria = async (
+  criteria: HistoryCleanupCriteriaDto,
+  title: string,
+): Promise<void> => {
+  const count = await store.previewCleanup(criteria)
+  if (count === null) return
+  if (count === 0) {
+    ElMessage.info('没有符合条件的历史记录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将删除 ${String(count)} 条历史摘要，不会删除接收目录中的文件。是否继续？`,
+      title,
+      { type: 'warning', confirmButtonText: '清理', cancelButtonText: '取消' },
+    )
+    const removed = await store.cleanup(criteria)
+    if (removed > 0) ElMessage.success(`已清理 ${String(removed)} 条历史记录`)
+  } catch {
+    // 用户取消确认时无需提示错误。
+  }
+}
+
+const handleCleanupCommand = async (command: string): Promise<void> => {
+  if (command === 'filtered') {
+    const criteria = store.getCleanupCriteria()
+    if (Object.keys(criteria).length === 0) {
+      ElMessage.info('请先选择筛选条件，清空全部请使用“清空历史”')
+      return
+    }
+    await cleanupByCriteria(criteria, '清理筛选结果')
+    return
+  }
+  if (command === 'failed') {
+    await cleanupByCriteria({ statuses: ['failed', 'cancelled', 'rejected'] }, '清理失败与取消记录')
+    return
+  }
+  const days = Number(command)
+  await cleanupByCriteria(
+    { before: Date.now() - days * MILLISECONDS_PER_DAY },
+    `清理 ${String(days)} 天前记录`,
+  )
+}
+
+const formatStorageSize = (bytes: number): string =>
+  bytes < 1_024 ? `${String(bytes)} B` : `${(bytes / 1_024).toFixed(1)} KiB`
 
 onMounted(() => void store.load(true))
 </script>
@@ -87,9 +159,31 @@ onMounted(() => void store.load(true))
           />
         </el-select>
       </div>
-      <el-button type="danger" plain :disabled="store.entries.length === 0" @click="clearHistory">
-        清空历史
-      </el-button>
+      <div class="history-actions">
+        <el-button :disabled="selectedEntries.length === 0" @click="deleteEntries(selectedEntries)">
+          删除选中
+        </el-button>
+        <el-dropdown @command="handleCleanupCommand">
+          <el-button>条件清理</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="filtered">清理当前筛选结果</el-dropdown-item>
+              <el-dropdown-item command="failed">清理失败、取消和拒绝</el-dropdown-item>
+              <el-dropdown-item command="30">清理 30 天前记录</el-dropdown-item>
+              <el-dropdown-item command="90">清理 90 天前记录</el-dropdown-item>
+              <el-dropdown-item command="180">清理 180 天前记录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button
+          type="danger"
+          plain
+          :disabled="store.stats.totalEntries === 0"
+          @click="clearHistory"
+        >
+          清空历史
+        </el-button>
+      </div>
     </div>
 
     <el-alert
@@ -106,7 +200,9 @@ onMounted(() => void store.load(true))
         height="100%"
         :data="store.entries"
         empty-text="暂无历史记录"
+        @selection-change="(rows: HistoryEntryDto[]) => (selectedEntries = rows)"
       >
+        <el-table-column type="selection" width="44" />
         <el-table-column label="方向" width="80">
           <template #default="{ row }: { row: HistoryEntryDto }">
             {{ row.direction === 'send' ? '发送' : '接收' }}
@@ -156,10 +252,20 @@ onMounted(() => void store.load(true))
             {{ new Date(row.createdAt).toLocaleString() }}
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="72" fixed="right">
+          <template #default="{ row }: { row: HistoryEntryDto }">
+            <el-button link type="danger" @click="deleteEntries([row])">删除</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
 
     <div class="history-pagination">
+      <span>
+        共 {{ store.stats.totalEntries }} 条，当前筛选
+        {{ store.stats.matchingEntries }} 条，数据占用
+        {{ formatStorageSize(store.stats.storageBytes) }}
+      </span>
       <el-button :disabled="store.page <= 1" @click="store.previousPage">上一页</el-button>
       <span>第 {{ store.page }} 页</span>
       <el-button :disabled="!store.hasNextPage" @click="store.nextPage">下一页</el-button>
@@ -186,6 +292,7 @@ onMounted(() => void store.load(true))
 
 .history-toolbar,
 .history-filters,
+.history-actions,
 .history-pagination {
   display: flex;
   align-items: center;
@@ -222,7 +329,7 @@ onMounted(() => void store.load(true))
 }
 
 .history-pagination {
-  justify-content: center;
+  justify-content: flex-end;
   margin-top: 18px;
   color: var(--app-text-muted);
   font-size: 13px;

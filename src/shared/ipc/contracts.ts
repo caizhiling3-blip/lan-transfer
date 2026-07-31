@@ -6,7 +6,9 @@ import type {
   FileId,
   FileMetadata,
   HistoryEntryDto,
+  HistoryCleanupCriteriaDto,
   HistoryFilterDto,
+  HistoryStatsDto,
   IncomingConnectionRequestDto,
   MessageId,
   OperationResult,
@@ -107,6 +109,13 @@ export interface IpcInvokeMap {
     undefined
   >
   readonly 'history:list': InvokeContract<HistoryFilterDto, readonly HistoryEntryDto[]>
+  readonly 'history:get-stats': InvokeContract<
+    { readonly criteria?: HistoryCleanupCriteriaDto },
+    HistoryStatsDto
+  >
+  readonly 'history:delete': InvokeContract<{ readonly historyIds: readonly string[] }, number>
+  readonly 'history:preview-cleanup': InvokeContract<HistoryCleanupCriteriaDto, number>
+  readonly 'history:cleanup': InvokeContract<HistoryCleanupCriteriaDto, number>
   readonly 'history:clear': InvokeContract<undefined, undefined>
   readonly 'settings:get': InvokeContract<undefined, AppSettingsDto>
   readonly 'settings:update': InvokeContract<

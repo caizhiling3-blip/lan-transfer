@@ -2,6 +2,7 @@ import type {
   AppSettingsDto,
   DiscoveredDeviceDto,
   HistoryFilterDto,
+  HistoryCleanupCriteriaDto,
   IpcEventMap,
   IpcInvokeResponse,
   OperatingSystem,
@@ -91,6 +92,12 @@ export interface LanTransferApi {
   }
   readonly history: {
     list(filter: HistoryFilterDto): Promise<IpcInvokeResponse<'history:list'>>
+    getStats(criteria?: HistoryCleanupCriteriaDto): Promise<IpcInvokeResponse<'history:get-stats'>>
+    delete(historyIds: readonly string[]): Promise<IpcInvokeResponse<'history:delete'>>
+    previewCleanup(
+      criteria: HistoryCleanupCriteriaDto,
+    ): Promise<IpcInvokeResponse<'history:preview-cleanup'>>
+    cleanup(criteria: HistoryCleanupCriteriaDto): Promise<IpcInvokeResponse<'history:cleanup'>>
     clear(): Promise<IpcInvokeResponse<'history:clear'>>
   }
   readonly settings: {

@@ -5,8 +5,10 @@ import { onBeforeUnmount, onMounted, reactive, watch } from 'vue'
 import {
   MAX_FILE_SIZE_BYTES,
   MAX_HISTORY_LIMIT,
+  MAX_RETENTION_DAYS,
   MAX_SERVICE_PORT,
   MIN_HISTORY_LIMIT,
+  MIN_RETENTION_DAYS,
   MIN_SERVICE_PORT,
 } from '@shared/constants'
 
@@ -18,6 +20,8 @@ const form = reactive({
   servicePort: 53_317,
   maxFileSizeMiB: 2_048,
   historyLimit: 1_000,
+  historyRetentionEnabled: false,
+  historyRetentionDays: 90,
   receiveDirectoryDisplayPath: '',
 })
 
@@ -29,6 +33,10 @@ watch(
     form.servicePort = settings.servicePort
     form.maxFileSizeMiB = Math.floor(settings.maxFileSizeBytes / 1_024 / 1_024)
     form.historyLimit = settings.historyLimit
+    form.historyRetentionEnabled = settings.historyRetentionDays !== null
+    if (settings.historyRetentionDays !== null) {
+      form.historyRetentionDays = settings.historyRetentionDays
+    }
     form.receiveDirectoryDisplayPath = settings.receiveDirectoryDisplayPath
   },
   { immediate: true },
@@ -40,6 +48,7 @@ const save = async (): Promise<void> => {
     servicePort: form.servicePort,
     maxFileSizeBytes: form.maxFileSizeMiB * 1_024 * 1_024,
     historyLimit: form.historyLimit,
+    historyRetentionDays: form.historyRetentionEnabled ? form.historyRetentionDays : null,
   })
   if (succeeded) ElMessage.success('设置已保存')
 }
@@ -93,6 +102,19 @@ onBeforeUnmount(() => store.dispose())
           controls-position="right"
         />
       </el-form-item>
+      <el-form-item label="按时间自动清理历史">
+        <div class="retention-field">
+          <el-switch v-model="form.historyRetentionEnabled" />
+          <el-input-number
+            v-model="form.historyRetentionDays"
+            :disabled="!form.historyRetentionEnabled"
+            :min="MIN_RETENTION_DAYS"
+            :max="MAX_RETENTION_DAYS"
+            controls-position="right"
+          />
+          <span class="field-help">天；关闭时只按数量上限清理。不会删除接收的文件。</span>
+        </div>
+      </el-form-item>
       <el-alert
         v-if="store.errorMessage"
         :title="store.errorMessage"
@@ -121,6 +143,12 @@ onBeforeUnmount(() => store.dispose())
   display: flex;
   width: 100%;
   gap: 10px;
+}
+
+.retention-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .field-help {

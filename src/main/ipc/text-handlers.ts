@@ -10,6 +10,7 @@ export const registerTextIpcHandlers = (
   getWindow: WindowProvider,
   connectionManager: ConnectionManager,
   history: SessionHistory,
+  getHistoryStorageBytes: () => number = () => 0,
 ): void => {
   registerIpcHandler('transfer:send-text', getWindow, async ({ content, contentType }) => {
     const task = await connectionManager.sendText(content, contentType)
@@ -32,6 +33,22 @@ export const registerTextIpcHandlers = (
   registerIpcHandler('history:list', getWindow, (filter) => ({
     ok: true,
     data: history.list(filter),
+  }))
+  registerIpcHandler('history:get-stats', getWindow, ({ criteria }) => ({
+    ok: true,
+    data: history.getStats(criteria, getHistoryStorageBytes()),
+  }))
+  registerIpcHandler('history:delete', getWindow, ({ historyIds }) => ({
+    ok: true,
+    data: history.delete(historyIds),
+  }))
+  registerIpcHandler('history:preview-cleanup', getWindow, (criteria) => ({
+    ok: true,
+    data: history.previewCleanup(criteria),
+  }))
+  registerIpcHandler('history:cleanup', getWindow, (criteria) => ({
+    ok: true,
+    data: history.cleanup(criteria),
   }))
   registerIpcHandler('history:clear', getWindow, () => {
     history.clear()

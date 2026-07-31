@@ -121,6 +121,7 @@ void app.whenReady().then(() => {
     () => settingsStore.getSettings().historyLimit,
     historyStore.load(),
     (entries) => historyStore.save(entries),
+    () => settingsStore.getSettings().historyRetentionDays,
   )
   const deviceIdentity = new DeviceIdentity(settingsStore)
   const activeServiceManager = new ServiceManager(settingsStore.getSettings().servicePort)
@@ -189,7 +190,12 @@ void app.whenReady().then(() => {
   registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, activeServiceManager)
   registerConnectionIpcHandlers(() => mainWindow, activeConnectionManager, recentDevices)
   registerDiscoveryIpcHandlers(() => mainWindow, activeDiscoveryManager)
-  registerTextIpcHandlers(() => mainWindow, activeConnectionManager, sessionHistory)
+  registerTextIpcHandlers(
+    () => mainWindow,
+    activeConnectionManager,
+    sessionHistory,
+    () => historyStore.getStorageBytes(),
+  )
   registerFileTransferIpcHandlers(
     () => mainWindow,
     fileAccessRegistry,
