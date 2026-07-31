@@ -7,7 +7,14 @@ import {
   MAX_HISTORY_SEARCH_LENGTH,
   MAX_TEXT_BYTES,
 } from '@shared/constants'
-import { IPC_INVOKE_CHANNELS, ipcInvokeRequestSchemas, parseIpcInvokeRequest } from '@shared/ipc'
+import {
+  historyCleanupCriteriaSchema,
+  historyDeleteRequestSchema,
+  IPC_INVOKE_CHANNELS,
+  ipcInvokeRequestSchemas,
+  parseIpcInvokeRequest,
+  recentDeviceAliasSchema,
+} from '@shared/ipc'
 
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
 const TRANSFER_ID = '22222222-2222-4222-8222-222222222222'
@@ -192,6 +199,13 @@ describe('IPC request schemas', () => {
   it('requires a non-empty settings patch', () => {
     expect(() => parseIpcInvokeRequest('settings:update', {})).toThrow()
     expect(() => parseIpcInvokeRequest('settings:update', { servicePort: 53_317 })).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('settings:update', {
+        historyRetentionDays: null,
+        logRetentionDays: 30,
+      }),
+    ).not.toThrow()
+    expect(() => parseIpcInvokeRequest('settings:update', { logRetentionDays: 0 })).toThrow()
   })
 
   it('does not accept parameters when listing recent devices', () => {
@@ -217,5 +231,20 @@ describe('IPC request schemas', () => {
     expect(() =>
       parseIpcInvokeRequest('history:list', { query: '   ', offset: 0, limit: 50 }),
     ).toThrow()
+  })
+
+  it('bounds future history cleanup and recent device alias inputs', () => {
+    const historyId = '33333333-3333-4333-8333-333333333333'
+    expect(() => historyDeleteRequestSchema.parse({ historyIds: [historyId] })).not.toThrow()
+    expect(() => historyDeleteRequestSchema.parse({ historyIds: [historyId, historyId] })).toThrow()
+    expect(() =>
+      historyCleanupCriteriaSchema.parse({
+        statuses: ['failed', 'cancelled'],
+        before: Date.now(),
+      }),
+    ).not.toThrow()
+    expect(() => historyCleanupCriteriaSchema.parse({})).toThrow()
+    expect(recentDeviceAliasSchema.parse('  Office PC  ')).toBe('Office PC')
+    expect(() => recentDeviceAliasSchema.parse('')).toThrow()
   })
 })

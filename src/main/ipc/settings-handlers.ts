@@ -29,6 +29,12 @@ export const registerSettingsIpcHandlers = (
         ? {}
         : { maxFileSizeBytes: request.maxFileSizeBytes }),
       ...(request.historyLimit === undefined ? {} : { historyLimit: request.historyLimit }),
+      ...(request.historyRetentionDays === undefined
+        ? {}
+        : { historyRetentionDays: request.historyRetentionDays }),
+      ...(request.logRetentionDays === undefined
+        ? {}
+        : { logRetentionDays: request.logRetentionDays }),
     }
     if (request.receiveDirectoryToken !== undefined) {
       try {

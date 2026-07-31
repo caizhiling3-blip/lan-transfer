@@ -2,20 +2,31 @@ import { randomUUID } from 'node:crypto'
 
 import ElectronStore from 'electron-store'
 
-import { DEFAULT_HISTORY_LIMIT, DEFAULT_SERVICE_PORT, MAX_FILE_SIZE_BYTES } from '@shared/constants'
+import {
+  DEFAULT_HISTORY_LIMIT,
+  DEFAULT_LOG_RETENTION_DAYS,
+  DEFAULT_SERVICE_PORT,
+  MAX_FILE_SIZE_BYTES,
+} from '@shared/constants'
 import { deviceIdSchema } from '@shared/types'
 import type { AppSettingsDto, DeviceId } from '@shared/types'
 
-import { backupInvalidStoreFile, settingsStoreSchema } from './store-schemas'
+import {
+  backupInvalidStoreFile,
+  migrateSettingsStoreData,
+  settingsStoreSchema,
+} from './store-schemas'
 
 type SettingsStoreData = {
-  schemaVersion: 1
+  schemaVersion: 2
   deviceId: DeviceId
   deviceName: string
   receiveDirectory: string
   servicePort: number
   maxFileSizeBytes: number
   historyLimit: number
+  historyRetentionDays: number | null
+  logRetentionDays: number
 }
 
 export interface SettingsPatch {
@@ -24,6 +35,8 @@ export interface SettingsPatch {
   servicePort?: number
   maxFileSizeBytes?: number
   historyLimit?: number
+  historyRetentionDays?: number | null
+  logRetentionDays?: number
 }
 
 type SettingsListener = (settings: AppSettingsDto) => void
@@ -37,15 +50,17 @@ export class SettingsStore {
     defaultDeviceName: string,
     defaultReceiveDirectory: string,
   ) {
-    backupInvalidStoreFile(directory, 'settings', settingsStoreSchema)
+    backupInvalidStoreFile(directory, 'settings', settingsStoreSchema, migrateSettingsStoreData)
     const defaults: SettingsStoreData = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       deviceId: deviceIdSchema.parse(randomUUID()),
       deviceName: defaultDeviceName.trim().slice(0, 128) || 'LAN Transfer Device',
       receiveDirectory: defaultReceiveDirectory,
       servicePort: DEFAULT_SERVICE_PORT,
       maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
       historyLimit: DEFAULT_HISTORY_LIMIT,
+      historyRetentionDays: null,
+      logRetentionDays: DEFAULT_LOG_RETENTION_DAYS,
     }
     this.store = new ElectronStore<SettingsStoreData>({
       cwd: directory,
@@ -70,6 +85,8 @@ export class SettingsStore {
       servicePort: this.store.get('servicePort'),
       maxFileSizeBytes: this.store.get('maxFileSizeBytes'),
       historyLimit: this.store.get('historyLimit'),
+      historyRetentionDays: this.store.get('historyRetentionDays'),
+      logRetentionDays: this.store.get('logRetentionDays'),
     }
   }
 

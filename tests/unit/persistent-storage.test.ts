@@ -50,7 +50,39 @@ describe('persistent application storage', () => {
       receiveDirectoryDisplayPath: '/downloads',
       servicePort: 54_321,
       historyLimit: 200,
+      historyRetentionDays: null,
+      logRetentionDays: 30,
     })
+  })
+
+  it('migrates version 1 settings without deleting existing values', async () => {
+    const directory = await createDirectory()
+    await writeFile(
+      join(directory, 'settings.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        deviceId: '11111111-1111-4111-8111-111111111111',
+        deviceName: 'Legacy device',
+        receiveDirectory: '/legacy-downloads',
+        servicePort: 54_321,
+        maxFileSizeBytes: 1_024,
+        historyLimit: 250,
+      }),
+      'utf8',
+    )
+
+    const settings = new SettingsStore(directory, 'Ignored', '/ignored').getSettings()
+    expect(settings).toMatchObject({
+      deviceName: 'Legacy device',
+      receiveDirectoryDisplayPath: '/legacy-downloads',
+      historyRetentionDays: null,
+      logRetentionDays: 30,
+    })
+    const stored = JSON.parse(await readFile(join(directory, 'settings.json'), 'utf8')) as {
+      schemaVersion: number
+    }
+    expect(stored.schemaVersion).toBe(2)
+    expect((await readdir(directory)).some((file) => file.includes('.invalid-'))).toBe(false)
   })
 
   it('persists bounded history and stores only a short text preview', async () => {
@@ -92,6 +124,30 @@ describe('persistent application storage', () => {
 
     expect(new RecentDevicesStore(directory).list()).toHaveLength(1)
     expect(new RecentDevicesStore(directory).list()[0]?.device.ipAddress).toBe('192.168.1.9')
+  })
+
+  it('migrates version 1 recent devices and preserves a local alias on address updates', async () => {
+    const directory = await createDirectory()
+    await writeFile(
+      join(directory, 'recent-devices.json'),
+      JSON.stringify({ schemaVersion: 1, devices: [{ device: peer, lastConnectedAt: 1 }] }),
+      'utf8',
+    )
+    new RecentDevicesStore(directory)
+    const migrated = JSON.parse(await readFile(join(directory, 'recent-devices.json'), 'utf8')) as {
+      schemaVersion: number
+      devices: Array<{ device: DeviceInfo; lastConnectedAt: number; alias?: string }>
+    }
+    migrated.devices[0] = { ...migrated.devices[0]!, alias: 'Office PC' }
+    await writeFile(join(directory, 'recent-devices.json'), JSON.stringify(migrated), 'utf8')
+
+    const recentDevices = new RecentDevicesStore(directory)
+    recentDevices.add({ ...peer, ipAddress: '192.168.1.10' })
+    expect(recentDevices.list()[0]).toMatchObject({
+      alias: 'Office PC',
+      device: { ipAddress: '192.168.1.10' },
+    })
+    expect(migrated.schemaVersion).toBe(2)
   })
 
   it('backs up invalid settings before restoring safe defaults', async () => {

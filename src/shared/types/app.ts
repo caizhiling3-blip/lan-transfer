@@ -49,6 +49,8 @@ export interface AppSettingsDto {
   readonly servicePort: number
   readonly maxFileSizeBytes: number
   readonly historyLimit: number
+  readonly historyRetentionDays: number | null
+  readonly logRetentionDays: number
 }
 
 export interface HistoryEntryDto {
@@ -77,4 +79,39 @@ export interface HistoryFilterDto {
 export interface RecentDeviceDto {
   readonly device: DeviceInfo
   readonly lastConnectedAt: number
+  readonly alias?: string
+}
+
+export interface HistoryCleanupCriteriaDto {
+  readonly direction?: TransferDirection
+  readonly kind?: TransferKind
+  readonly statuses?: readonly TransferStatus[]
+  readonly query?: string
+  readonly before?: number
+}
+
+export interface HistoryStatsDto {
+  readonly totalEntries: number
+  readonly matchingEntries: number
+  readonly storageBytes: number
+}
+
+export interface LogStatsDto {
+  readonly fileCount: number
+  readonly storageBytes: number
+  readonly oldestEntryAt?: number
+}
+
+export interface DiagnosticsSummaryDto {
+  readonly appVersion: string
+  readonly platform: OperatingSystem
+  readonly architecture: string
+  readonly service: ServiceStatusDto
+  readonly connectionState: ConnectionState
+  readonly discoveryRunning: boolean
+  readonly activeTransferCount: number
+  readonly historyEntries: number
+  readonly historyStorageBytes: number
+  readonly logFiles: number
+  readonly logStorageBytes: number
 }

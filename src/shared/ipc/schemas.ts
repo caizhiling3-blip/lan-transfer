@@ -3,12 +3,16 @@ import { z } from 'zod'
 import {
   MAX_FILE_SIZE_BYTES,
   MAX_FILES_PER_TRANSFER,
+  MAX_HISTORY_DELETE_BATCH,
   MAX_HISTORY_LIMIT,
   MAX_HISTORY_SEARCH_LENGTH,
   MAX_QUEUED_TRANSFER_ITEMS,
+  MAX_RECENT_DEVICE_ALIAS_LENGTH,
+  MAX_RETENTION_DAYS,
   MAX_SERVICE_PORT,
   MAX_TEXT_BYTES,
   MIN_HISTORY_LIMIT,
+  MIN_RETENTION_DAYS,
   MIN_SERVICE_PORT,
 } from '../constants'
 import { fileIdSchema, queueItemIdSchema, requestIdSchema, transferIdSchema } from '../types'
@@ -89,9 +93,55 @@ const updateSettingsRequestSchema = z
     servicePort: portSchema.optional(),
     maxFileSizeBytes: z.number().int().positive().max(MAX_FILE_SIZE_BYTES).optional(),
     historyLimit: z.number().int().min(MIN_HISTORY_LIMIT).max(MAX_HISTORY_LIMIT).optional(),
+    historyRetentionDays: z
+      .number()
+      .int()
+      .min(MIN_RETENTION_DAYS)
+      .max(MAX_RETENTION_DAYS)
+      .nullable()
+      .optional(),
+    logRetentionDays: z.number().int().min(MIN_RETENTION_DAYS).max(MAX_RETENTION_DAYS).optional(),
   })
   .strict()
   .refine((request) => Object.keys(request).length > 0, 'At least one setting is required')
+
+export const recentDeviceAliasSchema = z.string().trim().min(1).max(MAX_RECENT_DEVICE_ALIAS_LENGTH)
+
+export const historyDeleteRequestSchema = z
+  .object({ historyIds: z.array(z.uuid()).min(1).max(MAX_HISTORY_DELETE_BATCH) })
+  .strict()
+  .refine(({ historyIds }) => new Set(historyIds).size === historyIds.length, 'IDs must be unique')
+
+export const historyCleanupCriteriaSchema = z
+  .object({
+    direction: z.enum(['send', 'receive']).optional(),
+    kind: z.enum(['text', 'link', 'file', 'folder']).optional(),
+    statuses: z
+      .array(
+        z.enum([
+          'pending',
+          'awaitingAcceptance',
+          'accepted',
+          'transferring',
+          'publishing',
+          'completed',
+          'failed',
+          'cancelled',
+          'rejected',
+        ]),
+      )
+      .min(1)
+      .max(9)
+      .optional(),
+    query: z.string().trim().min(1).max(MAX_HISTORY_SEARCH_LENGTH).optional(),
+    before: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  })
+  .strict()
+  .refine((criteria) => Object.keys(criteria).length > 0, 'At least one criterion is required')
+  .refine(
+    ({ statuses }) => statuses === undefined || new Set(statuses).size === statuses.length,
+    'Statuses must be unique',
+  )
 
 export const ipcInvokeRequestSchemas = {
   'app:get-runtime-info': noRequestSchema,

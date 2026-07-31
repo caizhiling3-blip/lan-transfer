@@ -97,7 +97,15 @@ export interface LanTransferApi {
     get(): Promise<IpcInvokeResponse<'settings:get'>>
     update(
       patch: Partial<
-        Pick<AppSettingsDto, 'deviceName' | 'servicePort' | 'maxFileSizeBytes' | 'historyLimit'>
+        Pick<
+          AppSettingsDto,
+          | 'deviceName'
+          | 'servicePort'
+          | 'maxFileSizeBytes'
+          | 'historyLimit'
+          | 'historyRetentionDays'
+          | 'logRetentionDays'
+        >
       > & { readonly receiveDirectoryToken?: string },
     ): Promise<IpcInvokeResponse<'settings:update'>>
     selectReceiveDirectory(): Promise<IpcInvokeResponse<'settings:select-receive-directory'>>

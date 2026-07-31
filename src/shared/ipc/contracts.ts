@@ -116,6 +116,8 @@ export interface IpcInvokeMap {
       readonly servicePort?: number
       readonly maxFileSizeBytes?: number
       readonly historyLimit?: number
+      readonly historyRetentionDays?: number | null
+      readonly logRetentionDays?: number
     },
     AppSettingsDto
   >
