@@ -1,3 +1,4 @@
+import type { ErrorCode } from '@shared/errors'
 import type { DeviceInfo, TransferDirection, TransferTaskDto } from '@shared/types'
 
 export interface TextMessageItem {
@@ -8,6 +9,7 @@ export interface TextMessageItem {
   readonly contentType: 'text' | 'link'
   readonly createdAt: number
   readonly status: 'completed' | 'failed'
+  readonly errorCode?: ErrorCode
 }
 
 export type TransferActivity =

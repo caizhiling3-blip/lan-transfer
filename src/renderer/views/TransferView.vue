@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { MAX_TEXT_BYTES } from '@shared/constants'
 import type { FileId } from '@shared/types'
@@ -19,6 +19,8 @@ const textTransferStore = useTextTransferStore()
 const fileTransferStore = useFileTransferStore()
 const content = ref('')
 const activityList = ref<HTMLElement | null>(null)
+
+const emit = defineEmits<{ navigate: [page: 'home' | 'settings'] }>()
 
 const activities = computed(() =>
   createTransferActivities(textTransferStore.messages, fileTransferStore.tasks),
@@ -110,6 +112,21 @@ const cancelFile = (
   void fileTransferStore.cancel(transferId, fileId)
 }
 
+const retryTransfer = async (
+  transferId: Parameters<typeof fileTransferStore.retry>[0],
+): Promise<void> => {
+  try {
+    await ElMessageBox.confirm(
+      '重试会创建新任务并从头发送全部未完成内容，不会从中断位置继续。',
+      '从头重新发送',
+      { type: 'warning', confirmButtonText: '重新发送', cancelButtonText: '取消' },
+    )
+    await fileTransferStore.retry(transferId)
+  } catch {
+    // 用户取消确认时无需提示错误。
+  }
+}
+
 onMounted(() => {
   void textTransferStore.initialize()
 })
@@ -126,7 +143,11 @@ onBeforeUnmount(() => {
       title="尚未连接设备，请先在首页建立连接"
       type="warning"
       :closable="false"
-    />
+    >
+      <template #default>
+        <el-button link type="primary" @click="emit('navigate', 'home')">前往首页连接</el-button>
+      </template>
+    </el-alert>
 
     <el-card class="transfer-workspace" shadow="never" body-class="workspace-body">
       <template #header>
@@ -161,8 +182,9 @@ onBeforeUnmount(() => {
             @respond="respondToOffer"
             @cancel-task="fileTransferStore.cancel(activity.task.transferId)"
             @cancel-file="cancelFile(activity.task.transferId, $event)"
-            @retry="fileTransferStore.retry(activity.task.transferId)"
+            @retry="retryTransfer(activity.task.transferId)"
             @show-received-file="showReceivedFile(activity.task.transferId)"
+            @navigate="emit('navigate', $event)"
           />
         </template>
       </div>

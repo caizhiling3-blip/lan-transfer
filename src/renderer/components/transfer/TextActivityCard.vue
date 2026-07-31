@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ERROR_MESSAGES_ZH_CN, ERROR_RECOVERY_ADVICE_ZH_CN } from '@shared/errors'
+
 import type { TextMessageItem } from '../../types/transfer-activity'
 
 defineProps<{ readonly message: TextMessageItem }>()
@@ -32,6 +34,10 @@ const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleTi
         打开链接
       </el-button>
     </div>
+    <div v-if="message.errorCode" class="text-error">
+      <strong>{{ ERROR_MESSAGES_ZH_CN[message.errorCode] }}</strong>
+      <span>{{ ERROR_RECOVERY_ADVICE_ZH_CN[message.errorCode].suggestion }}</span>
+    </div>
   </article>
 </template>
 
@@ -56,6 +62,14 @@ const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleTi
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.text-error {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  color: var(--app-danger-text, #f56c6c);
+  font-size: 12px;
 }
 
 .activity-meta {

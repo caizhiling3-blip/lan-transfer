@@ -64,6 +64,70 @@ export const ERROR_MESSAGES_ZH_CN: Readonly<Record<ErrorCode, string>> = {
   TRANSFER_FAILED: '文件传输失败',
 }
 
+export type ErrorRecoveryAction = 'reconnect' | 'settings' | 'retry' | 'reselect' | 'none'
+
+export interface ErrorRecoveryAdvice {
+  readonly suggestion: string
+  readonly action: ErrorRecoveryAction
+}
+
+export const ERROR_RECOVERY_ADVICE_ZH_CN: Readonly<Record<ErrorCode, ErrorRecoveryAdvice>> = {
+  NETWORK_UNREACHABLE: {
+    suggestion: '确认两台设备处于同一局域网，并检查防火墙后重连。',
+    action: 'reconnect',
+  },
+  CONNECTION_REFUSED: {
+    suggestion: '确认对方邻渡正在运行、端口正确且允许了传入连接。',
+    action: 'reconnect',
+  },
+  CONNECTION_TIMEOUT: { suggestion: '检查 IP、端口和网络状态后重新连接。', action: 'reconnect' },
+  CONNECTION_CLOSED: { suggestion: '重新建立设备连接后再发送。', action: 'reconnect' },
+  PORT_IN_USE: { suggestion: '在设置中换用未被占用的服务端口。', action: 'settings' },
+  PROTOCOL_INVALID: { suggestion: '确认双方使用兼容版本的邻渡。', action: 'none' },
+  MESSAGE_INVALID: { suggestion: '断开异常连接；若持续出现，请导出诊断报告。', action: 'none' },
+  FILE_NOT_FOUND: { suggestion: '源文件可能已移动或变化，请重新选择。', action: 'reselect' },
+  FILE_TOO_LARGE: {
+    suggestion: '选择更小的文件，或检查双方的单文件大小设置。',
+    action: 'settings',
+  },
+  FILE_COUNT_EXCEEDED: { suggestion: '减少本次选择的文件或顶层项目数量。', action: 'reselect' },
+  FILE_REJECTED: { suggestion: '接收方拒绝了请求；确认后可从头重新发送。', action: 'retry' },
+  FILE_NAME_INVALID: { suggestion: '重命名源文件，避免系统保留名和非法字符。', action: 'reselect' },
+  FOLDER_NOT_FOUND: { suggestion: '源文件夹可能已移动或变化，请重新选择。', action: 'reselect' },
+  FOLDER_SCAN_TIMEOUT: {
+    suggestion: '减少文件夹内容，关闭占用程序后重新选择。',
+    action: 'reselect',
+  },
+  FOLDER_FILE_COUNT_EXCEEDED: {
+    suggestion: '拆分文件夹，使每次传输的文件数不超过限制。',
+    action: 'reselect',
+  },
+  FOLDER_TOTAL_SIZE_EXCEEDED: { suggestion: '拆分文件夹并分多次发送。', action: 'reselect' },
+  FOLDER_DEPTH_EXCEEDED: { suggestion: '减少目录嵌套层级后重新选择。', action: 'reselect' },
+  FOLDER_PATH_INVALID: { suggestion: '移除非法路径或重命名冲突项后重新选择。', action: 'reselect' },
+  FOLDER_PATH_CONFLICT: {
+    suggestion: '重命名仅大小写不同或跨平台冲突的项目。',
+    action: 'reselect',
+  },
+  FOLDER_MANIFEST_TOO_LARGE: { suggestion: '拆分文件夹，减少单次传输项目。', action: 'reselect' },
+  FOLDER_SYMLINK_UNSUPPORTED: {
+    suggestion: '移除符号链接，或改为选择实际文件。',
+    action: 'reselect',
+  },
+  FOLDER_PUBLISH_FAILED: { suggestion: '检查接收目录权限和文件占用后从头重试。', action: 'retry' },
+  SAVE_DIRECTORY_INVALID: {
+    suggestion: '前往设置重新选择有效且可写的接收目录。',
+    action: 'settings',
+  },
+  DISK_SPACE_INSUFFICIENT: {
+    suggestion: '释放接收磁盘空间，或选择其他接收目录。',
+    action: 'settings',
+  },
+  TRANSFER_CANCELLED: { suggestion: '如仍需发送，请从头重新传输。', action: 'retry' },
+  TRANSFER_TIMEOUT: { suggestion: '检查网络稳定性，重新连接后从头重试。', action: 'retry' },
+  TRANSFER_FAILED: { suggestion: '检查双方网络、目录和磁盘状态后从头重试。', action: 'retry' },
+}
+
 export interface AppError {
   readonly code: ErrorCode
   readonly message?: string

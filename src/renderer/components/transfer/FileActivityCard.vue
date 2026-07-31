@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import { ERROR_MESSAGES_ZH_CN } from '@shared/errors'
+import { ERROR_MESSAGES_ZH_CN, ERROR_RECOVERY_ADVICE_ZH_CN } from '@shared/errors'
 import type { TransferOfferReceivedDto } from '@shared/ipc'
 import type { FileId, TransferStatus, TransferTaskDto } from '@shared/types'
 
@@ -25,6 +25,7 @@ defineEmits<{
   cancelFile: [fileId: FileId]
   retry: []
   showReceivedFile: []
+  navigate: [page: 'home' | 'settings']
 }>()
 
 const statusLabels: Readonly<Record<TransferStatus, string>> = {
@@ -52,6 +53,9 @@ const canRetry = computed(
 )
 const errorMessage = computed(() =>
   props.task.errorCode === undefined ? '' : ERROR_MESSAGES_ZH_CN[props.task.errorCode],
+)
+const recoveryAdvice = computed(() =>
+  props.task.errorCode === undefined ? null : ERROR_RECOVERY_ADVICE_ZH_CN[props.task.errorCode],
 )
 const estimatedRemainingSeconds = computed(() =>
   getEstimatedRemainingSeconds(
@@ -162,7 +166,26 @@ const getUnfinishedReason = (file: TransferTaskDto['files'][number]): string => 
       </div>
     </template>
 
-    <p v-if="errorMessage" class="task-error">{{ errorMessage }}</p>
+    <div v-if="errorMessage" class="task-error">
+      <strong>{{ errorMessage }}</strong>
+      <span v-if="recoveryAdvice">{{ recoveryAdvice.suggestion }}</span>
+      <el-button
+        v-if="recoveryAdvice?.action === 'settings'"
+        link
+        type="primary"
+        @click="$emit('navigate', 'settings')"
+      >
+        前往设置
+      </el-button>
+      <el-button
+        v-else-if="recoveryAdvice?.action === 'reconnect'"
+        link
+        type="primary"
+        @click="$emit('navigate', 'home')"
+      >
+        重新连接
+      </el-button>
+    </div>
 
     <section
       v-if="isTaskTerminal"
@@ -312,6 +335,8 @@ const getUnfinishedReason = (file: TransferTaskDto['files'][number]): string => 
 }
 
 .task-error {
+  display: grid;
+  gap: 4px;
   margin: 10px 0 0;
   color: #f56c6c;
   font-size: 13px;

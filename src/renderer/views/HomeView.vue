@@ -3,6 +3,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { DEFAULT_SERVICE_PORT } from '@shared/constants'
+import { ERROR_RECOVERY_ADVICE_ZH_CN } from '@shared/errors'
 import type { ConnectionState, ServiceState } from '@shared/types'
 import type { DeviceInfo, RecentDeviceDto } from '@shared/types'
 
@@ -76,11 +77,17 @@ const connectionPresentations: Readonly<
 }
 const connectionPresentation = computed(() => connectionPresentations[connectionStore.status.state])
 const isConnected = computed(() => connectionStore.status.state === 'connected')
+const canConnect = computed(() => ['disconnected', 'error'].includes(connectionStore.status.state))
+const connectionRecoveryAdvice = computed(() =>
+  connectionStore.status.errorCode === undefined
+    ? null
+    : ERROR_RECOVERY_ADVICE_ZH_CN[connectionStore.status.errorCode],
+)
 
 const connectDiscoveredDevice = (device: DeviceInfo): void => {
   peerIp.value = device.ipAddress
   peerPort.value = device.servicePort
-  if (connectionStore.status.state === 'disconnected') {
+  if (canConnect.value) {
     void connectionStore.connect(device.ipAddress, device.servicePort)
   }
 }
@@ -257,7 +264,7 @@ onBeforeUnmount(() => {
               type="primary"
               plain
               :loading="connectionStore.loading"
-              :disabled="connectionStore.status.state !== 'disconnected'"
+              :disabled="!canConnect"
               @click="connectDiscoveredDevice(getRecentConnectDevice(recent))"
             >
               连接
@@ -304,7 +311,7 @@ onBeforeUnmount(() => {
             type="primary"
             plain
             :loading="connectionStore.loading"
-            :disabled="connectionStore.status.state !== 'disconnected'"
+            :disabled="!canConnect"
             @click="connectDiscoveredDevice(discovered.device)"
           >
             连接
@@ -363,7 +370,7 @@ onBeforeUnmount(() => {
           <el-button
             type="primary"
             :loading="connectionStore.loading"
-            :disabled="!peerIp || connectionStore.status.state !== 'disconnected'"
+            :disabled="!peerIp || !canConnect"
             @click="connectionStore.connect(peerIp, peerPort)"
           >
             连接设备
@@ -377,7 +384,11 @@ onBeforeUnmount(() => {
         :title="connectionStore.errorMessage"
         type="error"
         :closable="false"
-      />
+      >
+        <template #default>
+          <span v-if="connectionRecoveryAdvice">{{ connectionRecoveryAdvice.suggestion }}</span>
+        </template>
+      </el-alert>
     </el-card>
   </div>
 </template>

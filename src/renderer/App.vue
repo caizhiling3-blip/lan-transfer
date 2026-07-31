@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
           <ThemeToggle />
         </header>
         <HomeView v-if="activePage === 'home'" />
-        <TransferView v-else-if="activePage === 'transfer'" />
+        <TransferView v-else-if="activePage === 'transfer'" @navigate="activePage = $event" />
         <HistoryView v-else-if="activePage === 'history'" />
         <DiagnosticsView v-else-if="activePage === 'diagnostics'" />
         <SettingsView v-else />

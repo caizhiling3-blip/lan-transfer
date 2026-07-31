@@ -22,6 +22,7 @@ const fromHistoryEntry = (
   contentType: entry.kind,
   createdAt: entry.createdAt,
   status: entry.status === 'completed' ? 'completed' : 'failed',
+  ...(entry.errorCode === undefined ? {} : { errorCode: entry.errorCode }),
 })
 
 const fromReceivedMessage = (message: TextReceivedDto): TextMessageItem => ({
@@ -57,6 +58,7 @@ export const useTextTransferStore = defineStore('textTransfer', {
             contentType: task.kind === 'link' ? 'link' : 'text',
             createdAt: task.createdAt,
             status: task.status === 'completed' ? 'completed' : 'failed',
+            ...(task.errorCode === undefined ? {} : { errorCode: task.errorCode }),
           })
           if (task.errorCode !== undefined) {
             this.errorMessage = ERROR_MESSAGES_ZH_CN[task.errorCode]
@@ -88,6 +90,7 @@ export const useTextTransferStore = defineStore('textTransfer', {
         contentType,
         createdAt: result.data.createdAt,
         status: result.data.status === 'completed' ? 'completed' : 'failed',
+        ...(result.data.errorCode === undefined ? {} : { errorCode: result.data.errorCode }),
       })
       if (result.data.errorCode !== undefined) {
         this.errorMessage = ERROR_MESSAGES_ZH_CN[result.data.errorCode]
