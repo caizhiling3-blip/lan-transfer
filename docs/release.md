@@ -28,7 +28,7 @@ pnpm package:win
 输出位置：
 
 - `release/win-unpacked/Lindu.exe`：免安装冒烟测试入口
-- `release/Lindu-Setup-0.1.0-x64.exe`：NSIS 安装包
+- `release/Lindu-Setup-0.3.0-x64.exe`：v0.3.0 NSIS 安装包
 
 当前无原生 Node 扩展的配置已在 macOS 开发机成功生成 Windows NSIS 包。若后续加入原生扩展或构建机提示缺少兼容工具链，应改在 Windows x64 环境构建。跨平台产物即使生成成功，也不能替代 Windows 上的安装、快捷方式、卸载、文件锁和防火墙测试。
 
@@ -68,8 +68,8 @@ pnpm package:win
 - 可执行文件：`邻渡`
 - 应用分类：Utilities
 - 最低系统版本：macOS 12
-- Apple Silicon：`Lindu-0.1.0-arm64.dmg`
-- Intel：`Lindu-0.1.0-x64.dmg`
+- Apple Silicon：`Lindu-0.3.0-arm64.dmg`
+- Intel：`Lindu-0.3.0-x64.dmg`
 - 图标：`build/icon.icns`，包含 16–1024 像素资源
 - 安装界面：把邻渡拖入 Applications
 
@@ -92,7 +92,7 @@ pnpm package:mac
 1. 挂载与本机架构匹配的 DMG，把“邻渡”拖到 Applications；
 2. 从 Applications 首次启动，记录 Gatekeeper 提示；需要放行时使用 Finder 右键“打开”，或在“系统设置 > 隐私与安全性”中确认本次启动；
 3. 不使用全局关闭 Gatekeeper 的命令，也不要移除其他应用的 quarantine 属性；
-4. 检查 Dock、访达、应用切换器和“关于”窗口中的图标、名称、版本及 Bundle ID；
+4. 检查 Dock、访达、应用切换器和诊断页中的图标、名称、`0.3.0` 版本及 Bundle ID；
 5. 验证深浅色页面、系统文件/目录选择器、通知和外部链接；
 6. 退出应用并把它移到废纸篓，再确认用户设置和历史仍保留在 Electron `userData`；
 7. 如需彻底清理测试数据，先备份并确认 `app.getPath('userData')` 的实际目录，再由测试人员手动删除。
@@ -126,6 +126,20 @@ Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网
 - 使用 `notarytool` 提交，等待成功后 stapling；
 - 通过 `codesign --verify --deep --strict`、`spctl --assess` 和离线 Gatekeeper 测试；
 - 再决定是否公开分发、加入自动更新或发布渠道。
+
+## v0.3.0 发布状态
+
+v0.3.0 包含历史摘要精细清理、可选保留天数、最近设备备注/删除/在线合并、脱敏诊断报告、日志生命周期和失败恢复建议。协议保持 v2，不改变现有局域网互通格式。
+
+当前提交可作为未签名候选包构建来源，但在以下门禁完成前不得标记为正式双平台发布：
+
+- 使用同一提交在 Windows x64 和 macOS arm64（以及计划支持的 Intel Mac）生成候选包并记录 SHA-256；
+- 从 v0.2.0 的真实 `settings.json`、`recent-devices.json` 和 `history.json` 升级，确认迁移后数据完整；
+- 完成本文与 `docs/testing.md` 中 v0.3.0 实机矩阵，包括日志目录、诊断导出、权限、文件锁和防火墙；
+- 确认历史与日志清理从不删除接收目录中的真实文件；
+- 记录未签名包 Gatekeeper/SmartScreen 行为，正式公开分发前完成独立签名与 notarization 计划。
+
+阶段 6 在 Apple Silicon 构建机完成 `pnpm package:mac:dir` 与 `pnpm package:win:dir`：macOS 主程序为 arm64 Mach-O，Windows 主程序为 x86-64 PE32+ GUI；两个目录包均包含 ASAR。macOS Info.plist 的版本为 `0.3.0`、Bundle ID 为 `com.lindu.transfer`、最低系统版本为 macOS 12，ATS 任意加载关闭且本地网络说明存在。构建目录位于被 Git 忽略的 `release/`，这些结构检查不等于候选安装包或实机验收通过。
 
 ## 1.2 文件夹传输发布门禁
 
