@@ -126,6 +126,19 @@ describe('persistent application storage', () => {
     expect(new RecentDevicesStore(directory).list()[0]?.device.ipAddress).toBe('192.168.1.9')
   })
 
+  it('updates aliases and removes recent devices without changing trust state', async () => {
+    const directory = await createDirectory()
+    const recentDevices = new RecentDevicesStore(directory)
+    recentDevices.add(peer)
+
+    expect(recentDevices.updateAlias(peer.deviceId, 'Office PC')[0]?.alias).toBe('Office PC')
+    expect(recentDevices.updateAlias(peer.deviceId, null)[0]?.alias).toBeUndefined()
+    expect(recentDevices.remove(peer.deviceId)).toEqual([])
+    recentDevices.add(peer)
+    recentDevices.clear()
+    expect(recentDevices.list()).toEqual([])
+  })
+
   it('migrates version 1 recent devices and preserves a local alias on address updates', async () => {
     const directory = await createDirectory()
     await writeFile(

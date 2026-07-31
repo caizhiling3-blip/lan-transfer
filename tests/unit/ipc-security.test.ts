@@ -208,9 +208,20 @@ describe('IPC request schemas', () => {
     expect(() => parseIpcInvokeRequest('settings:update', { logRetentionDays: 0 })).toThrow()
   })
 
-  it('does not accept parameters when listing recent devices', () => {
-    expect(() => parseIpcInvokeRequest('connection:list-recent-devices', undefined)).not.toThrow()
-    expect(() => parseIpcInvokeRequest('connection:list-recent-devices', {})).toThrow()
+  it('validates recent device management requests', () => {
+    const deviceId = '22222222-2222-4222-8222-222222222222'
+    expect(() => parseIpcInvokeRequest('recent-devices:list', undefined)).not.toThrow()
+    expect(() => parseIpcInvokeRequest('recent-devices:list', {})).toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('recent-devices:update-alias', { deviceId, alias: 'Office PC' }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('recent-devices:update-alias', { deviceId, alias: null }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('recent-devices:update-alias', { deviceId, alias: '' }),
+    ).toThrow()
+    expect(() => parseIpcInvokeRequest('recent-devices:remove', { deviceId })).not.toThrow()
   })
 
   it('bounds history search input', () => {

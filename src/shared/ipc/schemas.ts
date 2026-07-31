@@ -15,7 +15,13 @@ import {
   MIN_RETENTION_DAYS,
   MIN_SERVICE_PORT,
 } from '../constants'
-import { fileIdSchema, queueItemIdSchema, requestIdSchema, transferIdSchema } from '../types'
+import {
+  deviceIdSchema,
+  fileIdSchema,
+  queueItemIdSchema,
+  requestIdSchema,
+  transferIdSchema,
+} from '../types'
 import { getUtf8ByteLength } from '../utils'
 import type { IpcInvokeChannel } from './channels'
 import type { IpcInvokeRequest } from './contracts'
@@ -152,7 +158,12 @@ export const ipcInvokeRequestSchemas = {
   'connection:connect': connectRequestSchema,
   'connection:disconnect': noRequestSchema,
   'connection:respond-to-request': respondToConnectionRequestSchema,
-  'connection:list-recent-devices': noRequestSchema,
+  'recent-devices:list': noRequestSchema,
+  'recent-devices:update-alias': z
+    .object({ deviceId: deviceIdSchema, alias: recentDeviceAliasSchema.nullable() })
+    .strict(),
+  'recent-devices:remove': z.object({ deviceId: deviceIdSchema }).strict(),
+  'recent-devices:clear': noRequestSchema,
   'discovery:get-devices': noRequestSchema,
   'clipboard:read-text': noRequestSchema,
   'clipboard:write-text': z.object({ text: textSchema }).strict(),

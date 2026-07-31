@@ -60,9 +60,14 @@ export const createLanTransferApi = (): LanTransferApi => {
       disconnect: () => invoke('connection:disconnect', undefined),
       respondToRequest: (requestId, decision) =>
         invoke('connection:respond-to-request', { requestId, decision }),
-      listRecentDevices: () => invoke('connection:list-recent-devices', undefined),
       onStateChanged: (listener) => subscribe('connection:state-changed', listener),
       onIncomingRequest: (listener) => subscribe('connection:incoming-request', listener),
+    }),
+    recentDevices: Object.freeze({
+      list: () => invoke('recent-devices:list', undefined),
+      updateAlias: (deviceId, alias) => invoke('recent-devices:update-alias', { deviceId, alias }),
+      remove: (deviceId) => invoke('recent-devices:remove', { deviceId }),
+      clear: () => invoke('recent-devices:clear', undefined),
     }),
     discovery: Object.freeze({
       getDevices: () => invoke('discovery:get-devices', undefined),

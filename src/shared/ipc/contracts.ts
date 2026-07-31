@@ -2,6 +2,7 @@ import type {
   AppSettingsDto,
   ConnectionStatusDto,
   DeviceInfo,
+  DeviceId,
   DiscoveredDeviceDto,
   FileId,
   FileMetadata,
@@ -47,7 +48,16 @@ export interface IpcInvokeMap {
     { readonly requestId: RequestId; readonly decision: 'accept' | 'reject' },
     ConnectionStatusDto
   >
-  readonly 'connection:list-recent-devices': InvokeContract<undefined, readonly RecentDeviceDto[]>
+  readonly 'recent-devices:list': InvokeContract<undefined, readonly RecentDeviceDto[]>
+  readonly 'recent-devices:update-alias': InvokeContract<
+    { readonly deviceId: DeviceId; readonly alias: string | null },
+    readonly RecentDeviceDto[]
+  >
+  readonly 'recent-devices:remove': InvokeContract<
+    { readonly deviceId: DeviceId },
+    readonly RecentDeviceDto[]
+  >
+  readonly 'recent-devices:clear': InvokeContract<undefined, undefined>
   readonly 'discovery:get-devices': InvokeContract<undefined, readonly DiscoveredDeviceDto[]>
   readonly 'clipboard:read-text': InvokeContract<undefined, string>
   readonly 'clipboard:write-text': InvokeContract<{ readonly text: string }, undefined>

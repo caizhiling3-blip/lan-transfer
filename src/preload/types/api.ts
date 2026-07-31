@@ -6,6 +6,7 @@ import type {
   IpcEventMap,
   IpcInvokeResponse,
   OperatingSystem,
+  DeviceId,
   QueueItemId,
   RequestId,
   TransferId,
@@ -35,9 +36,17 @@ export interface LanTransferApi {
       requestId: RequestId,
       decision: 'accept' | 'reject',
     ): Promise<IpcInvokeResponse<'connection:respond-to-request'>>
-    listRecentDevices(): Promise<IpcInvokeResponse<'connection:list-recent-devices'>>
     onStateChanged(listener: EventListener<'connection:state-changed'>): Unsubscribe
     onIncomingRequest(listener: EventListener<'connection:incoming-request'>): Unsubscribe
+  }
+  readonly recentDevices: {
+    list(): Promise<IpcInvokeResponse<'recent-devices:list'>>
+    updateAlias(
+      deviceId: DeviceId,
+      alias: string | null,
+    ): Promise<IpcInvokeResponse<'recent-devices:update-alias'>>
+    remove(deviceId: DeviceId): Promise<IpcInvokeResponse<'recent-devices:remove'>>
+    clear(): Promise<IpcInvokeResponse<'recent-devices:clear'>>
   }
   readonly discovery: {
     getDevices(): Promise<IpcInvokeResponse<'discovery:get-devices'>>

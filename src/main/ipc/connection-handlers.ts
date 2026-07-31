@@ -27,8 +27,20 @@ export const registerConnectionIpcHandlers = (
     ok: true,
     data: connectionManager.respondToRequest(requestId, decision),
   }))
-  registerIpcHandler('connection:list-recent-devices', getWindow, () => ({
+  registerIpcHandler('recent-devices:list', getWindow, () => ({
     ok: true,
     data: recentDevices.list(),
   }))
+  registerIpcHandler('recent-devices:update-alias', getWindow, ({ deviceId, alias }) => ({
+    ok: true,
+    data: recentDevices.updateAlias(deviceId, alias),
+  }))
+  registerIpcHandler('recent-devices:remove', getWindow, ({ deviceId }) => ({
+    ok: true,
+    data: recentDevices.remove(deviceId),
+  }))
+  registerIpcHandler('recent-devices:clear', getWindow, () => {
+    recentDevices.clear()
+    return { ok: true, data: undefined }
+  })
 }

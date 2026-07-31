@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { DEFAULT_SERVICE_PORT } from '@shared/constants'
 import type { ConnectionState, ServiceState } from '@shared/types'
-import type { DeviceInfo } from '@shared/types'
+import type { DeviceInfo, RecentDeviceDto } from '@shared/types'
 
 import { useConnectionStore } from '../stores/connection'
 import { useDiscoveryStore } from '../stores/discovery'
 import { useServiceStore } from '../stores/service'
+import { useRecentDevicesStore } from '../stores/recent-devices'
 
 const serviceStore = useServiceStore()
 const connectionStore = useConnectionStore()
 const discoveryStore = useDiscoveryStore()
+const recentDevicesStore = useRecentDevicesStore()
 const peerIp = ref('')
 const peerPort = ref(DEFAULT_SERVICE_PORT)
 const localDeviceName = ref('')
@@ -82,16 +85,79 @@ const connectDiscoveredDevice = (device: DeviceInfo): void => {
   }
 }
 
+const isRecentDeviceOnline = (recent: RecentDeviceDto): boolean =>
+  discoveryStore.devices.some((discovered) => discovered.device.deviceId === recent.device.deviceId)
+
+const getRecentConnectDevice = (recent: RecentDeviceDto): DeviceInfo =>
+  discoveryStore.devices.find((discovered) => discovered.device.deviceId === recent.device.deviceId)
+    ?.device ?? recent.device
+
+watch(
+  () => connectionStore.status.state,
+  (state) => {
+    if (state === 'connected') void recentDevicesStore.load()
+  },
+)
+
+const editRecentAlias = async (recent: RecentDeviceDto): Promise<void> => {
+  try {
+    const result = await ElMessageBox.prompt('备注只保存在本机，不会发送给对方。', '设备备注', {
+      inputValue: recent.alias ?? '',
+      inputPlaceholder: '例如：书房 Mac',
+      inputValidator: (value) => value.trim().length <= 64 || '备注不能超过 64 个字符',
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+    })
+    const alias = result.value.trim()
+    if (await recentDevicesStore.updateAlias(recent.device.deviceId, alias === '' ? null : alias)) {
+      ElMessage.success('设备备注已更新')
+    }
+  } catch {
+    // 用户取消输入时无需提示错误。
+  }
+}
+
+const removeRecentDevice = async (recent: RecentDeviceDto): Promise<void> => {
+  try {
+    await ElMessageBox.confirm(
+      `确定从最近设备中移除“${recent.alias ?? recent.device.deviceName}”吗？`,
+      '移除设备',
+      {
+        type: 'warning',
+        confirmButtonText: '移除',
+        cancelButtonText: '取消',
+      },
+    )
+    if (await recentDevicesStore.remove(recent.device.deviceId)) ElMessage.success('最近设备已移除')
+  } catch {
+    // 用户取消确认时无需提示错误。
+  }
+}
+
+const clearRecentDevices = async (): Promise<void> => {
+  try {
+    await ElMessageBox.confirm('确定清空全部最近设备吗？这不会影响当前连接。', '清空最近设备', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+    })
+    if (await recentDevicesStore.clear()) ElMessage.success('最近设备已清空')
+  } catch {
+    // 用户取消确认时无需提示错误。
+  }
+}
+
 onMounted(() => {
   void serviceStore.initialize()
   void discoveryStore.initialize()
+  void recentDevicesStore.load()
   void window.lanTransfer.app.getRuntimeInfo().then((result) => {
     if (result.ok) {
       localDeviceName.value = result.data.localDevice.deviceName
       localOperatingSystem.value = result.data.platform === 'windows' ? 'Windows' : 'macOS'
     }
   })
-  void window.lanTransfer.connection.listRecentDevices().then((result) => {
+  void window.lanTransfer.recentDevices.list().then((result) => {
     const recent = result.ok ? result.data[0] : undefined
     if (recent !== undefined && peerIp.value === '') {
       peerIp.value = recent.device.ipAddress
@@ -139,6 +205,70 @@ onBeforeUnmount(() => {
         v-if="serviceStore.errorMessage"
         class="message-alert"
         :title="serviceStore.errorMessage"
+        type="error"
+        :closable="false"
+      />
+    </el-card>
+
+    <el-card v-loading="recentDevicesStore.loading" shadow="never">
+      <template #header>
+        <div class="card-header">
+          <span>最近设备</span>
+          <el-button
+            link
+            type="danger"
+            :disabled="recentDevicesStore.devices.length === 0"
+            @click="clearRecentDevices"
+          >
+            清空
+          </el-button>
+        </div>
+      </template>
+      <el-empty
+        v-if="recentDevicesStore.devices.length === 0"
+        :image-size="56"
+        description="连接成功的设备会出现在这里"
+      />
+      <div v-else class="nearby-list">
+        <div
+          v-for="recent in recentDevicesStore.devices"
+          :key="recent.device.deviceId"
+          class="nearby-device recent-device"
+        >
+          <div class="recent-device-info">
+            <div class="recent-device-title">
+              <strong>{{ recent.alias ?? recent.device.deviceName }}</strong>
+              <el-tag :type="isRecentDeviceOnline(recent) ? 'success' : 'info'" size="small">
+                {{ isRecentDeviceOnline(recent) ? '在线' : '未发现' }}
+              </el-tag>
+            </div>
+            <p v-if="recent.alias">
+              {{ recent.device.deviceName }} · {{ recent.device.ipAddress }}:{{
+                recent.device.servicePort
+              }}
+            </p>
+            <p v-else>{{ recent.device.ipAddress }}:{{ recent.device.servicePort }}</p>
+            <small>上次连接：{{ new Date(recent.lastConnectedAt).toLocaleString() }}</small>
+          </div>
+          <div class="recent-device-actions">
+            <el-button link @click="editRecentAlias(recent)">备注</el-button>
+            <el-button link type="danger" @click="removeRecentDevice(recent)">移除</el-button>
+            <el-button
+              type="primary"
+              plain
+              :loading="connectionStore.loading"
+              :disabled="connectionStore.status.state !== 'disconnected'"
+              @click="connectDiscoveredDevice(getRecentConnectDevice(recent))"
+            >
+              连接
+            </el-button>
+          </div>
+        </div>
+      </div>
+      <el-alert
+        v-if="recentDevicesStore.errorMessage"
+        class="message-alert"
+        :title="recentDevicesStore.errorMessage"
         type="error"
         :closable="false"
       />
@@ -268,6 +398,21 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.recent-device-info {
+  min-width: 0;
+}
+
+.recent-device-title,
+.recent-device-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recent-device-info small {
+  color: var(--app-text-subtle);
 }
 
 .message-alert,
