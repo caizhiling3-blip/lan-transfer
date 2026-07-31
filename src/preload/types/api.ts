@@ -109,6 +109,14 @@ export interface LanTransferApi {
     cleanup(criteria: HistoryCleanupCriteriaDto): Promise<IpcInvokeResponse<'history:cleanup'>>
     clear(): Promise<IpcInvokeResponse<'history:clear'>>
   }
+  readonly diagnostics: {
+    getSummary(): Promise<IpcInvokeResponse<'diagnostics:get-summary'>>
+    exportReport(): Promise<IpcInvokeResponse<'diagnostics:export-report'>>
+    openDataDirectory(): Promise<IpcInvokeResponse<'diagnostics:open-data-directory'>>
+    openLogDirectory(): Promise<IpcInvokeResponse<'diagnostics:open-log-directory'>>
+    getLogStats(): Promise<IpcInvokeResponse<'diagnostics:get-log-stats'>>
+    clearLogs(): Promise<IpcInvokeResponse<'diagnostics:clear-logs'>>
+  }
   readonly settings: {
     get(): Promise<IpcInvokeResponse<'settings:get'>>
     update(

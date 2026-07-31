@@ -22,6 +22,7 @@ const form = reactive({
   historyLimit: 1_000,
   historyRetentionEnabled: false,
   historyRetentionDays: 90,
+  logRetentionDays: 30,
   receiveDirectoryDisplayPath: '',
 })
 
@@ -37,6 +38,7 @@ watch(
     if (settings.historyRetentionDays !== null) {
       form.historyRetentionDays = settings.historyRetentionDays
     }
+    form.logRetentionDays = settings.logRetentionDays
     form.receiveDirectoryDisplayPath = settings.receiveDirectoryDisplayPath
   },
   { immediate: true },
@@ -49,6 +51,7 @@ const save = async (): Promise<void> => {
     maxFileSizeBytes: form.maxFileSizeMiB * 1_024 * 1_024,
     historyLimit: form.historyLimit,
     historyRetentionDays: form.historyRetentionEnabled ? form.historyRetentionDays : null,
+    logRetentionDays: form.logRetentionDays,
   })
   if (succeeded) ElMessage.success('设置已保存')
 }
@@ -114,6 +117,15 @@ onBeforeUnmount(() => store.dispose())
           />
           <span class="field-help">天；关闭时只按数量上限清理。不会删除接收的文件。</span>
         </div>
+      </el-form-item>
+      <el-form-item label="日志保留天数">
+        <el-input-number
+          v-model="form.logRetentionDays"
+          :min="MIN_RETENTION_DAYS"
+          :max="MAX_RETENTION_DAYS"
+          controls-position="right"
+        />
+        <span class="field-help">只清理已轮转的旧日志，当前日志始终保留。</span>
       </el-form-item>
       <el-alert
         v-if="store.errorMessage"

@@ -7,11 +7,12 @@ import { useFileTransferStore } from './stores/file-transfer'
 import ThemeToggle from './components/ThemeToggle.vue'
 import linduLogo from '../../build/icon.svg?no-inline'
 import HomeView from './views/HomeView.vue'
+import DiagnosticsView from './views/DiagnosticsView.vue'
 import HistoryView from './views/HistoryView.vue'
 import SettingsView from './views/SettingsView.vue'
 import TransferView from './views/TransferView.vue'
 
-type PageKey = 'home' | 'transfer' | 'history' | 'settings'
+type PageKey = 'home' | 'transfer' | 'history' | 'diagnostics' | 'settings'
 
 const activePage = ref<PageKey>('home')
 const connectionStore = useConnectionStore()
@@ -86,6 +87,7 @@ onBeforeUnmount(() => {
           <el-menu-item index="home">首页</el-menu-item>
           <el-menu-item index="transfer">传输</el-menu-item>
           <el-menu-item index="history">历史记录</el-menu-item>
+          <el-menu-item index="diagnostics">诊断</el-menu-item>
           <el-menu-item index="settings">设置</el-menu-item>
         </el-menu>
       </nav>
@@ -110,6 +112,7 @@ onBeforeUnmount(() => {
         <HomeView v-if="activePage === 'home'" />
         <TransferView v-else-if="activePage === 'transfer'" />
         <HistoryView v-else-if="activePage === 'history'" />
+        <DiagnosticsView v-else-if="activePage === 'diagnostics'" />
         <SettingsView v-else />
       </div>
     </el-main>

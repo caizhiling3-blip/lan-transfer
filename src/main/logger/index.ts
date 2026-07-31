@@ -1,5 +1,7 @@
 import log from 'electron-log/main'
 
+export { LogLifecycle } from './log-lifecycle'
+
 export type LogContext = Readonly<Record<string, unknown>>
 
 export const initializeLogger = (): void => {
@@ -8,6 +10,8 @@ export const initializeLogger = (): void => {
   log.transports.file.maxSize = 5 * 1_024 * 1_024
   log.transports.console.level = process.env.NODE_ENV === 'production' ? 'warn' : 'info'
 }
+
+export const getActiveLogFilePath = (): string => log.transports.file.getFile().path
 
 export const logger = {
   info(event: string, context: LogContext = {}): void {

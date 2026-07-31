@@ -224,6 +224,20 @@ describe('IPC request schemas', () => {
     expect(() => parseIpcInvokeRequest('recent-devices:remove', { deviceId })).not.toThrow()
   })
 
+  it('does not accept paths or parameters for diagnostics operations', () => {
+    for (const channel of [
+      'diagnostics:get-summary',
+      'diagnostics:export-report',
+      'diagnostics:open-data-directory',
+      'diagnostics:open-log-directory',
+      'diagnostics:get-log-stats',
+      'diagnostics:clear-logs',
+    ] as const) {
+      expect(() => parseIpcInvokeRequest(channel, undefined)).not.toThrow()
+      expect(() => parseIpcInvokeRequest(channel, { path: '/tmp/unsafe' })).toThrow()
+    }
+  })
+
   it('bounds history search input', () => {
     expect(() =>
       parseIpcInvokeRequest('history:list', {

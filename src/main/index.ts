@@ -31,6 +31,7 @@ import {
 import {
   registerConnectionIpcHandlers,
   registerDiscoveryIpcHandlers,
+  registerDiagnosticsIpcHandlers,
   registerFoundationIpcHandlers,
   registerFileTransferIpcHandlers,
   registerRuntimeIpcHandlers,
@@ -39,7 +40,8 @@ import {
   registerTextIpcHandlers,
 } from './ipc'
 import { ServiceManager } from './server'
-import { initializeLogger, logger } from './logger'
+import { DiagnosticsService, getDiagnosticsPlatform } from './diagnostics'
+import { getActiveLogFilePath, initializeLogger, logger, LogLifecycle } from './logger'
 import { HistoryStore, RecentDevicesStore, SessionHistory, SettingsStore } from './storage'
 import { ConnectionManager } from './websocket'
 
@@ -117,6 +119,7 @@ void app.whenReady().then(() => {
   )
   const historyStore = new HistoryStore(app.getPath('userData'))
   const recentDevices = new RecentDevicesStore(app.getPath('userData'))
+  const logLifecycle = new LogLifecycle(app.getPath('logs'), getActiveLogFilePath)
   const sessionHistory = new SessionHistory(
     () => settingsStore.getSettings().historyLimit,
     historyStore.load(),
@@ -158,6 +161,40 @@ void app.whenReady().then(() => {
     activeFolderTransferCoordinator,
     sessionHistory,
   )
+  const diagnosticsService = new DiagnosticsService(
+    async () => {
+      const historyStats = sessionHistory.getStats({}, historyStore.getStorageBytes())
+      const logStats = await logLifecycle.getStats()
+      const activeTasks = [
+        ...activeFileTransferCoordinator.getTasks(),
+        ...activeFolderTransferCoordinator.getTasks(),
+      ].filter((task) => !['completed', 'failed', 'cancelled', 'rejected'].includes(task.status))
+      const activeTaskIds = new Set(activeTasks.map((task) => task.transferId))
+      const queuedTaskCount = activeTransferQueueCoordinator
+        .getItems()
+        .filter(
+          (item) =>
+            item.status !== 'failed' &&
+            (item.transferId === undefined || !activeTaskIds.has(item.transferId)),
+        ).length
+      return {
+        appVersion: app.getVersion(),
+        platform: getDiagnosticsPlatform(),
+        architecture: process.arch,
+        service: activeServiceManager.getStatus(),
+        connectionState: activeConnectionManager.getStatus().state,
+        discoveryRunning: activeDiscoveryManager.isRunning(),
+        activeTransferCount: activeTasks.length + queuedTaskCount,
+        historyEntries: historyStats.totalEntries,
+        historyStorageBytes: historyStats.storageBytes,
+        logFiles: logStats.fileCount,
+        logStorageBytes: logStats.storageBytes,
+      }
+    },
+    logLifecycle,
+    app.getPath('userData'),
+    app.getPath('logs'),
+  )
   const notificationCoordinator = new TransferNotificationCoordinator(
     () => mainWindow === null || mainWindow.isDestroyed() || !mainWindow.isFocused(),
     ({ title, body }) => {
@@ -190,6 +227,7 @@ void app.whenReady().then(() => {
   registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, activeServiceManager)
   registerConnectionIpcHandlers(() => mainWindow, activeConnectionManager, recentDevices)
   registerDiscoveryIpcHandlers(() => mainWindow, activeDiscoveryManager)
+  registerDiagnosticsIpcHandlers(() => mainWindow, diagnosticsService)
   registerTextIpcHandlers(
     () => mainWindow,
     activeConnectionManager,
@@ -211,6 +249,13 @@ void app.whenReady().then(() => {
     sessionHistory,
   )
   openMainWindow()
+
+  void logLifecycle
+    .cleanupExpired(settingsStore.getSettings().logRetentionDays)
+    .then((removed) => {
+      if (removed > 0) logger.info('expired_logs_removed', { removed })
+    })
+    .catch((error: unknown) => logger.error('log_cleanup_failed', error))
 
   void fileAccessRegistry
     .resolveReceiveDirectory()
@@ -252,6 +297,9 @@ void app.whenReady().then(() => {
   applicationUnsubscribers = [
     settingsStore.subscribe((settings) => {
       sendToRenderer(SETTINGS_CHANGED_EVENT_CHANNEL, settings)
+      void logLifecycle.cleanupExpired(settings.logRetentionDays).catch((error: unknown) => {
+        logger.error('log_cleanup_failed', error)
+      })
     }),
     activeConnectionManager.subscribeStatus((status) => {
       if (status.state === 'connected' && status.peer !== undefined) recentDevices.add(status.peer)

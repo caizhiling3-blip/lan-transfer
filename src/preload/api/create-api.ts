@@ -125,6 +125,14 @@ export const createLanTransferApi = (): LanTransferApi => {
       cleanup: (criteria) => invoke('history:cleanup', criteria),
       clear: () => invoke('history:clear', undefined),
     }),
+    diagnostics: Object.freeze({
+      getSummary: () => invoke('diagnostics:get-summary', undefined),
+      exportReport: () => invoke('diagnostics:export-report', undefined),
+      openDataDirectory: () => invoke('diagnostics:open-data-directory', undefined),
+      openLogDirectory: () => invoke('diagnostics:open-log-directory', undefined),
+      getLogStats: () => invoke('diagnostics:get-log-stats', undefined),
+      clearLogs: () => invoke('diagnostics:clear-logs', undefined),
+    }),
     settings: Object.freeze({
       get: () => invoke('settings:get', undefined),
       update: (patch) => invoke('settings:update', patch),

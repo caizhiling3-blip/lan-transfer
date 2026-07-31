@@ -2,6 +2,7 @@ import type {
   AppSettingsDto,
   ConnectionStatusDto,
   DeviceInfo,
+  DiagnosticsSummaryDto,
   DeviceId,
   DiscoveredDeviceDto,
   FileId,
@@ -12,6 +13,7 @@ import type {
   HistoryStatsDto,
   IncomingConnectionRequestDto,
   MessageId,
+  LogStatsDto,
   OperationResult,
   QueueItemId,
   RequestId,
@@ -127,6 +129,12 @@ export interface IpcInvokeMap {
   readonly 'history:preview-cleanup': InvokeContract<HistoryCleanupCriteriaDto, number>
   readonly 'history:cleanup': InvokeContract<HistoryCleanupCriteriaDto, number>
   readonly 'history:clear': InvokeContract<undefined, undefined>
+  readonly 'diagnostics:get-summary': InvokeContract<undefined, DiagnosticsSummaryDto>
+  readonly 'diagnostics:export-report': InvokeContract<undefined, boolean>
+  readonly 'diagnostics:open-data-directory': InvokeContract<undefined, undefined>
+  readonly 'diagnostics:open-log-directory': InvokeContract<undefined, undefined>
+  readonly 'diagnostics:get-log-stats': InvokeContract<undefined, LogStatsDto>
+  readonly 'diagnostics:clear-logs': InvokeContract<undefined, number>
   readonly 'settings:get': InvokeContract<undefined, AppSettingsDto>
   readonly 'settings:update': InvokeContract<
     {

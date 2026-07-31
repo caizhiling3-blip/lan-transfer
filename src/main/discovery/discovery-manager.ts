@@ -84,6 +84,10 @@ export class DiscoveryManager {
     return this.registry.list()
   }
 
+  public isRunning(): boolean {
+    return this.socket !== null
+  }
+
   public subscribe(listener: DiscoveryListener): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
