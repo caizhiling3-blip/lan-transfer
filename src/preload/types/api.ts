@@ -39,6 +39,20 @@ export interface LanTransferApi {
     onStateChanged(listener: EventListener<'connection:state-changed'>): Unsubscribe
     onIncomingRequest(listener: EventListener<'connection:incoming-request'>): Unsubscribe
   }
+  readonly pairing: {
+    getPending(): Promise<IpcInvokeResponse<'pairing:get-pending'>>
+    respond(
+      requestId: RequestId,
+      decision: 'accept' | 'reject',
+    ): Promise<IpcInvokeResponse<'pairing:respond'>>
+    onChanged(listener: EventListener<'pairing:changed'>): Unsubscribe
+  }
+  readonly trustedDevices: {
+    list(): Promise<IpcInvokeResponse<'trusted-devices:list'>>
+    revoke(deviceId: DeviceId): Promise<IpcInvokeResponse<'trusted-devices:revoke'>>
+    clear(): Promise<IpcInvokeResponse<'trusted-devices:clear'>>
+    onChanged(listener: EventListener<'trusted-devices:changed'>): Unsubscribe
+  }
   readonly recentDevices: {
     list(): Promise<IpcInvokeResponse<'recent-devices:list'>>
     updateAlias(

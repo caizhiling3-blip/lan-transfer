@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useConnectionStore } from './stores/connection'
 import { useFileTransferStore } from './stores/file-transfer'
+import { useSecurityStore } from './stores/security'
 import ThemeToggle from './components/ThemeToggle.vue'
 import linduLogo from '../../build/icon.svg?no-inline'
 import HomeView from './views/HomeView.vue'
@@ -17,12 +18,54 @@ type PageKey = 'home' | 'transfer' | 'history' | 'diagnostics' | 'settings'
 const activePage = ref<PageKey>('home')
 const connectionStore = useConnectionStore()
 const fileTransferStore = useFileTransferStore()
+const securityStore = useSecurityStore()
 const activeApprovalRequestId = ref<string | null>(null)
+const activePairingRequestId = ref<string | null>(null)
+
+const formatShortFingerprint = (fingerprint: string): string =>
+  (fingerprint.slice(0, 24).match(/.{1,4}/gu) ?? []).join(' ')
 
 watch(
   () => fileTransferStore.incomingOffer,
   (offer) => {
     if (offer !== null) activePage.value = 'transfer'
+  },
+)
+
+watch(
+  () => securityStore.pendingPairing,
+  (request) => {
+    if (request === null) {
+      if (activePairingRequestId.value !== null) {
+        ElMessageBox.close()
+        activePairingRequestId.value = null
+      }
+      return
+    }
+    if (activePairingRequestId.value === request.requestId) return
+    if (activePairingRequestId.value !== null) ElMessageBox.close()
+    activePairingRequestId.value = request.requestId
+    const message = h('div', { class: 'pairing-confirmation' }, [
+      h('p', `${request.peer.deviceName} 正在与本机建立安全连接。`),
+      h('p', '请确认两台设备显示的六位验证码完全一致：'),
+      h('strong', { class: 'pairing-code' }, request.verificationCode),
+      h('small', `设备指纹：${formatShortFingerprint(request.peerFingerprint)}`),
+    ])
+    void ElMessageBox.confirm(message, '安全配对', {
+      confirmButtonText: '验证码一致',
+      cancelButtonText: '拒绝配对',
+      type: 'warning',
+      distinguishCancelAndClose: true,
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
+      .then(() => securityStore.respond(request.requestId, 'accept'))
+      .catch(() => securityStore.respond(request.requestId, 'reject'))
+      .finally(() => {
+        if (activePairingRequestId.value === request.requestId) {
+          activePairingRequestId.value = null
+        }
+      })
   },
 )
 
@@ -58,11 +101,13 @@ watch(
 
 onMounted(() => {
   void connectionStore.initialize()
+  void securityStore.initialize()
   fileTransferStore.initialize()
 })
 
 onBeforeUnmount(() => {
   connectionStore.dispose()
+  securityStore.dispose()
   fileTransferStore.dispose()
 })
 </script>

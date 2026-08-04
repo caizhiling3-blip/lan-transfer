@@ -8,6 +8,8 @@ v3 握手使用 `secure:hello`、`secure:challenge` 和 `secure:proof`，严格�
 
 shared 已定义配对决定、带 SHA-256/固定块大小/块数的文件 offer、暂停、续传查询、接收端 verified range 状态，以及 HTTP 加密块描述。schema 只做无状态结构和边界校验；公钥 DER 解析、指纹对应关系、签名、sequence、块数与大小一致性、range 排序/不重叠和任务状态顺序由后续主进程安全状态机验证。
 
+阶段 3 已实现 X25519 共享秘密和 transcript confirmation key 派生、六位验证码以及双端确认状态机。验证码由 confirmation key 通过带固定上下文的 HMAC-SHA-256 派生，只用于用户核对，不作为会话密钥。配对 IPC 使用不透明 requestId，renderer 只能接受或拒绝当前请求；只有主进程收到双方对同一请求的接受后才写可信记录。网络上的 `secure:*` 握手和加密 `pairing:decision` 将在阶段 4 一起启用，当前 v2 帧不会携带验证码或伪装成安全配对。
+
 协议 v2 与 v3 使用独立 parser。v3 正式启用后不得把失败的 v3 握手回退为 v2；旧版本只获得明确的 `PROTOCOL_INVALID`，不会进入业务消息阶段。
 
 ## 版本与传输

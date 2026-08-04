@@ -224,6 +224,21 @@ describe('IPC request schemas', () => {
     expect(() => parseIpcInvokeRequest('recent-devices:remove', { deviceId })).not.toThrow()
   })
 
+  it('validates pairing and trusted device management requests', () => {
+    const deviceId = '11111111-1111-4111-8111-111111111111'
+    const requestId = '22222222-2222-4222-8222-222222222222'
+    expect(() => parseIpcInvokeRequest('pairing:get-pending', undefined)).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('pairing:respond', { requestId, decision: 'accept' }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('pairing:respond', { requestId, decision: 'later' }),
+    ).toThrow()
+    expect(() => parseIpcInvokeRequest('trusted-devices:list', undefined)).not.toThrow()
+    expect(() => parseIpcInvokeRequest('trusted-devices:revoke', { deviceId })).not.toThrow()
+    expect(() => parseIpcInvokeRequest('trusted-devices:clear', { all: true })).toThrow()
+  })
+
   it('does not accept paths or parameters for diagnostics operations', () => {
     for (const channel of [
       'diagnostics:get-summary',

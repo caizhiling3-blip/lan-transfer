@@ -2,7 +2,12 @@ import ElectronStore from 'electron-store'
 
 import { MAX_TRUSTED_DEVICES } from '@shared/constants'
 import { publicIdentitySchema } from '@shared/protocols'
-import type { DeviceId, PublicIdentityDto, TrustedDeviceDto } from '@shared/types'
+import type {
+  DeviceId,
+  PublicIdentityDto,
+  TrustedDeviceDto,
+  TrustedDeviceSummaryDto,
+} from '@shared/types'
 
 import { calculateIdentityFingerprint } from './identity-store'
 import { trustedDevicesStoreSchema, type TrustedDevicesStoreData } from './secure-store-schemas'
@@ -32,6 +37,15 @@ export class TrustedDevicesStore {
 
   public list(): readonly TrustedDeviceDto[] {
     return [...this.store.get('devices')]
+  }
+
+  public listSummaries(): readonly TrustedDeviceSummaryDto[] {
+    return this.list().map((device) => ({
+      deviceId: device.deviceId,
+      fingerprint: device.identity.fingerprint,
+      firstPairedAt: device.firstPairedAt,
+      lastVerifiedAt: device.lastVerifiedAt,
+    }))
   }
 
   public get(deviceId: DeviceId): TrustedDeviceDto | null {

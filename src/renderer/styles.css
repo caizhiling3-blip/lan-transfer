@@ -265,6 +265,32 @@ body {
   letter-spacing: 0.14em;
 }
 
+.pairing-confirmation {
+  display: grid;
+  gap: 10px;
+}
+
+.pairing-confirmation p {
+  margin: 0;
+}
+
+.pairing-confirmation .pairing-code {
+  display: block;
+  padding: 12px;
+  border: 1px solid var(--app-primary);
+  border-radius: 10px;
+  background: var(--app-primary-soft);
+  color: var(--app-text);
+  font-size: 30px;
+  letter-spacing: 8px;
+  text-align: center;
+}
+
+.pairing-confirmation small {
+  color: var(--app-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 .main-content .el-card {
   border-color: var(--app-border);
   border-radius: 14px;

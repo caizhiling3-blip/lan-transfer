@@ -126,6 +126,13 @@ describe('trusted device storage', () => {
       lastVerifiedAt: 200,
       identity,
     })
+    expect(new TrustedDevicesStore(directory).listSummaries()[0]).toEqual({
+      deviceId: firstDeviceId,
+      fingerprint: identity.fingerprint,
+      firstPairedAt: 100,
+      lastVerifiedAt: 200,
+    })
+    expect(new TrustedDevicesStore(directory).listSummaries()[0]).not.toHaveProperty('identity')
   })
 
   it('refuses an identity change without replacing the trusted record', async () => {

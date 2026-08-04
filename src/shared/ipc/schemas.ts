@@ -158,6 +158,13 @@ export const ipcInvokeRequestSchemas = {
   'connection:connect': connectRequestSchema,
   'connection:disconnect': noRequestSchema,
   'connection:respond-to-request': respondToConnectionRequestSchema,
+  'pairing:get-pending': noRequestSchema,
+  'pairing:respond': z
+    .object({ requestId: requestIdSchema, decision: z.enum(['accept', 'reject']) })
+    .strict(),
+  'trusted-devices:list': noRequestSchema,
+  'trusted-devices:revoke': z.object({ deviceId: deviceIdSchema }).strict(),
+  'trusted-devices:clear': noRequestSchema,
   'recent-devices:list': noRequestSchema,
   'recent-devices:update-alias': z
     .object({ deviceId: deviceIdSchema, alias: recentDeviceAliasSchema.nullable() })

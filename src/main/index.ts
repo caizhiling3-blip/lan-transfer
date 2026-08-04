@@ -9,12 +9,14 @@ import {
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
   DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL,
   FILE_OFFER_RECEIVED_EVENT_CHANNEL,
+  PAIRING_CHANGED_EVENT_CHANNEL,
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   SETTINGS_CHANGED_EVENT_CHANNEL,
   TEXT_RECEIVED_EVENT_CHANNEL,
   TEXT_TASK_CHANGED_EVENT_CHANNEL,
   TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL,
   TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
+  TRUSTED_DEVICES_CHANGED_EVENT_CHANNEL,
 } from '@shared/ipc'
 
 import { createMainWindow, DeviceIdentity, TransferNotificationCoordinator } from './app'
@@ -33,6 +35,7 @@ import {
   registerDiscoveryIpcHandlers,
   registerDiagnosticsIpcHandlers,
   registerFoundationIpcHandlers,
+  registerPairingIpcHandlers,
   registerFileTransferIpcHandlers,
   registerRuntimeIpcHandlers,
   registerServiceIpcHandlers,
@@ -42,6 +45,7 @@ import {
 import { ServiceManager } from './server'
 import { DiagnosticsService, getDiagnosticsPlatform } from './diagnostics'
 import { getActiveLogFilePath, initializeLogger, logger, LogLifecycle } from './logger'
+import { PairingCoordinator } from './pairing'
 import {
   HistoryStore,
   IdentityStore,
@@ -128,6 +132,7 @@ void app.whenReady().then(() => {
   const recentDevices = new RecentDevicesStore(app.getPath('userData'))
   const identityStore = new IdentityStore(app.getPath('userData'), safeStorage)
   const trustedDevices = new TrustedDevicesStore(app.getPath('userData'))
+  const pairingCoordinator = new PairingCoordinator(trustedDevices)
   logger.info('secure_identity_ready', { trustedDeviceCount: trustedDevices.list().length })
   const logLifecycle = new LogLifecycle(app.getPath('logs'), getActiveLogFilePath)
   const sessionHistory = new SessionHistory(
@@ -236,6 +241,12 @@ void app.whenReady().then(() => {
   registerServiceIpcHandlers(() => mainWindow, activeServiceManager, settingsStore)
   registerRuntimeIpcHandlers(() => mainWindow, deviceIdentity, activeServiceManager)
   registerConnectionIpcHandlers(() => mainWindow, activeConnectionManager, recentDevices)
+  registerPairingIpcHandlers(
+    () => mainWindow,
+    pairingCoordinator,
+    trustedDevices,
+    () => sendToRenderer(TRUSTED_DEVICES_CHANGED_EVENT_CHANNEL, trustedDevices.listSummaries()),
+  )
   registerDiscoveryIpcHandlers(() => mainWindow, activeDiscoveryManager)
   registerDiagnosticsIpcHandlers(() => mainWindow, diagnosticsService)
   registerTextIpcHandlers(
@@ -306,6 +317,25 @@ void app.whenReady().then(() => {
   const loggedTaskStatuses = new Map<string, string>()
   applicationUnsubscribers = [
     () => identityStore.shutdown(),
+    () => pairingCoordinator.shutdown(),
+    pairingCoordinator.subscribeRequests((request) => {
+      logger.info('device_pairing_requested', {
+        requestId: request.requestId,
+        peerDeviceId: request.peer.deviceId,
+      })
+      sendToRenderer(PAIRING_CHANGED_EVENT_CHANNEL, request)
+    }),
+    pairingCoordinator.subscribeCompletions((completion) => {
+      logger.info('device_pairing_completed', {
+        requestId: completion.requestId,
+        outcome: completion.outcome,
+        errorCode: completion.errorCode,
+      })
+      sendToRenderer(PAIRING_CHANGED_EVENT_CHANNEL, null)
+      if (completion.outcome === 'paired') {
+        sendToRenderer(TRUSTED_DEVICES_CHANGED_EVENT_CHANNEL, trustedDevices.listSummaries())
+      }
+    }),
     settingsStore.subscribe((settings) => {
       sendToRenderer(SETTINGS_CHANGED_EVENT_CHANNEL, settings)
       void logLifecycle.cleanupExpired(settings.logRetentionDays).catch((error: unknown) => {

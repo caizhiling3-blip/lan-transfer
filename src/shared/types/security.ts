@@ -15,7 +15,7 @@ export interface PublicIdentityDto {
 export interface PairingRequestDto {
   readonly requestId: RequestId
   readonly peer: DeviceInfo
-  readonly peerIdentity: PublicIdentityDto
+  readonly peerFingerprint: string
   readonly verificationCode: string
   readonly expiresAt: number
 }
@@ -23,6 +23,13 @@ export interface PairingRequestDto {
 export interface TrustedDeviceDto {
   readonly deviceId: DeviceId
   readonly identity: PublicIdentityDto
+  readonly firstPairedAt: number
+  readonly lastVerifiedAt: number
+}
+
+export interface TrustedDeviceSummaryDto {
+  readonly deviceId: DeviceId
+  readonly fingerprint: string
   readonly firstPairedAt: number
   readonly lastVerifiedAt: number
 }

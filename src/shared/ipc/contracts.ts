@@ -15,6 +15,7 @@ import type {
   MessageId,
   LogStatsDto,
   OperationResult,
+  PairingRequestDto,
   QueueItemId,
   RequestId,
   RecentDeviceDto,
@@ -28,6 +29,7 @@ import type {
   TransferTaskDto,
   TransferQueueItemDto,
   TextTransferTaskDto,
+  TrustedDeviceSummaryDto,
 } from '../types'
 
 interface InvokeContract<TRequest, TResponse> {
@@ -50,6 +52,17 @@ export interface IpcInvokeMap {
     { readonly requestId: RequestId; readonly decision: 'accept' | 'reject' },
     ConnectionStatusDto
   >
+  readonly 'pairing:get-pending': InvokeContract<undefined, PairingRequestDto | null>
+  readonly 'pairing:respond': InvokeContract<
+    { readonly requestId: RequestId; readonly decision: 'accept' | 'reject' },
+    undefined
+  >
+  readonly 'trusted-devices:list': InvokeContract<undefined, readonly TrustedDeviceSummaryDto[]>
+  readonly 'trusted-devices:revoke': InvokeContract<
+    { readonly deviceId: DeviceId },
+    readonly TrustedDeviceSummaryDto[]
+  >
+  readonly 'trusted-devices:clear': InvokeContract<undefined, undefined>
   readonly 'recent-devices:list': InvokeContract<undefined, readonly RecentDeviceDto[]>
   readonly 'recent-devices:update-alias': InvokeContract<
     { readonly deviceId: DeviceId; readonly alias: string | null },
@@ -182,6 +195,8 @@ export interface IpcEventMap {
   readonly 'service:status-changed': ServiceStatusDto
   readonly 'connection:state-changed': ConnectionStatusDto
   readonly 'connection:incoming-request': IncomingConnectionRequestDto
+  readonly 'pairing:changed': PairingRequestDto | null
+  readonly 'trusted-devices:changed': readonly TrustedDeviceSummaryDto[]
   readonly 'transfer:task-changed': TransferTaskDto
   readonly 'transfer:queue-changed': readonly TransferQueueItemDto[]
   readonly 'transfer:text-task-changed': TextTransferTaskDto

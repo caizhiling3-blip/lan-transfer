@@ -7,6 +7,11 @@ export const IPC_INVOKE_CHANNELS = [
   'connection:connect',
   'connection:disconnect',
   'connection:respond-to-request',
+  'pairing:get-pending',
+  'pairing:respond',
+  'trusted-devices:list',
+  'trusted-devices:revoke',
+  'trusted-devices:clear',
   'recent-devices:list',
   'recent-devices:update-alias',
   'recent-devices:remove',
@@ -47,6 +52,8 @@ export const IPC_INVOKE_CHANNELS = [
 export const SERVICE_STATUS_CHANGED_EVENT_CHANNEL = 'service:status-changed' as const
 export const CONNECTION_STATE_CHANGED_EVENT_CHANNEL = 'connection:state-changed' as const
 export const CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL = 'connection:incoming-request' as const
+export const PAIRING_CHANGED_EVENT_CHANNEL = 'pairing:changed' as const
+export const TRUSTED_DEVICES_CHANGED_EVENT_CHANNEL = 'trusted-devices:changed' as const
 export const TEXT_RECEIVED_EVENT_CHANNEL = 'transfer:text-received' as const
 export const TRANSFER_TASK_CHANGED_EVENT_CHANNEL = 'transfer:task-changed' as const
 export const TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL = 'transfer:queue-changed' as const
@@ -59,6 +66,8 @@ export const IPC_EVENT_CHANNELS = [
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
+  PAIRING_CHANGED_EVENT_CHANNEL,
+  TRUSTED_DEVICES_CHANGED_EVENT_CHANNEL,
   TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
   TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL,
   TEXT_TASK_CHANGED_EVENT_CHANNEL,

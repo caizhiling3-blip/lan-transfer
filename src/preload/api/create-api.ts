@@ -63,6 +63,17 @@ export const createLanTransferApi = (): LanTransferApi => {
       onStateChanged: (listener) => subscribe('connection:state-changed', listener),
       onIncomingRequest: (listener) => subscribe('connection:incoming-request', listener),
     }),
+    pairing: Object.freeze({
+      getPending: () => invoke('pairing:get-pending', undefined),
+      respond: (requestId, decision) => invoke('pairing:respond', { requestId, decision }),
+      onChanged: (listener) => subscribe('pairing:changed', listener),
+    }),
+    trustedDevices: Object.freeze({
+      list: () => invoke('trusted-devices:list', undefined),
+      revoke: (deviceId) => invoke('trusted-devices:revoke', { deviceId }),
+      clear: () => invoke('trusted-devices:clear', undefined),
+      onChanged: (listener) => subscribe('trusted-devices:changed', listener),
+    }),
     recentDevices: Object.freeze({
       list: () => invoke('recent-devices:list', undefined),
       updateAlias: (deviceId, alias) => invoke('recent-devices:update-alias', { deviceId, alias }),

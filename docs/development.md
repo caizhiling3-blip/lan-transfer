@@ -218,3 +218,5 @@ v0.4.0 按 [安全配对与可恢复传输设计](v0.4.0.md) 的阶段 0–10 �
 阶段 1 不新增依赖。shared 增加独立的协议 v3 握手、加密 envelope、配对决定、安全文件元数据、加密块、暂停和续传状态 schema，以及身份/可信设备/恢复任务 DTO、常量和稳定错误码。运行时 `PROTOCOL_VERSION` 暂时保持 2，直到阶段 4 完成认证和 AEAD 接入；这避免未加密实现提前宣称 v3。结构 schema 与后续有状态签名、序号、块范围和任务顺序校验保持明确边界。
 
 阶段 2 不新增依赖。`IdentityStore` 首次启动生成 Ed25519 公私钥，公开身份保存 SPKI DER 与 SHA-256 指纹，PKCS#8 私钥必须先由 Electron `safeStorage` 加密。应用启动时重新计算指纹、解密私钥并推导公钥进行匹配；安全存储不可用、数据损坏或密钥不匹配时失败关闭，不备份后静默换钥。`TrustedDevicesStore` 以 deviceId 保存公开身份和首次/最后验证时间；同一 deviceId 出现不同公钥时返回 `IDENTITY_MISMATCH`，只有显式取消信任后才能建立新记录。阶段 3 才把身份与连接配对流程和 UI 接通。
+
+阶段 3 不新增依赖。主进程使用 Node `crypto` 生成每次连接独立的 X25519 临时密钥和 32 字节 nonce，以固定字段顺序序列化握手 transcript，再通过 HKDF-SHA-256 派生 transcript confirmation key 和双方一致的六位验证码。`PairingCoordinator` 只在本机与对端都接受同一 requestId 后写入可信记录；拒绝、两分钟超时、断开或身份冲突都不写信任。Preload 新增具名配对/可信设备 IPC，renderer 只取得设备信息、短指纹和验证码，不取得身份公钥。设置页可以逐台或全部取消信任。阶段 3 先完成可测试的密码学、状态机与审批 UI；现有网络仍运行 v2，阶段 4 将 Ed25519 transcript 验证、配对决定和 AEAD envelope 原子接入 WebSocket 后才切换 v3。
