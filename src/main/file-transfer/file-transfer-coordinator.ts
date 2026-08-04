@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { lstat, open, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 import {
+  DEFAULT_FILE_CHUNK_SIZE_BYTES,
   MAX_FILES_PER_TRANSFER,
   MAX_IN_MEMORY_TRANSFER_TASKS,
   TRANSFER_IDLE_TIMEOUT_MS,
@@ -17,7 +18,7 @@ import {
 } from '@shared/constants'
 import type { ErrorCode } from '@shared/errors'
 import type { FileOfferReceivedDto } from '@shared/ipc'
-import type { FileAcceptMessage } from '@shared/protocols'
+import type { FileAcceptMessage, SecureFileMetadata } from '@shared/protocols'
 import { fileIdSchema, transferIdSchema } from '@shared/types'
 import type {
   ConnectionId,
@@ -33,6 +34,7 @@ import type { SessionHistory } from '../storage'
 import { assertSafeReceiveDirectory, assertSufficientDiskSpace } from '../security'
 import type { ConnectionManager, FileControlMessage } from '../websocket'
 import type { AuthorizedSourceFile } from './file-access-registry'
+import { calculateAuthorizedFileSha256 } from './file-hash'
 import { mapFileError, publishTemporaryFile } from './file-system'
 import {
   calculateFinishedStatus,
@@ -55,6 +57,7 @@ interface OutgoingTransfer {
   readonly sources: readonly AuthorizedSourceFile[]
   readonly authorizations: Map<FileId, string>
   readonly remoteProgress: Map<FileId, number>
+  readonly expectedDigests: Map<FileId, string>
   readonly cancelledFiles: Set<FileId>
   cancelAll: boolean
   activeFileId?: FileId
@@ -64,7 +67,7 @@ interface OutgoingTransfer {
 }
 
 interface IncomingFileState {
-  readonly metadata: FileMetadata
+  readonly metadata: SecureFileMetadata
   uploadToken?: string
   tokenExpiresAt?: number
   tokenUsed: boolean
@@ -98,6 +101,13 @@ const normalizeRemoteAddress = (address: string | undefined): string => {
   if (address === undefined) return ''
   return address.startsWith('::ffff:') ? address.slice(7) : address
 }
+
+const toFileMetadata = (file: SecureFileMetadata): FileMetadata => ({
+  fileId: file.fileId,
+  displayName: file.displayName,
+  size: file.size,
+  mimeType: file.mimeType,
+})
 
 export class FileTransferCoordinator {
   private readonly outgoing = new Map<TransferId, OutgoingTransfer>()
@@ -148,7 +158,7 @@ export class FileTransferCoordinator {
     return {
       transferId: transfer.task.transferId,
       peer: transfer.task.peer,
-      files: [...transfer.files.values()].map(({ metadata }) => metadata),
+      files: [...transfer.files.values()].map(({ metadata }) => toFileMetadata(metadata)),
       receivedAt: transfer.task.createdAt,
     }
   }
@@ -367,10 +377,41 @@ export class FileTransferCoordinator {
       task: createTask(transferId, 'send', peer, files),
       authorizations: new Map(),
       remoteProgress: new Map(),
+      expectedDigests: new Map(),
       cancelledFiles: new Set(),
       cancelAll: false,
     }
     this.outgoing.set(transferId, transfer)
+    const secureFiles: SecureFileMetadata[] = []
+    try {
+      for (const source of sources) {
+        const sha256 = await calculateAuthorizedFileSha256({
+          path: source.path,
+          size: source.selection.size,
+          ...(source.identity === undefined ? {} : { identity: source.identity }),
+        })
+        const secureFile: SecureFileMetadata = {
+          fileId: source.selection.fileId,
+          displayName: source.selection.displayName,
+          size: source.selection.size,
+          mimeType: source.selection.mimeType,
+          sha256,
+          chunkSize: DEFAULT_FILE_CHUNK_SIZE_BYTES,
+          chunkCount: Math.ceil(source.selection.size / DEFAULT_FILE_CHUNK_SIZE_BYTES),
+        }
+        secureFiles.push(secureFile)
+        transfer.expectedDigests.set(secureFile.fileId, sha256)
+      }
+    } catch (error) {
+      transfer.task = updateAllNonTerminalFiles(
+        transfer.task,
+        'failed',
+        'failed',
+        mapFileError(error),
+      )
+      this.finishTask(transfer.task)
+      return transfer.task
+    }
     transfer.offerTimeout = this.createOfferTimeout(() => {
       this.failWholeOutgoing(transfer, 'TRANSFER_TIMEOUT')
       const firstFile = transfer.task.files[0]
@@ -378,7 +419,7 @@ export class FileTransferCoordinator {
         void this.connectionManager.sendFileError(transferId, firstFile.fileId, 'TRANSFER_TIMEOUT')
       }
     })
-    if (!(await this.connectionManager.sendFileOffer(transferId, files))) {
+    if (!(await this.connectionManager.sendFileOffer(transferId, secureFiles))) {
       transfer.task = updateAllNonTerminalFiles(
         transfer.task,
         'failed',
@@ -458,7 +499,7 @@ export class FileTransferCoordinator {
     }
   }
 
-  private handleOffer(transferId: TransferId, files: readonly FileMetadata[]): void {
+  private handleOffer(transferId: TransferId, files: readonly SecureFileMetadata[]): void {
     const peer = this.connectionManager.getPeer()
     const connectionId = this.connectionManager.getStatus().connectionId
     if (peer === null || connectionId === undefined || files.length === 0) return
@@ -473,7 +514,7 @@ export class FileTransferCoordinator {
     const oversizedFile = files.find((file) => file.size > this.getMaximumFileSize())
     if (oversizedFile !== undefined) {
       const rejectedTask = updateAllNonTerminalFiles(
-        createTask(transferId, 'receive', peer, files),
+        createTask(transferId, 'receive', peer, files.map(toFileMetadata)),
         'failed',
         'failed',
         'FILE_TOO_LARGE',
@@ -502,7 +543,7 @@ export class FileTransferCoordinator {
       return
     }
     const transfer: IncomingTransfer = {
-      task: createTask(transferId, 'receive', peer, files),
+      task: createTask(transferId, 'receive', peer, files.map(toFileMetadata)),
       files: new Map(
         files.map((metadata) => [metadata.fileId, { metadata, tokenUsed: false }] as const),
       ),
@@ -620,6 +661,9 @@ export class FileTransferCoordinator {
       if (transfer.cancelAll || transfer.cancelledFiles.has(fileId)) {
         throw new Error('TRANSFER_CANCELLED')
       }
+      const expectedDigest = transfer.expectedDigests.get(fileId)
+      if (expectedDigest === undefined) throw new Error('PROTOCOL_INVALID')
+      const uploadHash = createHash('sha256')
       const activeSourceHandle = sourceHandle
       await new Promise<void>((resolveResponse, rejectResponse) => {
         let uploadedBytes = 0
@@ -651,6 +695,7 @@ export class FileTransferCoordinator {
         uploadRequest.once('error', rejectResponse)
         const source = activeSourceHandle.createReadStream()
         source.on('data', (chunk) => {
+          uploadHash.update(chunk)
           uploadedBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength
           const current = transfer.task.files.find((file) => file.fileId === fileId)
           if (current === undefined) return
@@ -671,6 +716,7 @@ export class FileTransferCoordinator {
         })
         void pipeline(source, uploadRequest).catch(rejectResponse)
       })
+      if (uploadHash.digest('hex') !== expectedDigest) throw new Error('SOURCE_FILE_CHANGED')
       this.completeOutgoingFile(transfer, fileId)
       return 'completed'
     } catch (error) {
@@ -710,10 +756,12 @@ export class FileTransferCoordinator {
       const safeDirectoryPath = await assertSafeReceiveDirectory(directoryPath)
       await assertSufficientDiskSpace(safeDirectoryPath, file.metadata.size)
       const output = createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 })
+      const receivedHash = createHash('sha256')
       let receivedBytes = 0
       let lastUpdateAt = 0
       let lastProgressMessageAt = 0
       request.on('data', (chunk: Buffer) => {
+        receivedHash.update(chunk)
         receivedBytes += chunk.byteLength
         if (receivedBytes > file.metadata.size) {
           file.failureOverride = 'PROTOCOL_INVALID'
@@ -745,6 +793,9 @@ export class FileTransferCoordinator {
       })
       await pipeline(request, output)
       if (receivedBytes !== file.metadata.size) throw new Error('TRANSFER_FAILED')
+      if (receivedHash.digest('hex') !== file.metadata.sha256) {
+        throw new Error('FILE_INTEGRITY_FAILED')
+      }
       file.publishedPath = await publishTemporaryFile(
         temporaryPath,
         directoryPath,
@@ -772,6 +823,7 @@ export class FileTransferCoordinator {
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined)
       delete file.temporaryPath
+      delete file.abortUpload
       const errorCode = file.failureOverride ?? mapFileError(error)
       if (errorCode === 'TRANSFER_CANCELLED') {
         transfer.task = updateFile(

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { link, lstat, mkdir, open, rm, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -7,6 +7,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 import {
+  DEFAULT_FILE_CHUNK_SIZE_BYTES,
   FOLDER_TRANSFER_TIMEOUT_MS,
   MAX_FOLDER_MANIFEST_CHUNK_BYTES,
   MAX_FOLDER_MANIFEST_CHUNKS,
@@ -19,6 +20,7 @@ import {
 } from '@shared/constants'
 import type { ErrorCode } from '@shared/errors'
 import type { FolderOfferReceivedDto } from '@shared/ipc'
+import type { FolderManifestMessage } from '@shared/protocols'
 import { fileIdSchema, manifestIdSchema, transferIdSchema } from '@shared/types'
 import type {
   ConnectionId,
@@ -38,6 +40,7 @@ import type { SessionHistory } from '../storage'
 import type { ConnectionManager, FolderControlMessage } from '../websocket'
 import type { AuthorizedSourceFolder } from './file-access-registry'
 import type { AuthorizedFolderFile } from './folder-scanner'
+import { calculateAuthorizedFileSha256 } from './file-hash'
 import { mapFileError } from './file-system'
 import {
   assertFolderManifestChunkAllowed,
@@ -55,14 +58,21 @@ export interface FolderAccessAdapter {
   resolveReceiveDirectory(directoryToken?: string): Promise<string>
 }
 
+type SecureFolderManifestFile = FolderManifestMessage['payload']['files'][number]
+
+interface SecureFolderManifestContents extends Omit<FolderManifestContents, 'files'> {
+  readonly files: readonly SecureFolderManifestFile[]
+}
+
 interface ManifestChunk {
-  readonly files: FolderManifestContents['files']
+  readonly files: SecureFolderManifestContents['files']
   readonly emptyDirectories: readonly string[]
 }
 
 interface OutgoingFolderTransfer {
   task: TransferTaskDto
   readonly source: AuthorizedSourceFolder
+  readonly manifest: SecureFolderManifestContents
   readonly manifestId: ManifestId
   readonly manifestSha256: string
   readonly chunks: readonly ManifestChunk[]
@@ -77,7 +87,7 @@ interface OutgoingFolderTransfer {
 }
 
 interface IncomingFolderFile {
-  readonly manifest: FolderManifestContents['files'][number]
+  readonly manifest: SecureFolderManifestFile
   tokenUsed: boolean
   temporaryPath?: string
   abortUpload?: () => void
@@ -92,7 +102,7 @@ interface IncomingFolderTransfer {
   readonly offer: Extract<FolderControlMessage, { type: 'folder:offer' }>['payload']
   readonly chunks: Map<number, ManifestChunk>
   readonly files: Map<FileId, IncomingFolderFile>
-  manifest?: FolderManifestContents
+  manifest?: SecureFolderManifestContents
   receiveDirectory?: string
   stagingRoot?: string
   uploadKey?: string
@@ -141,9 +151,9 @@ const resolveManifestPath = (stagingRoot: string, portablePath: string): string 
   return candidate
 }
 
-const buildManifestChunks = (manifest: FolderManifestContents): readonly ManifestChunk[] => {
+const buildManifestChunks = (manifest: SecureFolderManifestContents): readonly ManifestChunk[] => {
   const chunks: ManifestChunk[] = []
-  let files: FolderManifestContents['files'][number][] = []
+  let files: SecureFolderManifestFile[] = []
   let emptyDirectories: string[] = []
   const flush = (): void => {
     if (files.length === 0 && emptyDirectories.length === 0) return
@@ -330,11 +340,43 @@ export class FolderTransferCoordinator {
     if (peer === null) return null
     const transferId = transferIdSchema.parse(randomUUID())
     const manifestId = manifestIdSchema.parse(randomUUID())
-    const manifestSha256 = hashFolderManifest(source.manifest)
-    const chunks = buildManifestChunks(source.manifest)
+    let manifest: SecureFolderManifestContents
+    try {
+      const sourceByFileId = new Map(source.files.map((file) => [file.manifest.fileId, file]))
+      const files: SecureFolderManifestFile[] = []
+      for (const manifestFile of source.manifest.files) {
+        const sourceFile = sourceByFileId.get(manifestFile.fileId)
+        if (sourceFile === undefined) throw new Error('FILE_NOT_FOUND')
+        const sha256 = await calculateAuthorizedFileSha256({
+          path: sourceFile.path,
+          size: manifestFile.size,
+          identity: sourceFile.identity,
+        })
+        files.push({
+          ...manifestFile,
+          sha256,
+          chunkSize: DEFAULT_FILE_CHUNK_SIZE_BYTES,
+          chunkCount: Math.ceil(manifestFile.size / DEFAULT_FILE_CHUNK_SIZE_BYTES),
+        })
+      }
+      manifest = { ...source.manifest, files }
+    } catch (error) {
+      const failedTask = updateAllNonTerminalFiles(
+        createFolderTask(transferId, 'send', peer, source.manifest),
+        'failed',
+        'failed',
+        mapFileError(error),
+      )
+      this.emitTask(failedTask)
+      this.recordHistory(failedTask)
+      return failedTask
+    }
+    const manifestSha256 = hashFolderManifest(manifest)
+    const chunks = buildManifestChunks(manifest)
     const transfer: OutgoingFolderTransfer = {
-      task: createFolderTask(transferId, 'send', peer, source.manifest),
+      task: createFolderTask(transferId, 'send', peer, manifest),
       source,
+      manifest,
       manifestId,
       manifestSha256,
       chunks,
@@ -348,10 +390,10 @@ export class FolderTransferCoordinator {
     const offered = await this.connectionManager.sendFolderOffer({
       transferId,
       manifestId,
-      displayName: source.manifest.displayName,
-      totalSize: source.manifest.totalSize,
-      fileCount: source.manifest.files.length,
-      emptyDirectoryCount: source.manifest.emptyDirectories.length,
+      displayName: manifest.displayName,
+      totalSize: manifest.totalSize,
+      fileCount: manifest.files.length,
+      emptyDirectoryCount: manifest.emptyDirectories.length,
       manifestChunkCount: chunks.length,
       manifestSha256,
     })
@@ -619,7 +661,7 @@ export class FolderTransferCoordinator {
     if (transfer.chunks.size !== transfer.offer.manifestChunkCount) return
     try {
       const ordered = [...transfer.chunks.entries()].sort((left, right) => left[0] - right[0])
-      const manifest: FolderManifestContents = {
+      const manifest: SecureFolderManifestContents = {
         displayName: transfer.offer.displayName,
         totalSize: transfer.offer.totalSize,
         files: ordered.flatMap(([, value]) => value.files),
@@ -786,6 +828,9 @@ export class FolderTransferCoordinator {
       ) {
         throw new Error('FILE_NOT_FOUND')
       }
+      const expectedDigest = transfer.manifest.files.find((file) => file.fileId === fileId)?.sha256
+      if (expectedDigest === undefined) throw new Error('PROTOCOL_INVALID')
+      const uploadHash = createHash('sha256')
       const activeSourceHandle = sourceHandle
       await new Promise<void>((resolveResponse, rejectResponse) => {
         let uploadedBytes = 0
@@ -821,6 +866,7 @@ export class FolderTransferCoordinator {
         uploadRequest.once('error', rejectResponse)
         const source = activeSourceHandle.createReadStream()
         source.on('data', (chunk) => {
+          uploadHash.update(chunk)
           uploadedBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength
           const current = transfer.task.files.find((file) => file.fileId === fileId)
           if (current === undefined) return
@@ -841,6 +887,7 @@ export class FolderTransferCoordinator {
         })
         void pipeline(source, uploadRequest).catch(rejectResponse)
       })
+      if (uploadHash.digest('hex') !== expectedDigest) throw new Error('SOURCE_FILE_CHANGED')
       this.completeOutgoingFile(transfer, fileId)
       return 'completed'
     } catch (error) {
@@ -880,10 +927,12 @@ export class FolderTransferCoordinator {
       const targetPath = resolveManifestPath(transfer.stagingRoot, file.manifest.relativePath)
       await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 })
       const output = createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 })
+      const receivedHash = createHash('sha256')
       let receivedBytes = 0
       let lastUpdateAt = 0
       let lastProgressMessageAt = 0
       request.on('data', (chunk: Buffer) => {
+        receivedHash.update(chunk)
         receivedBytes += chunk.byteLength
         if (receivedBytes > file.manifest.size) {
           file.failureOverride = 'PROTOCOL_INVALID'
@@ -917,6 +966,9 @@ export class FolderTransferCoordinator {
       })
       await pipeline(request, output)
       if (receivedBytes !== file.manifest.size) throw new Error('TRANSFER_FAILED')
+      if (receivedHash.digest('hex') !== file.manifest.sha256) {
+        throw new Error('FILE_INTEGRITY_FAILED')
+      }
       await link(temporaryPath, targetPath)
       await unlink(temporaryPath)
       delete file.temporaryPath

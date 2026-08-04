@@ -20,7 +20,6 @@ import {
   fileCancelMessageSchema,
   fileCompleteMessageSchema,
   fileErrorMessageSchema,
-  fileOfferMessageSchema,
   fileProgressMessageSchema,
   fileRejectMessageSchema,
   folderAcceptMessageSchema,
@@ -37,6 +36,7 @@ import {
   secureChallengeMessageSchema,
   secureHelloMessageSchema,
   secureProofMessageSchema,
+  secureFileOfferMessageSchema,
   textAcknowledgementMessageSchema,
   textSendMessageSchema,
 } from '@shared/protocols'
@@ -45,7 +45,6 @@ import type {
   FileCancelMessage,
   FileCompleteMessage,
   FileErrorMessage,
-  FileOfferMessage,
   FileProgressMessage,
   FileRejectMessage,
   FolderAcceptMessage,
@@ -57,7 +56,9 @@ import type {
   FolderProgressMessage,
   FolderRejectMessage,
   PairingDecisionMessage,
+  SecureFileOfferMessage,
   SecureHelloMessage,
+  SecureFileMetadata,
 } from '@shared/protocols'
 import {
   connectionIdSchema,
@@ -70,7 +71,6 @@ import type {
   ConnectionStatusDto,
   DeviceInfo,
   FileId,
-  FileMetadata,
   IncomingConnectionRequestDto,
   MessageId,
   RequestId,
@@ -104,7 +104,7 @@ type StatusListener = (status: ConnectionStatusDto) => void
 type RequestListener = (request: IncomingConnectionRequestDto) => void
 type TextListener = (message: TextReceivedDto) => void
 export type FileControlMessage =
-  | FileOfferMessage
+  | SecureFileOfferMessage
   | FileAcceptMessage
   | FileRejectMessage
   | FileCancelMessage
@@ -277,10 +277,13 @@ export class ConnectionManager {
     return this.peer === null ? null : { ...this.peer }
   }
 
-  public sendFileOffer(transferId: TransferId, files: readonly FileMetadata[]): Promise<boolean> {
+  public sendFileOffer(
+    transferId: TransferId,
+    files: readonly SecureFileMetadata[],
+  ): Promise<boolean> {
     const localDevice = this.getLocalDevice()
     return this.sendProtocolMessage(
-      fileOfferMessageSchema.parse({
+      secureFileOfferMessageSchema.parse({
         type: 'file:offer',
         messageId: createMessageId(),
         senderId: localDevice.deviceId,
@@ -893,12 +896,30 @@ export class ConnectionManager {
       if (this.status.state !== 'connected') {
         throw new Error('Business message received before pairing completed')
       }
+      const secureFileOffer = secureFileOfferMessageSchema.safeParse(decrypted)
+      if (secureFileOffer.success) {
+        const message = secureFileOffer.data
+        if (
+          this.peer === null ||
+          message.senderId !== this.peer.deviceId ||
+          !isMessageTimestampAllowed(message.timestamp)
+        ) {
+          throw new Error('Invalid secure file offer')
+        }
+        if (this.messageDeduplicator.isDuplicate(message.messageId)) return
+        this.lastMessageAt = Date.now()
+        for (const listener of this.fileMessageListeners) listener(message)
+        return
+      }
       const message = parseProtocolMessage(decrypted)
       if (this.peer === null || message.senderId !== this.peer.deviceId) {
         throw new Error('Unexpected message sender')
       }
       if (!isConnectedProtocolMessage(message)) {
         throw new Error('Message type is not allowed while connected')
+      }
+      if (message.type === 'file:offer') {
+        throw new Error('Unprotected file metadata is forbidden')
       }
       if (!isMessageTimestampAllowed(message.timestamp)) throw new Error('Invalid timestamp')
       if (this.messageDeduplicator.isDuplicate(message.messageId)) {

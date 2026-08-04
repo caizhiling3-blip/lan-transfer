@@ -20,9 +20,10 @@ import {
 import {
   deviceInfoSchema,
   fileMetadataSchema,
-  folderManifestFileSchema,
+  sha256DigestSchema,
   timestampSchema,
 } from './schemas'
+import type { secureFolderManifestFileSchema } from './schemas'
 
 const safeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u
@@ -40,7 +41,6 @@ export const ephemeralPublicKeySchema = fixedBase64Schema(60, 44)
 export const handshakeNonceSchema = fixedBase64Schema(44, 32)
 export const handshakeSignatureSchema = fixedBase64Schema(88, 64)
 export const authenticationTagSchema = fixedBase64Schema(24, 16)
-export const sha256DigestSchema = z.string().regex(/^[0-9a-f]{64}$/u)
 export const identityFingerprintSchema = sha256DigestSchema
 export const pairingVerificationCodeSchema = z.string().regex(/^\d{6}$/u)
 
@@ -135,14 +135,10 @@ export const secureFileMetadataSchema = fileMetadataSchema
     chunkCount: z.number().int().nonnegative().max(MAX_FILE_CHUNKS),
   })
   .strict()
-
-export const secureFolderManifestFileSchema = folderManifestFileSchema
-  .extend({
-    sha256: sha256DigestSchema,
-    chunkSize: z.literal(DEFAULT_FILE_CHUNK_SIZE_BYTES),
-    chunkCount: z.number().int().nonnegative().max(MAX_FILE_CHUNKS),
-  })
-  .strict()
+  .refine(
+    ({ size, chunkSize, chunkCount }) => chunkCount === Math.ceil(size / chunkSize),
+    'Chunk count does not match file size',
+  )
 
 export const encryptedChunkDescriptorSchema = z
   .object({

@@ -1,9 +1,11 @@
 import { z } from 'zod'
 
 import {
+  DEFAULT_FILE_CHUNK_SIZE_BYTES,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
   MAX_FILE_SIZE_BYTES,
+  MAX_FILE_CHUNKS,
   MAX_FILES_PER_TRANSFER,
   MAX_FOLDER_DEPTH,
   MAX_FOLDER_EMPTY_DIRECTORIES,
@@ -260,6 +262,20 @@ export const folderManifestFileSchema = z
   })
   .strict()
 
+export const sha256DigestSchema = z.string().regex(/^[0-9a-f]{64}$/u)
+
+export const secureFolderManifestFileSchema = folderManifestFileSchema
+  .extend({
+    sha256: sha256DigestSchema,
+    chunkSize: z.literal(DEFAULT_FILE_CHUNK_SIZE_BYTES),
+    chunkCount: z.number().int().nonnegative().max(MAX_FILE_CHUNKS),
+  })
+  .strict()
+  .refine(
+    ({ size, chunkSize, chunkCount }) => chunkCount === Math.ceil(size / chunkSize),
+    'Chunk count does not match file size',
+  )
+
 export const folderOfferMessageSchema = createMessageSchema(
   'folder:offer',
   z
@@ -287,7 +303,7 @@ export const folderManifestMessageSchema = createMessageSchema(
         .int()
         .min(0)
         .max(MAX_FOLDER_MANIFEST_CHUNKS - 1),
-      files: z.array(folderManifestFileSchema).max(MAX_FOLDER_FILES),
+      files: z.array(secureFolderManifestFileSchema).max(MAX_FOLDER_FILES),
       emptyDirectories: z.array(portableRelativePathSchema).max(MAX_FOLDER_EMPTY_DIRECTORIES),
     })
     .strict(),

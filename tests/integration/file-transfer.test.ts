@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -276,7 +276,7 @@ describe('single file transfer', () => {
     await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
   })
 
-  it('rejects a selected source that is replaced or modified without changing size', async () => {
+  it('rejects content that no longer matches the encrypted offer digest', async () => {
     const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
     const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
     temporaryDirectories.push(sourceDirectory, receiveDirectory)
@@ -307,13 +307,15 @@ describe('single file transfer', () => {
     const receiverFailed = waitForStatus(receiverCoordinator, 'failed')
     await senderCoordinator.offerFiles([source.selection.selectionToken])
     const offer = await offerPromise
+    delete (source as { identity?: AuthorizedSourceFile['identity'] }).identity
     await writeFile(sourcePath, 'new!')
-    const future = new Date(Date.now() + 2_000)
-    await utimes(sourcePath, future, future)
     await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
 
-    await expect(senderFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
-    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'FILE_NOT_FOUND' })
+    await expect(senderFailed).resolves.toMatchObject({ status: 'failed' })
+    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'FILE_INTEGRITY_FAILED' })
+    await expect(readFile(join(receiveDirectory, 'same-size.txt'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 })
 

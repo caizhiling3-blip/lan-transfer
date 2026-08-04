@@ -152,6 +152,7 @@ describe('secure transfer contracts', () => {
     { ...metadata, sha256: 'invalid' },
     { ...metadata, chunkSize: 1_024 },
     { ...metadata, chunkCount: MAX_FILE_CHUNKS + 1 },
+    { ...metadata, size: DEFAULT_FILE_CHUNK_SIZE_BYTES + 1, chunkCount: 1 },
   ])('rejects malformed secure file metadata', (input) => {
     expect(secureFileMetadataSchema.safeParse(input).success).toBe(false)
   })

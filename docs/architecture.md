@@ -205,4 +205,6 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 阶段 4 的 `ConnectionManager` 只在明文握手阶段接受 `secure:hello/challenge/proof`。双方签名验证和共享秘密派生完成后，`SecureSessionCipher` 按方向持有独立 AES-256-GCM key、四字节 nonce 前缀和从 0 开始的精确单调 sequence；envelope 的版本、connectionId 与 sequence 同时作为 AAD。配对决定、心跳、断开、文字及既有文件/文件夹控制消息全部进入密文，任何明文业务消息、tag 篡改或序号重放都失败关闭。重置连接时立即清零控制 key、nonce 前缀和文件根 key 引用。HTTP 文件内容在阶段 6 前仍沿用现有流，不能仅凭控制通道加密宣称文件端到端加密。
 
+阶段 5 的 `file-hash` 使用打开后的文件句柄流式计算 SHA-256，并在计算前后复核路径条目、设备号、inode、大小和修改时间。文件 offer 使用 secure schema，文件夹 manifest 的总摘要覆盖逐文件摘要与分块参数。上传流再次计算发送内容摘要，接收流则在随机临时文件发布前计算摘要；不匹配会失败并清理临时内容。renderer、历史和日志都不取得完整摘要。阶段 6 前 HTTP 正文仍可被同网段观察，但篡改内容不能作为完整文件发布。
+
 恢复状态机以接收端已认证分块 bitmap 为事实来源，发送端只调度缺失块。最终 SHA-256 通过前 staging 永远不能发布；持久化恢复记录与路径同样使用 `safeStorage`，损坏、过期、身份变化或源文件变化时失败关闭。完整设计与威胁模型见 [v0.4.0 设计](v0.4.0.md)。

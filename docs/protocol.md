@@ -1,12 +1,12 @@
 # 通信协议
 
-> 当前运行时使用协议 v3。设备握手使用 Ed25519/X25519，proof 后的 WebSocket 控制消息使用 AES-256-GCM envelope；协议失败不会回退 v2。HTTP 文件正文将在阶段 6 切换为固定加密分块，因此当前阶段只声明控制通道加密。
+> 当前运行时使用协议 v3。设备握手使用 Ed25519/X25519，proof 后的 WebSocket 控制消息使用 AES-256-GCM envelope；协议失败不会回退 v2。文件 offer 已绑定 SHA-256，HTTP 文件正文将在阶段 6 切换为固定加密分块，因此当前阶段只声明控制通道加密与内容完整性，不声明文件内容机密性。
 
 ## 协议 v3 shared 契约
 
 v3 握手使用 `secure:hello`、`secure:challenge` 和 `secure:proof`，严格携带 Ed25519 身份公钥、X25519 临时公钥、32 字节 nonce、协议版本和 transcript 签名。握手后的 WebSocket 帧使用 `EncryptedEnvelope`，只包含版本、connectionId、单调 sequence、Base64 密文和 16 字节 AES-GCM tag。
 
-shared 已定义配对决定、带 SHA-256/固定块大小/块数的文件 offer、暂停、续传查询、接收端 verified range 状态，以及 HTTP 加密块描述。schema 只做无状态结构和边界校验；公钥 DER 解析、指纹对应关系、签名、sequence、块数与大小一致性、range 排序/不重叠和任务状态顺序由后续主进程安全状态机验证。
+shared 已定义配对决定、带 SHA-256/固定块大小/块数的文件 offer、暂停、续传查询、接收端 verified range 状态，以及 HTTP 加密块描述。schema 负责无状态结构、边界和块数/大小一致性；公钥 DER 解析、指纹对应关系、签名、sequence、range 排序/不重叠和任务状态顺序由主进程安全状态机验证。
 
 阶段 3 已实现 X25519 共享秘密和 transcript confirmation key 派生、六位验证码以及双端确认状态机。验证码由 confirmation key 通过带固定上下文的 HMAC-SHA-256 派生，只用于用户核对，不作为会话密钥。配对 IPC 使用不透明 requestId，renderer 只能接受或拒绝当前请求；只有主进程收到双方对同一请求的接受后才写可信记录。
 
@@ -92,7 +92,7 @@ interface DiscoveryAnnouncement {
 
 ## HTTP 上传
 
-阶段 4 已加密文件 offer、接受、进度、完成和错误等 WebSocket 控制消息，但下述现有 HTTP 文件正文仍是明文流。阶段 6 将其替换为协议 v3 固定加密分块；在此之前不能把控制通道安全等同于文件内容端到端加密。
+阶段 5 的 `file:offer` 必须携带逐文件小写十六进制 SHA-256、固定块大小和与文件大小一致的块数。发送端在 offer 前与实际上传时分别流式计算摘要；接收端在临时文件关闭后复算摘要，大小或摘要不一致时返回 `FILE_INTEGRITY_FAILED` 并删除临时文件。摘要不进入 renderer DTO。HTTP 文件正文当前仍是明文流，阶段 6 将其替换为协议 v3 固定加密分块；在此之前不能把完整性保护等同于文件内容端到端加密。
 
 接收方接受文件后，发送方逐文件调用：
 
@@ -121,7 +121,7 @@ Content-Length: <accepted-file-size>
 
 阶段 6 的串行队列是本机主进程调度能力，不新增或改变网络消息。队列逐项调用既有 text、file 或 folder 流程；下一项只有在上一项收到确认并进入终态后才开始，因此对端看到的仍是独立、可准确失败和重试的协议任务。
 
-阶段 8 强制 manifest 的文件路径和空目录路径分别严格升序。接收端在保存每个分片前限制其编码内容为 96 KiB，并持续校验累计条目、累计文件大小和 2 MiB 部分 manifest；除“完全空文件夹的唯一分片”外拒绝空分片。完整 manifest 仍必须与 offer 的数量、总大小和 SHA-256 完全一致。终态 folder transferId 在有界 24 小时窗口内拒绝再次作为 offer 使用。
+阶段 8 强制 manifest 的文件路径和空目录路径分别严格升序。接收端在保存每个分片前限制其编码内容为 96 KiB，并持续校验累计条目、累计文件大小和 2 MiB 部分 manifest；除“完全空文件夹的唯一分片”外拒绝空分片。阶段 5 起每个文件条目还必须携带 SHA-256、固定块大小和匹配块数，完整 manifest 总摘要同时绑定这些字段；逐文件摘要验证通过后才进入 staging 树。终态 folder transferId 在有界 24 小时窗口内拒绝再次作为 offer 使用。
 
 相对路径在协议中统一使用 `/`，拒绝绝对路径、盘符、UNC、反斜杠、空段、`.`、`..`、非法跨平台文件名、超深和规范化冲突。详细 manifest、状态机和发布规则见 [文件夹传输设计](folder-transfer.md)。
 
