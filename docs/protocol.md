@@ -1,6 +1,6 @@
 # 通信协议
 
-> 当前运行时仍使用协议 v2。v0.4.0 阶段 1 已加入独立的协议 v3 shared 契约，但在身份、配对和安全会话实现完成前不会切换 `PROTOCOL_VERSION`，避免把未加密连接误标为安全连接。
+> 当前运行时使用协议 v3。设备握手使用 Ed25519/X25519，proof 后的 WebSocket 控制消息使用 AES-256-GCM envelope；协议失败不会回退 v2。HTTP 文件正文将在阶段 6 切换为固定加密分块，因此当前阶段只声明控制通道加密。
 
 ## 协议 v3 shared 契约
 
@@ -8,15 +8,17 @@ v3 握手使用 `secure:hello`、`secure:challenge` 和 `secure:proof`，严格�
 
 shared 已定义配对决定、带 SHA-256/固定块大小/块数的文件 offer、暂停、续传查询、接收端 verified range 状态，以及 HTTP 加密块描述。schema 只做无状态结构和边界校验；公钥 DER 解析、指纹对应关系、签名、sequence、块数与大小一致性、range 排序/不重叠和任务状态顺序由后续主进程安全状态机验证。
 
-阶段 3 已实现 X25519 共享秘密和 transcript confirmation key 派生、六位验证码以及双端确认状态机。验证码由 confirmation key 通过带固定上下文的 HMAC-SHA-256 派生，只用于用户核对，不作为会话密钥。配对 IPC 使用不透明 requestId，renderer 只能接受或拒绝当前请求；只有主进程收到双方对同一请求的接受后才写可信记录。网络上的 `secure:*` 握手和加密 `pairing:decision` 将在阶段 4 一起启用，当前 v2 帧不会携带验证码或伪装成安全配对。
+阶段 3 已实现 X25519 共享秘密和 transcript confirmation key 派生、六位验证码以及双端确认状态机。验证码由 confirmation key 通过带固定上下文的 HMAC-SHA-256 派生，只用于用户核对，不作为会话密钥。配对 IPC 使用不透明 requestId，renderer 只能接受或拒绝当前请求；只有主进程收到双方对同一请求的接受后才写可信记录。
 
-协议 v2 与 v3 使用独立 parser。v3 正式启用后不得把失败的 v3 握手回退为 v2；旧版本只获得明确的 `PROTOCOL_INVALID`，不会进入业务消息阶段。
+阶段 4 已启用 `secure:*` 握手和加密 `pairing:decision`。challenge 与 proof 分别签署同一规范 transcript；双方从 transcript 摘要确定同一个 UUID requestId。proof 后每个方向使用独立 AES-256-GCM key、nonce 前缀和从 0 开始的连续 sequence，AAD 为版本、connectionId 与 sequence。tag 失败、重复、回退、跳号、错误 connectionId 或明文业务帧都会关闭连接。
+
+协议 v2 与 v3 使用独立 parser。运行时入口只接受 v3 握手，不得把失败的 v3 握手回退为 v2；旧版本只获得明确的 `PROTOCOL_INVALID`，不会进入业务消息阶段。
 
 ## 版本与传输
 
-当前握手协议版本为 `2`。文件夹能力改变了 strict 消息联合，因此 v1 与 v2 明确不兼容，不维护双协议栈。WebSocket 路径仍为 `/v1/ws`，路径只表示现有传输入口；hello 中的 protocolVersion 才决定消息能力。HTTP 负责文件流，文件内容不得转成 Base64 后通过 WebSocket 发送。
+当前握手协议版本为 `3`，不维护旧协议双栈。WebSocket 路径仍为 `/v1/ws`，路径只表示传输入口；`secure:hello` 中的 protocolVersion 才决定消息能力。HTTP 负责文件流，文件内容不得转成 Base64 后通过 WebSocket 发送。
 
-`GET /health` 返回 `{ "status": "ok", "protocolVersion": 2 }`，其他未注册 HTTP 路由返回 404。`/v1/ws` 由设备连接管理器接管；已有活动连接时，新 socket 使用 WebSocket close code 1013 关闭。
+`GET /health` 返回 `{ "status": "ok", "protocolVersion": 3 }`，其他未注册 HTTP 路由返回 404。`/v1/ws` 由设备连接管理器接管；已有活动连接时，新 socket 使用 WebSocket close code 1013 关闭。
 
 所有消息使用统一 envelope：
 
@@ -30,7 +32,7 @@ interface BaseMessage<TType extends string, TPayload> {
 }
 ```
 
-ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳，并且只能处于接收端当前时间前后 5 分钟。对象拒绝未知字段，WebSocket 只接受文本 JSON 控制消息，单条消息最大 128 KiB，文字正文最大 64 KiB（按 UTF-8 字节计算）。连接内消息和新建 WebSocket Upgrade 均有限速。
+ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳，并且只能处于接收端当前时间前后 5 分钟。对象拒绝未知字段，WebSocket 只接受文本 JSON；AEAD 线缆帧最大 256 KiB，解密后的控制消息最大 128 KiB，文字正文最大 64 KiB（按 UTF-8 字节计算）。连接内消息和新建 WebSocket Upgrade 均有限速。
 
 ## UDP 设备发现
 
@@ -39,7 +41,7 @@ ID 使用 UUID；timestamp 是非负安全整数毫秒时间戳，并且只能�
 ```ts
 interface DiscoveryAnnouncement {
   appId: 'lan-drop'
-  protocolVersion: 2
+  protocolVersion: 3
   messageId: string
   deviceId: string
   deviceName: string
@@ -51,18 +53,20 @@ interface DiscoveryAnnouncement {
 
 对象严格拒绝未知字段，ID、端口、名称和时间戳使用 shared schema 校验。发现包不携带 IP，接收端使用数据报来源 IPv4；自身消息、时间偏差超限和非法 JSON 被静默忽略。设备 16 秒未刷新即从列表移除。发现只提供连接地址，后续仍使用 `/v1/ws` 完成审批握手，不能凭发现包建立信任或授权上传。
 
-## 设备消息
+## 设备握手与连接消息
 
-| type                | payload                                                |
-| ------------------- | ------------------------------------------------------ |
-| `device:hello`      | 协议版本、设备信息、连接 nonce                         |
-| `device:welcome`    | 协议版本、设备信息、回显 nonce、connectionId、心跳参数 |
-| `device:heartbeat`  | connectionId、递增序号                                 |
-| `device:disconnect` | connectionId、固定断开原因                             |
+| type                | 传输形式 | payload                                             |
+| ------------------- | -------- | --------------------------------------------------- |
+| `secure:hello`      | 明文握手 | 协议、设备、Ed25519 身份、X25519 临时公钥、nonce    |
+| `secure:challenge`  | 明文握手 | responder 信息、connectionId、临时公钥、nonce、签名 |
+| `secure:proof`      | 明文握手 | connectionId、initiator transcript 签名             |
+| `pairing:decision`  | AEAD     | requestId、connectionId、接受或拒绝                 |
+| `device:heartbeat`  | AEAD     | connectionId、递增心跳序号                          |
+| `device:disconnect` | AEAD     | connectionId、固定断开原因                          |
 
-设备信息包含设备 UUID、名称、`windows | macos`、IP 和服务端口。陌生设备的 hello 必须先经过本机用户审批。
+设备信息包含设备 UUID、名称、`windows | macos`、IP 和服务端口。入站 hello 仍先经过本机连接审批；通过后才发送 challenge。握手消息 senderId 必须等于设备信息中的 deviceId，公开身份指纹必须与公钥 DER 一致，challenge/proof 签名必须验证通过。入站展示 IP 以 TCP socket 来源为准，不信任 hello 自报 IP。
 
-阶段 6 已实现该状态机。hello/welcome 必须在 10 秒内完成；welcome 必须回显 hello 的 connection nonce，且握手消息 senderId 必须等于设备信息中的 deviceId。连接后双方每 10 秒发送 heartbeat，30 秒未收到任何有效消息即断开。入站设备展示 IP 以 TCP socket 来源为准，不信任 hello 中自报的 IP。
+连接审批和每段握手各有 10 秒时限，首次验证码配对为 2 分钟。只有双端信任条件满足后才进入 connected；之后每 10 秒发送密文 heartbeat，30 秒未收到有效消息即断开。
 
 ## 文字消息
 
@@ -87,6 +91,8 @@ interface DiscoveryAnnouncement {
 结构 schema 验证单条消息。主进程使用有界时间窗口拒绝重复 messageId；协调器进一步校验 offer/accept 文件集合、逐文件顺序、fileId、进度单调性与上限、完成消息状态、完成大小和任务归属。transferId 完成后仍在有界时间内保留，使用新 messageId 重放旧 offer 同样会被拒绝。多文件严格串行上传，接收端只接受当前队首的 HTTP 请求；同一方向一次只允许一个活动文件任务。
 
 ## HTTP 上传
+
+阶段 4 已加密文件 offer、接受、进度、完成和错误等 WebSocket 控制消息，但下述现有 HTTP 文件正文仍是明文流。阶段 6 将其替换为协议 v3 固定加密分块；在此之前不能把控制通道安全等同于文件内容端到端加密。
 
 接收方接受文件后，发送方逐文件调用：
 

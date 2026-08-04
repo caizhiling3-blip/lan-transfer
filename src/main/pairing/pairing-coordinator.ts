@@ -13,7 +13,16 @@ import type {
 } from '@shared/types'
 
 import { createPairingVerificationCode } from '../security'
-import type { TrustedDevicesStore } from '../storage'
+import type { TrustDeviceResult } from '../storage'
+
+export interface TrustedDeviceRegistry {
+  get(deviceId: DeviceInfo['deviceId']): TrustedDeviceDto | null
+  trust(
+    deviceId: DeviceInfo['deviceId'],
+    identity: PublicIdentityDto,
+    verifiedAt?: number,
+  ): TrustDeviceResult
+}
 
 export type BeginPairingResult =
   | { readonly state: 'trusted'; readonly device: TrustedDeviceDto }
@@ -49,12 +58,13 @@ export class PairingCoordinator {
   private readonly decisionListeners = new Set<DecisionListener>()
   private readonly completionListeners = new Set<CompletionListener>()
 
-  public constructor(private readonly trustedDevices: TrustedDevicesStore) {}
+  public constructor(private readonly trustedDevices: TrustedDeviceRegistry) {}
 
   public begin(
     peer: DeviceInfo,
     peerIdentity: PublicIdentityDto,
     confirmationKey: Uint8Array,
+    requestId: RequestId = requestIdSchema.parse(randomUUID()),
   ): BeginPairingResult {
     this.cancel('CONNECTION_CLOSED')
     const identity = publicIdentitySchema.safeParse(peerIdentity)
@@ -72,7 +82,7 @@ export class PairingCoordinator {
 
     const now = Date.now()
     const request: PairingRequestDto = {
-      requestId: requestIdSchema.parse(randomUUID()),
+      requestId,
       peer,
       peerFingerprint: identity.data.fingerprint,
       verificationCode: createPairingVerificationCode(confirmationKey),

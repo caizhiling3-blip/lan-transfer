@@ -8,7 +8,8 @@ import type { AuthorizedSourceFolder, FolderAccessAdapter } from '../../src/main
 import { FolderTransferCoordinator, scanFolder } from '../../src/main/file-transfer'
 import { LocalServer } from '../../src/main/server/local-server'
 import { SessionHistory } from '../../src/main/storage/session-history'
-import { ConnectionManager } from '../../src/main/websocket/connection-manager'
+import type { ConnectionManager } from '../../src/main/websocket/connection-manager'
+import { createAutoPairingConnectionManager } from '../helpers/secure-connection'
 import type { FolderOfferReceivedDto } from '@shared/ipc'
 import { deviceIdSchema } from '@shared/types'
 import type { DeviceInfo, IncomingConnectionRequestDto, TransferTaskDto } from '@shared/types'
@@ -117,10 +118,10 @@ const createConnectedPair = async (
   const server = new LocalServer()
   servers.push(server)
   let receiverPort = 0
-  const receiverManager = new ConnectionManager(() =>
+  const receiverManager = createAutoPairingConnectionManager(() =>
     createDevice('22222222-2222-4222-8222-222222222222', 'Receiver', receiverPort),
   )
-  const senderManager = new ConnectionManager(() =>
+  const senderManager = createAutoPairingConnectionManager(() =>
     createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
   )
   managers.push(senderManager, receiverManager)

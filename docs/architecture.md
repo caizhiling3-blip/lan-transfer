@@ -43,7 +43,7 @@ IPC handler 必须同时满足：
 
 - 默认监听 `0.0.0.0:53317`，HTTP 与 WebSocket 共用一个 TCP 端口；
 - Node HTTP server 只暴露健康检查和明确注册的路由，未知路由返回 404；
-- WebSocket 使用 no-server Upgrade 模式，只接受 `/v1/ws`，禁用压缩并限制 payload 为 128 KiB；
+- WebSocket 使用 no-server Upgrade 模式，只接受 `/v1/ws`，禁用压缩；协议 v3 的线缆帧限制为 256 KiB，解密后的控制正文限制为 128 KiB；
 - `/v1/ws` Upgrade 交给 ConnectionManager 完成设备握手；未安装连接处理器时使用 1013 关闭；
 - `ServiceManager` 维护 stopped、starting、running、error 状态，端口占用映射为 `PORT_IN_USE`；
 - 启动失败和监听后的运行时错误都会转成状态事件，不作为未处理异常退出应用；
@@ -202,5 +202,7 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。
 
 阶段 3 的 key-agreement 模块只返回内存中的 X25519 私钥对象、公开 DER 和 nonce。规范 transcript 使用固定数组顺序绑定协议版本、双方角色、deviceId、nonce、临时公钥和长期公钥，避免对象键顺序形成不同派生结果。`PairingCoordinator` 是首次信任审批的事实来源：UI 只投影短指纹、六位验证码和截止时间，双方确认前不写 store；已信任设备只有相同公钥才可免配对刷新验证时间。可信设备 IPC 返回不含公钥的摘要，取消信任与最近设备删除保持独立。
+
+阶段 4 的 `ConnectionManager` 只在明文握手阶段接受 `secure:hello/challenge/proof`。双方签名验证和共享秘密派生完成后，`SecureSessionCipher` 按方向持有独立 AES-256-GCM key、四字节 nonce 前缀和从 0 开始的精确单调 sequence；envelope 的版本、connectionId 与 sequence 同时作为 AAD。配对决定、心跳、断开、文字及既有文件/文件夹控制消息全部进入密文，任何明文业务消息、tag 篡改或序号重放都失败关闭。重置连接时立即清零控制 key、nonce 前缀和文件根 key 引用。HTTP 文件内容在阶段 6 前仍沿用现有流，不能仅凭控制通道加密宣称文件端到端加密。
 
 恢复状态机以接收端已认证分块 bitmap 为事实来源，发送端只调度缺失块。最终 SHA-256 通过前 staging 永远不能发布；持久化恢复记录与路径同样使用 `safeStorage`，损坏、过期、身份变化或源文件变化时失败关闭。完整设计与威胁模型见 [v0.4.0 设计](v0.4.0.md)。

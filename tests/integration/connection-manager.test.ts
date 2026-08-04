@@ -3,10 +3,16 @@ import type { RawData } from 'ws'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { LocalServer } from '../../src/main/server/local-server'
-import { ConnectionManager } from '../../src/main/websocket/connection-manager'
+import { generateEphemeralKeyPair, generateHandshakeNonce } from '../../src/main/security'
+import type { ConnectionManager } from '../../src/main/websocket/connection-manager'
+import {
+  createAutoPairingConnectionManager,
+  createMemoryIdentitySigner,
+  createSecureConnectionEndpoint,
+} from '../helpers/secure-connection'
 import { PROTOCOL_VERSION } from '@shared/constants'
 import type { TextReceivedDto } from '@shared/ipc'
-import { parseProtocolMessage } from '@shared/protocols'
+import { encryptedEnvelopeSchema, parseSecureHandshakeMessage } from '@shared/protocols'
 import { deviceIdSchema } from '@shared/types'
 import type { DeviceInfo, IncomingConnectionRequestDto } from '@shared/types'
 
@@ -37,18 +43,40 @@ const waitForText = (manager: ConnectionManager): Promise<TextReceivedDto> =>
     })
   })
 
-const createPair = async () => {
+const createSecureHello = (
+  device: DeviceInfo,
+  senderId: string = device.deviceId,
+  timestamp = Date.now(),
+) => ({
+  type: 'secure:hello',
+  messageId: '33333333-3333-4333-8333-333333333333',
+  senderId: deviceIdSchema.parse(senderId),
+  timestamp,
+  payload: {
+    protocolVersion: PROTOCOL_VERSION,
+    device,
+    identity: createMemoryIdentitySigner().getPublicIdentity(),
+    keyAgreement: 'X25519',
+    ephemeralPublicKey: generateEphemeralKeyPair().publicKey,
+    nonce: generateHandshakeNonce(),
+  },
+})
+
+const createPair = async (onIncomingSocket?: (socket: WebSocket) => void) => {
   const server = new LocalServer()
   servers.push(server)
   let serverPort = 0
-  const receiver = new ConnectionManager(() =>
+  const receiver = createAutoPairingConnectionManager(() =>
     createDevice('22222222-2222-4222-8222-222222222222', 'Receiver', serverPort),
   )
-  const sender = new ConnectionManager(() =>
+  const sender = createAutoPairingConnectionManager(() =>
     createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
   )
   managers.push(sender, receiver)
-  server.setConnectionHandler((socket, request) => receiver.acceptIncoming(socket, request))
+  server.setConnectionHandler((socket, request) => {
+    onIncomingSocket?.(socket)
+    receiver.acceptIncoming(socket, request)
+  })
   serverPort = await server.start(0, '127.0.0.1')
   return { sender, receiver, serverPort }
 }
@@ -155,84 +183,121 @@ describe('ConnectionManager', () => {
     })
   })
 
-  it('does not project a duplicate text message but acknowledges it again', async () => {
-    const { receiver, serverPort } = await createPair()
-    const requestPromise = waitForRequest(receiver)
-    const socket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
-    await new Promise<void>((resolve, reject) => {
-      socket.once('open', resolve)
-      socket.once('error', reject)
-    })
-
-    const rawDevice = createDevice('66666666-6666-4666-8666-666666666666', 'Raw sender', 54_000)
-    socket.send(
-      JSON.stringify({
-        type: 'device:hello',
-        messageId: '77777777-7777-4777-8777-777777777777',
-        senderId: rawDevice.deviceId,
-        timestamp: Date.now(),
-        payload: {
-          protocolVersion: PROTOCOL_VERSION,
-          device: rawDevice,
-          connectionNonce: 'n'.repeat(32),
-        },
-      }),
+  it('requires both devices to confirm the same pairing code before connecting', async () => {
+    const server = new LocalServer()
+    servers.push(server)
+    let serverPort = 0
+    const receiverEndpoint = createSecureConnectionEndpoint(() =>
+      createDevice('22222222-2222-4222-8222-222222222222', 'Receiver', serverPort),
     )
-    const request = await requestPromise
-    const welcomePromise = new Promise<void>((resolve, reject) => {
-      const handleMessage = (data: RawData): void => {
-        const message = parseProtocolMessage(JSON.parse(data.toString()))
-        if (message.type !== 'device:welcome') return
-        socket.off('message', handleMessage)
-        resolve()
-      }
-      socket.on('message', handleMessage)
-      socket.once('error', reject)
-    })
-    receiver.respondToRequest(request.requestId, 'accept')
-    await welcomePromise
+    const senderEndpoint = createSecureConnectionEndpoint(() =>
+      createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
+    )
+    managers.push(senderEndpoint.manager, receiverEndpoint.manager)
+    server.setConnectionHandler((socket, request) =>
+      receiverEndpoint.manager.acceptIncoming(socket, request),
+    )
+    serverPort = await server.start(0, '127.0.0.1')
+    const incomingRequestPromise = waitForRequest(receiverEndpoint.manager)
+    const senderPairingPromise = new Promise<
+      ReturnType<typeof senderEndpoint.pairingCoordinator.getPending>
+    >((resolve) => senderEndpoint.pairingCoordinator.subscribeRequests(resolve))
+    const receiverPairingPromise = new Promise<
+      ReturnType<typeof receiverEndpoint.pairingCoordinator.getPending>
+    >((resolve) => receiverEndpoint.pairingCoordinator.subscribeRequests(resolve))
+    const connectionPromise = senderEndpoint.manager.connect('127.0.0.1', serverPort)
+    const incomingRequest = await incomingRequestPromise
+    receiverEndpoint.manager.respondToRequest(incomingRequest.requestId, 'accept')
+    const [senderPairing, receiverPairing] = await Promise.all([
+      senderPairingPromise,
+      receiverPairingPromise,
+    ])
+    if (senderPairing === null || receiverPairing === null)
+      throw new Error('Pairing was not started')
 
+    expect(senderPairing.requestId).toBe(receiverPairing.requestId)
+    expect(senderPairing.verificationCode).toBe(receiverPairing.verificationCode)
+    expect(senderEndpoint.manager.getStatus().state).toBe('pairingRequired')
+    expect(receiverEndpoint.manager.getStatus().state).toBe('pairingRequired')
+    senderEndpoint.pairingCoordinator.respond(senderPairing.requestId, 'accept')
+    expect(senderEndpoint.manager.getStatus().state).not.toBe('connected')
+    receiverEndpoint.pairingCoordinator.respond(receiverPairing.requestId, 'accept')
+
+    await expect(connectionPromise).resolves.toMatchObject({ state: 'connected' })
+    expect(receiverEndpoint.manager.getStatus().state).toBe('connected')
+    expect(senderEndpoint.trustedDevices.get(senderPairing.peer.deviceId)).not.toBeNull()
+    expect(receiverEndpoint.trustedDevices.get(receiverPairing.peer.deviceId)).not.toBeNull()
+
+    senderEndpoint.manager.disconnect()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    let repeatedPairingRequests = 0
+    senderEndpoint.pairingCoordinator.subscribeRequests(() => {
+      repeatedPairingRequests += 1
+    })
+    receiverEndpoint.pairingCoordinator.subscribeRequests(() => {
+      repeatedPairingRequests += 1
+    })
+    const reconnectApprovalPromise = waitForRequest(receiverEndpoint.manager)
+    const reconnectPromise = senderEndpoint.manager.connect('127.0.0.1', serverPort)
+    receiverEndpoint.manager.respondToRequest((await reconnectApprovalPromise).requestId, 'accept')
+    await expect(reconnectPromise).resolves.toMatchObject({ state: 'connected' })
+    expect(repeatedPairingRequests).toBe(0)
+  })
+
+  it('sends connected control messages only inside encrypted envelopes', async () => {
+    const incomingFrames: string[] = []
+    const incomingSocketHolder: { socket: WebSocket | null } = { socket: null }
+    const { sender, receiver, serverPort } = await createPair((socket) => {
+      incomingSocketHolder.socket = socket
+    })
+    const requestPromise = waitForRequest(receiver)
+    const connectionPromise = sender.connect('127.0.0.1', serverPort)
+    receiver.respondToRequest((await requestPromise).requestId, 'accept')
+    await connectionPromise
+    const incomingSocket = incomingSocketHolder.socket
+    if (incomingSocket === null) throw new Error('Server socket was not captured')
+    incomingSocket.on('message', (data, isBinary) => {
+      if (!isBinary) incomingFrames.push(data.toString())
+    })
+
+    await sender.sendText('never-visible-plaintext', 'text')
+
+    expect(incomingFrames.length).toBeGreaterThan(0)
+    expect(incomingFrames.join('')).not.toContain('never-visible-plaintext')
+    expect(incomingFrames.join('')).not.toContain('text:send')
+    expect(
+      incomingFrames.some((frame) => encryptedEnvelopeSchema.safeParse(JSON.parse(frame)).success),
+    ).toBe(true)
+    const replayedFrame = incomingFrames.find(
+      (frame) => encryptedEnvelopeSchema.safeParse(JSON.parse(frame)).success,
+    )
+    if (replayedFrame === undefined) throw new Error('Encrypted frame was not captured')
+    incomingSocket.emit('message', Buffer.from(replayedFrame), false)
+    expect(receiver.getStatus()).toMatchObject({
+      state: 'disconnected',
+      errorCode: 'MESSAGE_REPLAYED',
+    })
+  })
+
+  it('delivers consecutive encrypted text messages in sequence', async () => {
+    const { sender, receiver, serverPort } = await createPair()
+    const requestPromise = waitForRequest(receiver)
+    const connectionPromise = sender.connect('127.0.0.1', serverPort)
+    const request = await requestPromise
+    receiver.respondToRequest(request.requestId, 'accept')
+    await connectionPromise
     let receivedCount = 0
     const unsubscribe = receiver.subscribeText(() => {
       receivedCount += 1
     })
-    const acknowledgementPromise = new Promise<void>((resolve, reject) => {
-      let acknowledgementCount = 0
-      const timeout = setTimeout(
-        () => reject(new Error('Timed out waiting for acknowledgements')),
-        1_000,
-      )
-      const handleMessage = (data: RawData): void => {
-        const message = parseProtocolMessage(JSON.parse(data.toString()))
-        if (message.type !== 'text:ack') return
-        acknowledgementCount += 1
-        if (acknowledgementCount === 2) {
-          clearTimeout(timeout)
-          socket.off('message', handleMessage)
-          resolve()
-        }
-      }
-      socket.on('message', handleMessage)
-      socket.once('error', reject)
-    })
-    const textMessage = JSON.stringify({
-      type: 'text:send',
-      messageId: '88888888-8888-4888-8888-888888888888',
-      senderId: rawDevice.deviceId,
-      timestamp: Date.now(),
-      payload: { content: 'send once', contentType: 'text' },
-    })
-    socket.send(textMessage)
-    socket.send(textMessage)
-
-    await acknowledgementPromise
+    await expect(sender.sendText('first', 'text')).resolves.toMatchObject({ status: 'completed' })
+    await expect(sender.sendText('second', 'text')).resolves.toMatchObject({ status: 'completed' })
     unsubscribe()
-    expect(receivedCount).toBe(1)
-    socket.close()
+    expect(receivedCount).toBe(2)
   })
 
   it('does not create a text task without an active connection', async () => {
-    const sender = new ConnectionManager(() =>
+    const sender = createAutoPairingConnectionManager(() =>
       createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
     )
     managers.push(sender)
@@ -244,7 +309,7 @@ describe('ConnectionManager', () => {
     const temporaryServer = new LocalServer()
     const port = await temporaryServer.start(0, '127.0.0.1')
     await temporaryServer.stop()
-    const sender = new ConnectionManager(() =>
+    const sender = createAutoPairingConnectionManager(() =>
       createDevice('11111111-1111-4111-8111-111111111111', 'Sender', 54_000),
     )
     managers.push(sender)
@@ -273,22 +338,107 @@ describe('ConnectionManager', () => {
     })
   })
 
+  it('rejects a legacy plaintext handshake without protocol downgrade', async () => {
+    const { receiver, serverPort } = await createPair()
+    const socket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
+    const device = createDevice('66666666-6666-4666-8666-666666666666', 'Legacy', 54_000)
+    socket.once('open', () => {
+      socket.send(
+        JSON.stringify({
+          type: 'device:hello',
+          messageId: '77777777-7777-4777-8777-777777777777',
+          senderId: device.deviceId,
+          timestamp: Date.now(),
+          payload: { protocolVersion: 2, device, connectionNonce: 'n'.repeat(32) },
+        }),
+      )
+    })
+
+    await expect(
+      new Promise<number>((resolve, reject) => {
+        socket.once('close', resolve)
+        socket.once('error', reject)
+      }),
+    ).resolves.toBe(1007)
+    expect(receiver.getStatus()).toMatchObject({
+      state: 'disconnected',
+      errorCode: 'PROTOCOL_INVALID',
+    })
+  })
+
+  it('fails closed when the initiator proof signature is invalid', async () => {
+    const { receiver, serverPort } = await createPair()
+    const requestPromise = waitForRequest(receiver)
+    const socket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
+    const device = createDevice('66666666-6666-4666-8666-666666666666', 'Forged', 54_000)
+    const identitySigner = createMemoryIdentitySigner()
+    const keys = generateEphemeralKeyPair()
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve)
+      socket.once('error', reject)
+    })
+    socket.send(
+      JSON.stringify({
+        type: 'secure:hello',
+        messageId: '77777777-7777-4777-8777-777777777777',
+        senderId: device.deviceId,
+        timestamp: Date.now(),
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          device,
+          identity: identitySigner.getPublicIdentity(),
+          keyAgreement: 'X25519',
+          ephemeralPublicKey: keys.publicKey,
+          nonce: generateHandshakeNonce(),
+        },
+      }),
+    )
+    const request = await requestPromise
+    const challengePromise = new Promise<ReturnType<typeof parseSecureHandshakeMessage>>(
+      (resolve, reject) => {
+        socket.once('message', (data: RawData) =>
+          resolve(parseSecureHandshakeMessage(JSON.parse(data.toString()))),
+        )
+        socket.once('error', reject)
+      },
+    )
+    receiver.respondToRequest(request.requestId, 'accept')
+    const challenge = await challengePromise
+    if (challenge.type !== 'secure:challenge') throw new Error('Expected challenge')
+    socket.send(
+      JSON.stringify({
+        type: 'secure:proof',
+        messageId: '88888888-8888-4888-8888-888888888888',
+        senderId: device.deviceId,
+        timestamp: Date.now(),
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          connectionId: challenge.payload.connectionId,
+          signature: Buffer.alloc(64).toString('base64'),
+        },
+      }),
+    )
+
+    await expect(new Promise<number>((resolve) => socket.once('close', resolve))).resolves.toBe(
+      1008,
+    )
+    expect(receiver.getStatus()).toMatchObject({
+      state: 'disconnected',
+      errorCode: 'SIGNATURE_INVALID',
+    })
+  })
+
   it('rejects a hello whose envelope sender does not match the advertised device', async () => {
     const { receiver, serverPort } = await createPair()
     const socket = new WebSocket(`ws://127.0.0.1:${String(serverPort)}/v1/ws`)
     socket.once('open', () => {
       socket.send(
-        JSON.stringify({
-          type: 'device:hello',
-          messageId: '33333333-3333-4333-8333-333333333333',
-          senderId: '44444444-4444-4444-8444-444444444444',
-          timestamp: Date.now(),
-          payload: {
-            protocolVersion: PROTOCOL_VERSION,
-            device: createDevice('55555555-5555-4555-8555-555555555555', 'Spoofed', 54_000),
-            connectionNonce: 'n'.repeat(32),
-          },
-        }),
+        JSON.stringify(
+          createSecureHello(
+            createDevice('55555555-5555-4555-8555-555555555555', 'Spoofed', 54_000),
+            '44444444-4444-4444-8444-444444444444',
+          ),
+        ),
       )
     })
     const closeCode = await new Promise<number>((resolve, reject) => {
@@ -310,15 +460,8 @@ describe('ConnectionManager', () => {
       const device = createDevice('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Stale sender', 54_000)
       staleSocket.send(
         JSON.stringify({
-          type: 'device:hello',
+          ...createSecureHello(device, device.deviceId, Date.now() - 6 * 60_000),
           messageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-          senderId: device.deviceId,
-          timestamp: Date.now() - 6 * 60_000,
-          payload: {
-            protocolVersion: PROTOCOL_VERSION,
-            device,
-            connectionNonce: 'n'.repeat(32),
-          },
         }),
       )
     })

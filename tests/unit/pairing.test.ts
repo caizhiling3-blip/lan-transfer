@@ -6,17 +6,19 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { publicIdentitySchema } from '@shared/protocols'
-import { deviceIdSchema } from '@shared/types'
+import { connectionIdSchema, deviceIdSchema } from '@shared/types'
 import type { DeviceInfo, PublicIdentityDto } from '@shared/types'
 
 import { PairingCoordinator } from '../../src/main/pairing'
 import {
   createPairingVerificationCode,
   deriveSharedSecret,
+  deriveSecureSessionSecrets,
   deriveTranscriptConfirmationKey,
   generateEphemeralKeyPair,
   generateHandshakeNonce,
   serializeSecureHandshakeTranscript,
+  SecureSessionCipher,
 } from '../../src/main/security'
 import { calculateIdentityFingerprint, TrustedDevicesStore } from '../../src/main/storage'
 
@@ -123,6 +125,50 @@ describe('secure key agreement', () => {
     expect(deriveTranscriptConfirmationKey(sharedSecret, first)).not.toEqual(
       deriveTranscriptConfirmationKey(sharedSecret, changed),
     )
+  })
+
+  it('encrypts each direction and rejects tampering and sequence replay', () => {
+    const initiatorKeys = generateEphemeralKeyPair()
+    const responderKeys = generateEphemeralKeyPair()
+    const transcript = serializeSecureHandshakeTranscript({
+      initiatorDeviceId,
+      responderDeviceId,
+      initiatorNonce: generateHandshakeNonce(),
+      responderNonce: generateHandshakeNonce(),
+      initiatorEphemeralPublicKey: initiatorKeys.publicKey,
+      responderEphemeralPublicKey: responderKeys.publicKey,
+      initiatorIdentity: createIdentity(),
+      responderIdentity: createIdentity(),
+    })
+    const initiatorSecrets = deriveSecureSessionSecrets(
+      deriveSharedSecret(initiatorKeys.privateKey, responderKeys.publicKey),
+      transcript,
+      'initiator',
+    )
+    const responderSecrets = deriveSecureSessionSecrets(
+      deriveSharedSecret(responderKeys.privateKey, initiatorKeys.publicKey),
+      transcript,
+      'responder',
+    )
+    const connectionId = connectionIdSchema.parse('33333333-3333-4333-8333-333333333333')
+    const initiatorCipher = new SecureSessionCipher(connectionId, initiatorSecrets)
+    const responderCipher = new SecureSessionCipher(connectionId, responderSecrets)
+
+    const firstEnvelope = initiatorCipher.encrypt({ type: 'example', value: 'secret' })
+    expect(responderCipher.decrypt(firstEnvelope)).toEqual({ type: 'example', value: 'secret' })
+    expect(() => responderCipher.decrypt(firstEnvelope)).toThrow(/sequence/u)
+    const secondEnvelope = initiatorCipher.encrypt({ type: 'second' })
+    const tamperedTag = `${secondEnvelope.authenticationTag.startsWith('A') ? 'B' : 'A'}${secondEnvelope.authenticationTag.slice(1)}`
+    expect(() =>
+      responderCipher.decrypt({ ...secondEnvelope, authenticationTag: tamperedTag }),
+    ).toThrow()
+    expect(responderCipher.decrypt(secondEnvelope)).toEqual({ type: 'second' })
+
+    const response = responderCipher.encrypt({ type: 'response' })
+    expect(initiatorCipher.decrypt(response)).toEqual({ type: 'response' })
+    initiatorCipher.destroy()
+    responderCipher.destroy()
+    expect(() => initiatorCipher.encrypt({ type: 'closed' })).toThrow(/closed/u)
   })
 })
 

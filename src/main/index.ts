@@ -143,8 +143,10 @@ void app.whenReady().then(() => {
   )
   const deviceIdentity = new DeviceIdentity(settingsStore)
   const activeServiceManager = new ServiceManager(settingsStore.getSettings().servicePort)
-  const activeConnectionManager = new ConnectionManager(() =>
-    deviceIdentity.getDeviceInfo(activeServiceManager.getStatus()),
+  const activeConnectionManager = new ConnectionManager(
+    () => deviceIdentity.getDeviceInfo(activeServiceManager.getStatus()),
+    identityStore,
+    pairingCoordinator,
   )
   const fileAccessRegistry = new FileAccessRegistry(
     () => settingsStore.getReceiveDirectory(),

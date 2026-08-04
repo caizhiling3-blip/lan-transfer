@@ -59,6 +59,16 @@ const connectionPresentations: Readonly<
     tone: 'progress',
     description: '连接请求已发送，等待对方允许连接。',
   },
+  authenticating: {
+    label: '正在验证身份',
+    tone: 'progress',
+    description: '正在验证设备签名并建立加密会话。',
+  },
+  pairingRequired: {
+    label: '等待安全配对',
+    tone: 'progress',
+    description: '请在两台设备上核对六位验证码。',
+  },
   connected: {
     label: '已连接',
     tone: 'success',

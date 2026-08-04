@@ -85,7 +85,7 @@ manifest 文件按规范化 relativePath 升序排列，空目录同样排序。
 
 文件夹能力使用协议版本 2。原因是 hello/welcome 和消息 schema 当前为 strict，版本 1 客户端无法安全协商新能力。v1 与 v2 连接必须返回 `PROTOCOL_INVALID` 并在 UI 显示双方版本不一致；本版本不维护双协议栈。
 
-单条 WebSocket 消息继续限制为 128 KiB。最大 2 MiB manifest 不作为一个消息发送，而是：
+协议 v3 中解密后的单条控制消息限制为 128 KiB；Base64 AEAD envelope 的线缆帧上限为 256 KiB。最大 2 MiB manifest 不作为一个消息发送，而是：
 
 1. `folder:offer` 发送摘要、manifestId、分片数量和 manifest SHA-256；
 2. `folder:manifest` 按顺序发送最多 32 个分片，每片解码后仍必须小于 WebSocket 限制；

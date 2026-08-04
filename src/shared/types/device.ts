@@ -18,4 +18,11 @@ export interface DiscoveredDeviceDto {
 export type ServiceState = 'stopped' | 'starting' | 'running' | 'error'
 
 export type ConnectionState =
-  'disconnected' | 'connecting' | 'awaitingApproval' | 'connected' | 'disconnecting' | 'error'
+  | 'disconnected'
+  | 'connecting'
+  | 'awaitingApproval'
+  | 'authenticating'
+  | 'pairingRequired'
+  | 'connected'
+  | 'disconnecting'
+  | 'error'
