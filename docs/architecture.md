@@ -194,3 +194,9 @@ v0.3.0 在该边界上增加精细历史清理、最近设备本地备注和诊�
 electron-builder 使用稳定 `com.lindu.transfer` 标识构建 Windows NSIS 和 macOS DMG。渲染资源统一使用相对 URL，应用 Logo 的 SVG、ICO 和 ICNS 位于 `build/`，打包输出统一进入被 Git 忽略的 `release/`。
 
 macOS 第一版分别输出 arm64 和 x64，避免 Universal 包体积及合并复杂度。测试包显式跳过代码签名、notarization 和 Hardened Runtime；正式发布必须把三者作为独立安全工作流恢复。Info.plist 声明直接局域网连接用途；1.1 使用原生 UDP 组播而非 Bonjour，因此无需声明 Bonjour service type。`afterPack` 钩子在未来签名前收紧 ATS，并移除邻渡没有使用的相机、麦克风、音频采集和蓝牙模板描述，避免打包模板扩大隐私表面。
+
+## 协议 v3 安全架构规划
+
+v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer 和 recovery-store 模块。长期 Ed25519 私钥经 Electron `safeStorage` 加密持久化；每次连接使用 X25519 临时密钥、Ed25519 transcript 签名和 HKDF 派生方向密钥。WebSocket 业务消息与 HTTP 固定分块均使用 AES-256-GCM，renderer 只看到公开指纹、验证码和任务 DTO，不接触长期/临时私钥、会话密钥、路径、bitmap 或密文。
+
+恢复状态机以接收端已认证分块 bitmap 为事实来源，发送端只调度缺失块。最终 SHA-256 通过前 staging 永远不能发布；持久化恢复记录与路径同样使用 `safeStorage`，损坏、过期、身份变化或源文件变化时失败关闭。完整设计与威胁模型见 [v0.4.0 设计](v0.4.0.md)。
