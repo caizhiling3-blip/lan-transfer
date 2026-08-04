@@ -28,6 +28,20 @@ export const ERROR_CODES = [
   'TRANSFER_CANCELLED',
   'TRANSFER_TIMEOUT',
   'TRANSFER_FAILED',
+  'PAIRING_REQUIRED',
+  'PAIRING_REJECTED',
+  'PAIRING_TIMEOUT',
+  'IDENTITY_MISMATCH',
+  'SIGNATURE_INVALID',
+  'ENCRYPTION_FAILED',
+  'DECRYPTION_FAILED',
+  'MESSAGE_REPLAYED',
+  'FILE_HASH_FAILED',
+  'FILE_INTEGRITY_FAILED',
+  'CHUNK_INVALID',
+  'RESUME_STATE_INVALID',
+  'RESUME_EXPIRED',
+  'SOURCE_FILE_CHANGED',
 ] as const
 
 export const errorCodeSchema = z.enum(ERROR_CODES)
@@ -62,6 +76,20 @@ export const ERROR_MESSAGES_ZH_CN: Readonly<Record<ErrorCode, string>> = {
   TRANSFER_CANCELLED: '传输已取消',
   TRANSFER_TIMEOUT: '传输超时',
   TRANSFER_FAILED: '文件传输失败',
+  PAIRING_REQUIRED: '需要先完成设备安全配对',
+  PAIRING_REJECTED: '设备安全配对已被拒绝',
+  PAIRING_TIMEOUT: '设备安全配对已超时',
+  IDENTITY_MISMATCH: '设备身份与已保存记录不一致',
+  SIGNATURE_INVALID: '设备身份签名无效',
+  ENCRYPTION_FAILED: '消息加密失败',
+  DECRYPTION_FAILED: '消息认证或解密失败',
+  MESSAGE_REPLAYED: '检测到重复或过期的加密消息',
+  FILE_HASH_FAILED: '无法计算文件完整性摘要',
+  FILE_INTEGRITY_FAILED: '文件完整性校验失败',
+  CHUNK_INVALID: '文件分块无效或认证失败',
+  RESUME_STATE_INVALID: '续传状态无效',
+  RESUME_EXPIRED: '可恢复传输已经过期',
+  SOURCE_FILE_CHANGED: '源文件在传输后发生变化',
 }
 
 export type ErrorRecoveryAction = 'reconnect' | 'settings' | 'retry' | 'reselect' | 'none'
@@ -126,6 +154,38 @@ export const ERROR_RECOVERY_ADVICE_ZH_CN: Readonly<Record<ErrorCode, ErrorRecove
   TRANSFER_CANCELLED: { suggestion: '如仍需发送，请从头重新传输。', action: 'retry' },
   TRANSFER_TIMEOUT: { suggestion: '检查网络稳定性，重新连接后从头重试。', action: 'retry' },
   TRANSFER_FAILED: { suggestion: '检查双方网络、目录和磁盘状态后从头重试。', action: 'retry' },
+  PAIRING_REQUIRED: { suggestion: '请在两台设备上核对验证码并确认配对。', action: 'none' },
+  PAIRING_REJECTED: { suggestion: '确认双方设备身份后重新发起配对。', action: 'reconnect' },
+  PAIRING_TIMEOUT: {
+    suggestion: '重新连接，并在验证码有效期内完成双端确认。',
+    action: 'reconnect',
+  },
+  IDENTITY_MISMATCH: {
+    suggestion: '设备密钥可能变化；核对设备后撤销旧信任并重新配对。',
+    action: 'none',
+  },
+  SIGNATURE_INVALID: { suggestion: '连接未通过身份验证，请断开并检查对端版本。', action: 'none' },
+  ENCRYPTION_FAILED: { suggestion: '安全会话无法加密消息，请重新连接。', action: 'reconnect' },
+  DECRYPTION_FAILED: {
+    suggestion: '消息认证失败，连接已不可信，请重新连接。',
+    action: 'reconnect',
+  },
+  MESSAGE_REPLAYED: {
+    suggestion: '检测到重放消息，请断开并重新建立安全会话。',
+    action: 'reconnect',
+  },
+  FILE_HASH_FAILED: { suggestion: '确认源文件可读且未被占用，然后重新选择。', action: 'reselect' },
+  FILE_INTEGRITY_FAILED: {
+    suggestion: '收到的内容校验不一致，请重新建立连接后重试。',
+    action: 'retry',
+  },
+  CHUNK_INVALID: { suggestion: '文件分块认证失败，请重新连接后继续缺失分块。', action: 'retry' },
+  RESUME_STATE_INVALID: {
+    suggestion: '双方续传记录不一致，请取消旧任务后重新发送。',
+    action: 'retry',
+  },
+  RESUME_EXPIRED: { suggestion: '恢复期限已过，请重新选择内容并发送。', action: 'reselect' },
+  SOURCE_FILE_CHANGED: { suggestion: '源文件已经变化，请重新选择后发送。', action: 'reselect' },
 }
 
 export interface AppError {

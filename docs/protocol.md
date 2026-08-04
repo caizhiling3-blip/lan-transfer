@@ -1,5 +1,15 @@
 # 通信协议
 
+> 当前运行时仍使用协议 v2。v0.4.0 阶段 1 已加入独立的协议 v3 shared 契约，但在身份、配对和安全会话实现完成前不会切换 `PROTOCOL_VERSION`，避免把未加密连接误标为安全连接。
+
+## 协议 v3 shared 契约
+
+v3 握手使用 `secure:hello`、`secure:challenge` 和 `secure:proof`，严格携带 Ed25519 身份公钥、X25519 临时公钥、32 字节 nonce、协议版本和 transcript 签名。握手后的 WebSocket 帧使用 `EncryptedEnvelope`，只包含版本、connectionId、单调 sequence、Base64 密文和 16 字节 AES-GCM tag。
+
+shared 已定义配对决定、带 SHA-256/固定块大小/块数的文件 offer、暂停、续传查询、接收端 verified range 状态，以及 HTTP 加密块描述。schema 只做无状态结构和边界校验；公钥 DER 解析、指纹对应关系、签名、sequence、块数与大小一致性、range 排序/不重叠和任务状态顺序由后续主进程安全状态机验证。
+
+协议 v2 与 v3 使用独立 parser。v3 正式启用后不得把失败的 v3 握手回退为 v2；旧版本只获得明确的 `PROTOCOL_INVALID`，不会进入业务消息阶段。
+
 ## 版本与传输
 
 当前握手协议版本为 `2`。文件夹能力改变了 strict 消息联合，因此 v1 与 v2 明确不兼容，不维护双协议栈。WebSocket 路径仍为 `/v1/ws`，路径只表示现有传输入口；hello 中的 protocolVersion 才决定消息能力。HTTP 负责文件流，文件内容不得转成 Base64 后通过 WebSocket 发送。
