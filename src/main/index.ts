@@ -2,7 +2,7 @@ import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, Notification } from 'electron'
+import { app, BrowserWindow, dialog, Notification, safeStorage } from 'electron'
 
 import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
@@ -42,7 +42,14 @@ import {
 import { ServiceManager } from './server'
 import { DiagnosticsService, getDiagnosticsPlatform } from './diagnostics'
 import { getActiveLogFilePath, initializeLogger, logger, LogLifecycle } from './logger'
-import { HistoryStore, RecentDevicesStore, SessionHistory, SettingsStore } from './storage'
+import {
+  HistoryStore,
+  IdentityStore,
+  RecentDevicesStore,
+  SessionHistory,
+  SettingsStore,
+  TrustedDevicesStore,
+} from './storage'
 import { ConnectionManager } from './websocket'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
@@ -119,6 +126,9 @@ void app.whenReady().then(() => {
   )
   const historyStore = new HistoryStore(app.getPath('userData'))
   const recentDevices = new RecentDevicesStore(app.getPath('userData'))
+  const identityStore = new IdentityStore(app.getPath('userData'), safeStorage)
+  const trustedDevices = new TrustedDevicesStore(app.getPath('userData'))
+  logger.info('secure_identity_ready', { trustedDeviceCount: trustedDevices.list().length })
   const logLifecycle = new LogLifecycle(app.getPath('logs'), getActiveLogFilePath)
   const sessionHistory = new SessionHistory(
     () => settingsStore.getSettings().historyLimit,
@@ -295,6 +305,7 @@ void app.whenReady().then(() => {
   })
   const loggedTaskStatuses = new Map<string, string>()
   applicationUnsubscribers = [
+    () => identityStore.shutdown(),
     settingsStore.subscribe((settings) => {
       sendToRenderer(SETTINGS_CHANGED_EVENT_CHANNEL, settings)
       void logLifecycle.cleanupExpired(settings.logRetentionDays).catch((error: unknown) => {

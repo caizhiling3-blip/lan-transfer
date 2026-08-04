@@ -199,4 +199,6 @@ macOS 第一版分别输出 arm64 和 x64，避免 Universal 包体积及合并�
 
 v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer 和 recovery-store 模块。长期 Ed25519 私钥经 Electron `safeStorage` 加密持久化；每次连接使用 X25519 临时密钥、Ed25519 transcript 签名和 HKDF 派生方向密钥。WebSocket 业务消息与 HTTP 固定分块均使用 AES-256-GCM，renderer 只看到公开指纹、验证码和任务 DTO，不接触长期/临时私钥、会话密钥、路径、bitmap 或密文。
 
+阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。
+
 恢复状态机以接收端已认证分块 bitmap 为事实来源，发送端只调度缺失块。最终 SHA-256 通过前 staging 永远不能发布；持久化恢复记录与路径同样使用 `safeStorage`，损坏、过期、身份变化或源文件变化时失败关闭。完整设计与威胁模型见 [v0.4.0 设计](v0.4.0.md)。

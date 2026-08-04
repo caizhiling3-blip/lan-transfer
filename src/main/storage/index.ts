@@ -1,4 +1,6 @@
 export * from './history-store'
+export * from './identity-store'
 export * from './recent-devices-store'
 export * from './session-history'
 export * from './settings-store'
+export * from './trusted-devices-store'
