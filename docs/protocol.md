@@ -1,6 +1,6 @@
 # 通信协议
 
-> 当前运行时使用协议 v3。设备握手使用 Ed25519/X25519，proof 后的 WebSocket 控制消息使用 AES-256-GCM envelope；协议失败不会回退 v2。文件 offer 已绑定 SHA-256，HTTP 文件正文将在阶段 6 切换为固定加密分块，因此当前阶段只声明控制通道加密与内容完整性，不声明文件内容机密性。
+> 当前运行时使用协议 v3。设备握手使用 Ed25519/X25519，proof 后的 WebSocket 控制消息与 HTTP 固定文件块均使用 AES-256-GCM；协议失败不会回退 v2。文件正文已具备会话内机密性与完整性，暂停和跨会话续传将在阶段 7 完成。
 
 ## 协议 v3 shared 契约
 
@@ -92,20 +92,20 @@ interface DiscoveryAnnouncement {
 
 ## HTTP 上传
 
-阶段 5 的 `file:offer` 必须携带逐文件小写十六进制 SHA-256、固定块大小和与文件大小一致的块数。发送端在 offer 前与实际上传时分别流式计算摘要；接收端在临时文件关闭后复算摘要，大小或摘要不一致时返回 `FILE_INTEGRITY_FAILED` 并删除临时文件。摘要不进入 renderer DTO。HTTP 文件正文当前仍是明文流，阶段 6 将其替换为协议 v3 固定加密分块；在此之前不能把完整性保护等同于文件内容端到端加密。
+`file:offer` 必须携带逐文件小写十六进制 SHA-256、4 MiB 固定块大小和与文件大小一致的块数。发送端在 offer 前与实际读取时分别计算摘要；接收端在全部块认证后复算临时文件摘要，大小或摘要不一致时返回 `FILE_INTEGRITY_FAILED` 并删除临时文件。摘要不进入 renderer DTO。
 
-接收方接受文件后，发送方逐文件调用：
+接收方接受文件后，发送方对每个非空块依次调用：
 
 ```text
-POST /v1/transfers/:transferId/files/:fileId
-Authorization: Bearer <one-time-upload-token>
+PUT /v3/transfers/:transferId/files/:fileId/chunks/:chunkIndex
+Authorization: Bearer <per-chunk-upload-token>
 Content-Type: application/octet-stream
-Content-Length: <accepted-file-size>
+Content-Length: <plaintext-length + 16-byte-authentication-tag>
 ```
 
-文件名和保存路径不出现在 URL。服务端核对一次性 token、来源 IP、connectionId、transferId、fileId、精确 Content-Length、固定 Content-Type 和过期时间，不接受 `Transfer-Encoding`。token 在第一次合法上传尝试时立即消费，重复上传返回 HTTP 409。上传双方使用 30 秒空闲超时。
+文件名和保存路径不出现在 URL。每块 key/nonce 由本次连接的文件根密钥以及 transferId、fileId、chunkIndex 派生，AAD 额外绑定协议版本、connectionId、明文偏移和长度。服务端核对逐块 token、来源 IP、活动 connectionId、队首、精确长度、固定 Content-Type 和过期时间，不接受 `Transfer-Encoding`。已认证块保存密文摘要：相同密文重试幂等返回 200，索引相同但密文不同返回 `CHUNK_INVALID`。上传双方使用 30 秒空闲超时。
 
-接收方接受前检查目录和可用空间，上传写入接收目录内以 `0600` 独占创建的随机 `.part` 文件；收到超过 offer 的字节数会立即中止。完整关闭并核对大小后才以不覆盖方式发布最终文件；失败响应不会返回本机路径或内部错误详情。HTTP 请求与 WebSocket Upgrade 按来源进行有界限流，触发 HTTP 限流时返回 429。严格匹配文件上传路由的请求使用独立的高容量速率桶，以支持文件夹内大量小文件；健康检查、未知路径和其他请求继续使用低容量通用速率桶。上传路由仍必须通过 session、来源 IP、传输状态、一次性 token、文件顺序和长度校验。
+接收方接受前检查目录和可用空间，以 `0600` 独占创建并预分配随机 `.part` 文件；每块只有 AES-GCM tag 通过后才写入声明偏移。全部块完成后重新流式计算 SHA-256，再以不覆盖方式发布最终文件；0 字节文件不发送 HTTP 请求。失败响应不会返回本机路径或内部错误详情。严格匹配加密块路由的请求使用独立有界速率桶，健康检查、未知路径和其他请求继续使用低容量通用速率桶。
 
 `file:cancel` 不带 fileId 时取消整个任务，携带 fileId 时只取消该文件。已完成文件不回滚。重试不是协议内恢复操作，而是发送方创建全新的 `file:offer`，不得复用原 transferId、fileId 或 upload token。
 
@@ -115,7 +115,7 @@ Content-Length: <accepted-file-size>
 
 阶段 4 已实现 `folder:cancel`、`folder:progress`、`folder:complete` 和 `folder:error`。progress 同时携带当前 fileId、当前文件字节数和任务累计字节数，接收端与发送端执行单调性、文件上限、任务上限和队列状态校验。complete 使用 `file | folder` scope：逐文件确认精确大小，folder scope 确认全部内容已进入暂存树。cancel 当前取消整个文件夹任务，不支持保留其中部分文件。
 
-文件夹接受消息发送一个任务级 uploadKey 和过期时间。逐文件 token 由 HMAC-SHA-256 绑定 transferId 和 fileId 派生；HTTP 请求还绑定活动连接、来源 IP、当前队首、精确 Content-Length、固定 Content-Type 和一次性消费状态。文件通过 `POST /v2/folder-transfers/:transferId/files/:fileId` 串行上传，URL 不携带相对路径，目标位置只能来自已验证 manifest。
+文件夹接受消息发送一个任务级 uploadKey 和过期时间。逐块 token 由 HMAC-SHA-256 绑定 transferId、fileId 和 chunkIndex 派生；文件与普通文件任务共用 `PUT /v3/transfers/:transferId/files/:fileId/chunks/:chunkIndex`，接收协调器按 transferId 归属路由。URL 不携带相对路径，目标位置只能来自已验证 manifest；每个文件的全部块与最终摘要通过后才进入 staging 树。
 
 阶段 5 起，接收端内容完整时先进入 `publishing`，只有最终目录安全发布成功后才发送 folder-scope `folder:complete`；发送端收到该消息后进入 `completed`。发布失败使用 `folder:error` 携带 `FOLDER_PUBLISH_FAILED`，双方都不得把 staging 内容显示为成功。重试是新的 offer，必须更换 transferId、manifestId、全部 fileId 和 uploadKey。
 

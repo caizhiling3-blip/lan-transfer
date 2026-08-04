@@ -5,11 +5,16 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { AuthorizedSourceFile, FileAccessAdapter } from '../../src/main/file-transfer'
+import {
+  createChunkDescriptor,
+  deriveChunkUploadToken,
+} from '../../src/main/file-transfer/chunk-transfer'
 import { FileTransferCoordinator } from '../../src/main/file-transfer'
 import { LocalServer } from '../../src/main/server/local-server'
 import { SessionHistory } from '../../src/main/storage/session-history'
 import type { ConnectionManager } from '../../src/main/websocket/connection-manager'
 import { createAutoPairingConnectionManager } from '../helpers/secure-connection'
+import { DEFAULT_FILE_CHUNK_SIZE_BYTES } from '@shared/constants'
 import { deviceIdSchema, fileIdSchema } from '@shared/types'
 import type {
   DeviceInfo,
@@ -128,7 +133,7 @@ const createConnectedTransferPair = async (
   const incomingRequest = await incomingRequestPromise
   receiver.respondToRequest(incomingRequest.requestId, 'accept')
   await connectionPromise
-  return { senderCoordinator, receiverCoordinator }
+  return { senderCoordinator, receiverCoordinator, senderManager: sender, receiverPort: serverPort }
 }
 
 afterEach(async () => {
@@ -242,6 +247,118 @@ describe('single file transfer', () => {
 
     await expect(senderCompleted).resolves.toMatchObject({ status: 'completed', totalBytes: 0 })
     await expect(readFile(join(receiveDirectory, 'empty.txt'))).resolves.toHaveLength(0)
+  })
+
+  it('encrypts and transfers a file spanning multiple fixed chunks', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const sourcePath = join(sourceDirectory, 'multi-chunk.bin')
+    const content = Buffer.alloc(DEFAULT_FILE_CHUNK_SIZE_BYTES + 257, 0x5a)
+    await writeFile(sourcePath, content)
+    const source: AuthorizedSourceFile = {
+      path: sourcePath,
+      selection: {
+        selectionToken: 'k'.repeat(43),
+        fileId: fileIdSchema.parse('abababab-abab-4bab-8bab-abababababab'),
+        displayName: 'multi-chunk.bin',
+        size: content.byteLength,
+        mimeType: 'application/octet-stream',
+      },
+    }
+    const { senderCoordinator, receiverCoordinator, senderManager, receiverPort } =
+      await createConnectedTransferPair(source, receiveDirectory)
+    const uploadTokenPromise = new Promise<string>((resolve) => {
+      const unsubscribe = senderManager.subscribeFileMessages((message) => {
+        if (message.type !== 'file:accept') return
+        const authorization = message.payload.files[0]
+        if (authorization === undefined) return
+        unsubscribe()
+        resolve(authorization.uploadToken)
+      })
+    })
+    const offerPromise = waitForOffer(receiverCoordinator)
+    const receiverCompleted = waitForStatus(receiverCoordinator, 'completed')
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
+    const offer = await offerPromise
+    await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
+
+    await expect(receiverCompleted).resolves.toMatchObject({ transferredBytes: content.byteLength })
+    await expect(readFile(join(receiveDirectory, 'multi-chunk.bin'))).resolves.toEqual(content)
+    const uploadToken = await uploadTokenPromise
+    const descriptor = createChunkDescriptor(
+      offer.transferId,
+      {
+        fileId: source.selection.fileId,
+        size: content.byteLength,
+        chunkSize: DEFAULT_FILE_CHUNK_SIZE_BYTES,
+        chunkCount: 2,
+      },
+      0,
+    )
+    const duplicateCiphertext = senderManager.encryptFileChunk(
+      descriptor,
+      content.subarray(0, DEFAULT_FILE_CHUNK_SIZE_BYTES),
+    )
+    if (duplicateCiphertext === null) throw new Error('Expected an active secure session')
+    const duplicateResponse = await fetch(
+      `http://127.0.0.1:${String(receiverPort)}/v3/transfers/${offer.transferId}/files/${source.selection.fileId}/chunks/0`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${deriveChunkUploadToken(
+            uploadToken,
+            offer.transferId,
+            source.selection.fileId,
+            0,
+          )}`,
+          'Content-Length': String(duplicateCiphertext.byteLength),
+          'Content-Type': 'application/octet-stream',
+        },
+        body: new Uint8Array(duplicateCiphertext),
+      },
+    )
+    expect(duplicateResponse.status).toBe(200)
+  })
+
+  it('rejects an authenticated chunk whose ciphertext is modified', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const sourcePath = join(sourceDirectory, 'tampered.bin')
+    await writeFile(sourcePath, 'authenticated content')
+    const source: AuthorizedSourceFile = {
+      path: sourcePath,
+      selection: {
+        selectionToken: 'l'.repeat(43),
+        fileId: fileIdSchema.parse('cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd'),
+        displayName: 'tampered.bin',
+        size: Buffer.byteLength('authenticated content'),
+        mimeType: 'application/octet-stream',
+      },
+    }
+    const { senderCoordinator, receiverCoordinator, senderManager } =
+      await createConnectedTransferPair(source, receiveDirectory)
+    const encryptChunk = senderManager.encryptFileChunk.bind(senderManager)
+    let tampered = false
+    senderManager.encryptFileChunk = (descriptor, plaintext) => {
+      const encrypted = encryptChunk(descriptor, plaintext)
+      if (encrypted !== null && !tampered) {
+        encrypted[0] = encrypted[0]! ^ 1
+        tampered = true
+      }
+      return encrypted
+    }
+    const offerPromise = waitForOffer(receiverCoordinator)
+    const receiverFailed = waitForStatus(receiverCoordinator, 'failed')
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
+    const offer = await offerPromise
+    await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
+
+    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'CHUNK_INVALID' })
+    await expect(readFile(join(receiveDirectory, 'tampered.bin'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 
   it('fails both tasks when the selected source file changes size before upload', async () => {

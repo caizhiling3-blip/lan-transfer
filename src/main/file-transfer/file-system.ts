@@ -16,6 +16,7 @@ export const mapFileError = (error: unknown): ErrorCode => {
     if (error.message === 'FILE_NOT_FOUND') return 'FILE_NOT_FOUND'
     if (error.message === 'FILE_HASH_FAILED') return 'FILE_HASH_FAILED'
     if (error.message === 'FILE_INTEGRITY_FAILED') return 'FILE_INTEGRITY_FAILED'
+    if (error.message === 'CHUNK_INVALID') return 'CHUNK_INVALID'
     if (error.message === 'SOURCE_FILE_CHANGED') return 'SOURCE_FILE_CHANGED'
     if (error.message === 'FILE_TOO_LARGE') return 'FILE_TOO_LARGE'
     if (error.message === 'SAVE_DIRECTORY_INVALID') return 'SAVE_DIRECTORY_INVALID'

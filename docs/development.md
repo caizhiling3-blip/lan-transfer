@@ -224,3 +224,5 @@ v0.4.0 按 [安全配对与可恢复传输设计](v0.4.0.md) 的阶段 0–10 �
 阶段 4 不新增依赖。运行协议切换为 v3，WebSocket 先交换严格的 `secure:hello/challenge/proof`：challenge 与 proof 分别使用双方 Ed25519 长期私钥签署同一规范 transcript，X25519 共享秘密经 HKDF-SHA-256 派生方向控制密钥、nonce 前缀、文件根密钥和 confirmation key。proof 后只接受 AES-256-GCM envelope；AAD 绑定版本、connectionId 和单调 sequence，重复、回退、跳号、connectionId 错误、tag 错误或明文业务帧都会关闭连接且不回退 v2。双方对 transcript 派生同一 pairing requestId；已信任端也必须交换加密接受决定，只有双端满足信任条件后状态才进入 connected。为容纳 Base64 密文开销，WS 线缆帧硬上限调整为 256 KiB，解密后控制正文仍限制 128 KiB。阶段 4 只保护控制通道；现有 HTTP 文件正文到阶段 6 才改为固定分块加密，因此当前版本尚不宣称完整端到端文件加密。
 
 阶段 5 不新增依赖，使用 Node.js `crypto` 流式计算 SHA-256。发送文件和文件夹前先复核已授权源快照并串行计算摘要，secure offer/manifest 同时绑定固定块大小和精确块数；上传时再次计算源流摘要。接收端在随机临时内容完成后验证精确大小与摘要，只有全部通过才发布，否则返回 `FILE_INTEGRITY_FAILED` 并清理。摘要不进入 renderer、历史或日志。阶段 6 前 HTTP 正文仍为明文流。
+
+阶段 6 不新增依赖。普通文件和文件夹内容统一改用 4 MiB 固定块，通过 `PUT /v3/transfers/:transferId/files/:fileId/chunks/:chunkIndex` 串行上传。每块使用会话文件根密钥派生的独立 AES-256-GCM key/nonce，AAD 绑定连接与完整块描述；逐块 bearer 同时绑定任务、文件和索引。接收端只把认证成功的块写入预分配临时文件，相同块重试幂等，不同密文复用索引失败关闭。全部块和最终 SHA-256 通过后才安全发布；暂停、断线保留和跨会话续传留到阶段 7。

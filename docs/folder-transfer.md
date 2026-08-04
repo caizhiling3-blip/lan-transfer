@@ -130,8 +130,8 @@ receivingManifest -> awaitingAcceptance -> accepted
 
 - manifest 不完整、摘要不一致、超限或超时不能进入 awaitingAcceptance；
 - accept 只发送一个文件夹级 uploadKey 和 expiresAt，避免 1,000 个 token 超过 WS 限制；
-- 每个文件的 HTTP bearer token 使用 HMAC-SHA-256 从 uploadKey、transferId 和 fileId 派生；
-- 接收端只接受 manifest 顺序中的当前 fileId，每个派生 token 只消费一次；
+- 每个文件块的 HTTP bearer token 使用 HMAC-SHA-256 从 uploadKey、transferId、fileId 和 chunkIndex 派生；
+- 接收端只接受 manifest 顺序中的当前 fileId 和缺失块，相同已认证密文可幂等重试；
 - progress 必须单调且不能超过 manifest 总大小；
 - complete 前必须完成全部普通文件、创建全部空目录并进入 publishing；
 - cancel、断线、超时和应用退出会终止当前流并清理任务拥有的 staging 目录。
@@ -141,13 +141,13 @@ receivingManifest -> awaitingAcceptance -> accepted
 文件夹文件使用：
 
 ```text
-POST /v2/folder-transfers/:transferId/files/:fileId
-Authorization: Bearer <derived-file-token>
+PUT /v3/transfers/:transferId/files/:fileId/chunks/:chunkIndex
+Authorization: Bearer <derived-chunk-token>
 Content-Type: application/octet-stream
-Content-Length: <manifest-file-size>
+Content-Length: <plaintext-chunk-size + 16-byte-tag>
 ```
 
-服务端核对当前连接、来源 IP、transferId、当前队首 fileId、派生 token、精确长度、类型、期限和单次消费状态。URL 不包含相对路径；接收端只能从已验证 manifest 查找目标路径。
+服务端核对当前连接、来源 IP、transferId、当前队首 fileId、chunkIndex、派生 token、精确长度、类型和期限。每块由当前会话文件根密钥派生 AES-256-GCM key/nonce，认证成功后才写入 staging 临时文件的声明偏移；URL 不包含相对路径，接收端只能从已验证 manifest 查找目标路径。
 
 阶段 4 完成内容写入后，文件夹任务进入 `publishing`，而不是提前标记 `completed`。接收审批前 renderer 只获得文件夹摘要；接受后任务 DTO 才包含可移植相对路径和逐文件进度。任务取消为整个文件夹粒度，已写入 staging 的内容一并删除，不提供“保留已完成文件”的语义。
 
@@ -155,7 +155,7 @@ Content-Length: <manifest-file-size>
 
 ## 接收暂存与发布
 
-接受任务后，在用户授权接收目录下独占创建 `.lindu-folder-<transferId>.part` staging 目录。所有目录与文件都在该目录内创建，文件仍先写随机 `.part`，长度吻合并关闭后才发布到 staging 中对应相对位置。
+接受任务后，在用户授权接收目录下独占创建 `.lindu-folder-<transferId>.part` staging 目录。所有目录与文件都在该目录内创建，文件先预分配随机 `.part`，全部块认证且最终 SHA-256 一致后才发布到 staging 中对应相对位置。
 
 跨平台 Node API 没有可靠的“目录原子重命名且绝不覆盖”能力，因此不承诺整个文件夹一次原子出现。安全优先的发布流程为：
 

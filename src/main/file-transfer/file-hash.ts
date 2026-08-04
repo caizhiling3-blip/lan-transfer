@@ -13,6 +13,17 @@ export interface HashableFileSource {
   }
 }
 
+export const calculateFileSha256 = async (filePath: string): Promise<string> => {
+  const fileHandle = await open(filePath, 'r')
+  try {
+    const hash = createHash('sha256')
+    await pipeline(fileHandle.createReadStream({ autoClose: false }), hash)
+    return hash.digest('hex')
+  } finally {
+    await fileHandle.close().catch(() => undefined)
+  }
+}
+
 const matchesIdentity = (metadata: Stats, source: HashableFileSource): boolean =>
   source.identity === undefined ||
   (metadata.dev === source.identity.device &&

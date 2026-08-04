@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import {
   DEFAULT_FILE_CHUNK_SIZE_BYTES,
+  FILE_CHUNK_AUTH_TAG_BYTES,
   MAX_ENCRYPTED_ENVELOPE_BYTES,
   MAX_FILE_CHUNKS,
   MAX_FILE_SIZE_BYTES,
@@ -154,8 +155,8 @@ export const encryptedChunkDescriptorSchema = z
     ciphertextLength: z
       .number()
       .int()
-      .min(16)
-      .max(DEFAULT_FILE_CHUNK_SIZE_BYTES + 16),
+      .min(FILE_CHUNK_AUTH_TAG_BYTES)
+      .max(DEFAULT_FILE_CHUNK_SIZE_BYTES + FILE_CHUNK_AUTH_TAG_BYTES),
   })
   .strict()
 

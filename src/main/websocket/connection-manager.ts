@@ -45,6 +45,7 @@ import type {
   FileCancelMessage,
   FileCompleteMessage,
   FileErrorMessage,
+  EncryptedChunkDescriptor,
   FileProgressMessage,
   FileRejectMessage,
   FolderAcceptMessage,
@@ -83,8 +84,10 @@ import type { TextReceivedDto } from '@shared/ipc'
 import type { PairingCompletion, PairingCoordinator } from '../pairing'
 import {
   createPairingRequestId,
+  decryptFileChunk,
   deriveSecureSessionSecrets,
   deriveSharedSecret,
+  encryptFileChunk,
   FixedWindowRateLimiter,
   generateEphemeralKeyPair,
   generateHandshakeNonce,
@@ -275,6 +278,28 @@ export class ConnectionManager {
 
   public getPeer(): DeviceInfo | null {
     return this.peer === null ? null : { ...this.peer }
+  }
+
+  public encryptFileChunk(descriptor: EncryptedChunkDescriptor, plaintext: Buffer): Buffer | null {
+    if (
+      this.status.state !== 'connected' ||
+      this.connectionId === null ||
+      this.fileRootKey === null
+    ) {
+      return null
+    }
+    return encryptFileChunk(this.fileRootKey, this.connectionId, descriptor, plaintext)
+  }
+
+  public decryptFileChunk(descriptor: EncryptedChunkDescriptor, encrypted: Buffer): Buffer {
+    if (
+      this.status.state !== 'connected' ||
+      this.connectionId === null ||
+      this.fileRootKey === null
+    ) {
+      throw new Error('CONNECTION_CLOSED')
+    }
+    return decryptFileChunk(this.fileRootKey, this.connectionId, descriptor, encrypted)
   }
 
   public sendFileOffer(

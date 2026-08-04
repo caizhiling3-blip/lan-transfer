@@ -1,10 +1,8 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { link, lstat, mkdir, open, rm, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { request as createHttpRequest } from 'node:http'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { pipeline } from 'node:stream/promises'
 
 import {
   DEFAULT_FILE_CHUNK_SIZE_BYTES,
@@ -15,12 +13,10 @@ import {
   MAX_RETIRED_TRANSFER_IDS,
   TRANSFER_IDLE_TIMEOUT_MS,
   TRANSFER_ID_RETENTION_MS,
-  TRANSFER_PROGRESS_MESSAGE_INTERVAL_MS,
-  TRANSFER_PROGRESS_UPDATE_INTERVAL_MS,
 } from '@shared/constants'
 import type { ErrorCode } from '@shared/errors'
 import type { FolderOfferReceivedDto } from '@shared/ipc'
-import type { FolderManifestMessage } from '@shared/protocols'
+import type { EncryptedChunkDescriptor, FolderManifestMessage } from '@shared/protocols'
 import { fileIdSchema, manifestIdSchema, transferIdSchema } from '@shared/types'
 import type {
   ConnectionId,
@@ -40,7 +36,14 @@ import type { SessionHistory } from '../storage'
 import type { ConnectionManager, FolderControlMessage } from '../websocket'
 import type { AuthorizedSourceFolder } from './file-access-registry'
 import type { AuthorizedFolderFile } from './folder-scanner'
-import { calculateAuthorizedFileSha256 } from './file-hash'
+import {
+  createChunkDescriptor,
+  deriveChunkUploadToken,
+  readEncryptedRequest,
+  readFileChunk,
+  writePlaintextChunk,
+} from './chunk-transfer'
+import { calculateAuthorizedFileSha256, calculateFileSha256 } from './file-hash'
 import { mapFileError } from './file-system'
 import {
   assertFolderManifestChunkAllowed,
@@ -88,7 +91,7 @@ interface OutgoingFolderTransfer {
 
 interface IncomingFolderFile {
   readonly manifest: SecureFolderManifestFile
-  tokenUsed: boolean
+  readonly verifiedChunks: Map<number, string>
   temporaryPath?: string
   abortUpload?: () => void
   uploadPromise?: Promise<void>
@@ -115,16 +118,13 @@ interface IncomingFolderTransfer {
 
 type UploadOutcome = 'completed' | 'cancelled' | 'failed'
 
-const FOLDER_UPLOAD_ROUTE = /^\/v2\/folder-transfers\/([^/]+)\/files\/([^/?]+)$/u
+const FOLDER_UPLOAD_ROUTE = /^\/v3\/transfers\/([^/]+)\/files\/([^/]+)\/chunks\/(\d+)$/u
 const TERMINAL_TASK_STATUSES: readonly TransferStatus[] = [
   'completed',
   'failed',
   'cancelled',
   'rejected',
 ]
-
-const deriveUploadToken = (uploadKey: string, transferId: TransferId, fileId: FileId): string =>
-  createHmac('sha256', uploadKey).update(`${transferId}:${fileId}`).digest('base64url')
 
 const tokensMatch = (actual: string, expected: string): boolean => {
   const actualBytes = Buffer.from(actual)
@@ -473,7 +473,13 @@ export class FolderTransferCoordinator {
         throw new Error('CONNECTION_CLOSED')
       }
       this.emitTask(transfer.task)
-      if (transfer.task.files.length === 0) await this.finishIncomingContent(transfer)
+      if (transfer.task.files.length === 0) {
+        await this.finishIncomingContent(transfer)
+      } else {
+        for (const file of transfer.files.values()) {
+          if (file.manifest.chunkCount === 0) await this.finalizeIncomingFile(transfer, file)
+        }
+      }
     } catch (error) {
       const errorCode = mapFileError(error)
       await this.failIncoming(transfer, errorCode, true)
@@ -513,11 +519,18 @@ export class FolderTransferCoordinator {
     if (match === null) return false
     const transferId = transferIdSchema.safeParse(match[1])
     const fileId = fileIdSchema.safeParse(match[2])
-    if (!transferId.success || !fileId.success || request.method !== 'POST') {
+    const chunkIndex = Number(match[3])
+    if (
+      !transferId.success ||
+      !fileId.success ||
+      !Number.isSafeInteger(chunkIndex) ||
+      request.method !== 'PUT'
+    ) {
       this.writeResponse(response, 400)
       return true
     }
     const transfer = this.incoming.get(transferId.data)
+    if (transfer === undefined) return false
     const file = transfer?.files.get(fileId.data)
     const expectedFile = transfer?.task?.files.find((candidate) =>
       ['pending', 'transferring'].includes(candidate.status),
@@ -525,20 +538,30 @@ export class FolderTransferCoordinator {
     const authorization = request.headers.authorization
     const contentLength = Number(request.headers['content-length'])
     const connectionStatus = this.connectionManager.getStatus()
-    const expectedToken =
-      transfer?.uploadKey === undefined
-        ? null
-        : deriveUploadToken(transfer.uploadKey, transferId.data, fileId.data)
-    if (file?.tokenUsed === true) {
+    if (file?.uploadPromise !== undefined) {
       this.writeResponse(response, 409)
       return true
     }
+    let descriptor: EncryptedChunkDescriptor
+    try {
+      if (file === undefined) throw new Error('CHUNK_INVALID')
+      descriptor = createChunkDescriptor(transferId.data, file.manifest, chunkIndex)
+    } catch {
+      this.writeResponse(response, 400)
+      return true
+    }
+    const expectedToken =
+      transfer.uploadKey === undefined
+        ? null
+        : deriveChunkUploadToken(transfer.uploadKey, transferId.data, fileId.data, chunkIndex)
+    const nextMissingChunk = file === undefined ? -1 : this.getNextMissingChunk(file)
+    const isVerifiedDuplicate = file?.verifiedChunks.has(chunkIndex) === true
     if (
-      transfer === undefined ||
       transfer.task === undefined ||
       file === undefined ||
-      expectedFile?.fileId !== fileId.data ||
-      !['accepted', 'transferring'].includes(transfer.task.status) ||
+      (!isVerifiedDuplicate && expectedFile?.fileId !== fileId.data) ||
+      (!isVerifiedDuplicate && nextMissingChunk !== chunkIndex) ||
+      (!isVerifiedDuplicate && !['accepted', 'transferring'].includes(transfer.task.status)) ||
       expectedToken === null ||
       typeof authorization !== 'string' ||
       !authorization.startsWith('Bearer ') ||
@@ -546,7 +569,7 @@ export class FolderTransferCoordinator {
       transfer.tokenExpiresAt === undefined ||
       transfer.tokenExpiresAt < Date.now() ||
       !Number.isSafeInteger(contentLength) ||
-      contentLength !== file.manifest.size ||
+      contentLength !== descriptor.ciphertextLength ||
       normalizeRemoteAddress(request.socket.remoteAddress) !== transfer.peer.ipAddress ||
       connectionStatus.state !== 'connected' ||
       connectionStatus.connectionId !== transfer.connectionId ||
@@ -556,14 +579,13 @@ export class FolderTransferCoordinator {
       this.writeResponse(response, 403)
       return true
     }
-    file.tokenUsed = true
     transfer.activeFileId = fileId.data
     request.setTimeout(TRANSFER_IDLE_TIMEOUT_MS, () => {
       file.failureOverride = 'TRANSFER_TIMEOUT'
       request.destroy(new Error('TRANSFER_TIMEOUT'))
     })
     file.abortUpload = () => request.destroy(new Error('Transfer interrupted'))
-    const uploadPromise = this.receiveUpload(transfer, file, request, response)
+    const uploadPromise = this.receiveChunkUpload(transfer, file, descriptor, request, response)
     file.uploadPromise = uploadPromise
     void uploadPromise.finally(() => {
       delete file.abortUpload
@@ -670,7 +692,7 @@ export class FolderTransferCoordinator {
       validateFolderManifest(transfer.offer, manifest)
       transfer.manifest = manifest
       for (const file of manifest.files) {
-        transfer.files.set(file.fileId, { manifest: file, tokenUsed: false })
+        transfer.files.set(file.fileId, { manifest: file, verifiedChunks: new Map() })
       }
       transfer.task = createFolderTask(
         transfer.offer.transferId,
@@ -830,64 +852,39 @@ export class FolderTransferCoordinator {
       }
       const expectedDigest = transfer.manifest.files.find((file) => file.fileId === fileId)?.sha256
       if (expectedDigest === undefined) throw new Error('PROTOCOL_INVALID')
+      const secureManifest = transfer.manifest.files.find((file) => file.fileId === fileId)
+      if (secureManifest === undefined) throw new Error('PROTOCOL_INVALID')
       const uploadHash = createHash('sha256')
-      const activeSourceHandle = sourceHandle
-      await new Promise<void>((resolveResponse, rejectResponse) => {
-        let uploadedBytes = 0
-        let lastUpdateAt = 0
-        const uploadRequest = createHttpRequest(
-          {
-            host: transfer.task.peer.ipAddress,
-            port: transfer.task.peer.servicePort,
-            path: `/v2/folder-transfers/${transfer.task.transferId}/files/${fileId}`,
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${deriveUploadToken(
-                uploadKey,
-                transfer.task.transferId,
-                fileId,
-              )}`,
-              'Content-Length': sourceFile.manifest.size,
-              'Content-Type': 'application/octet-stream',
-            },
-          },
-          (response) => {
-            response.resume()
-            response.once('end', () => {
-              if (response.statusCode === 200) resolveResponse()
-              else rejectResponse(new Error('TRANSFER_FAILED'))
-            })
-          },
+      for (let chunkIndex = 0; chunkIndex < secureManifest.chunkCount; chunkIndex += 1) {
+        const descriptor = createChunkDescriptor(
+          transfer.task.transferId,
+          secureManifest,
+          chunkIndex,
         )
-        transfer.abortUpload = () => uploadRequest.destroy(new Error('TRANSFER_CANCELLED'))
-        uploadRequest.setTimeout(TRANSFER_IDLE_TIMEOUT_MS, () => {
-          uploadRequest.destroy(new Error('TRANSFER_TIMEOUT'))
-        })
-        uploadRequest.once('error', rejectResponse)
-        const source = activeSourceHandle.createReadStream()
-        source.on('data', (chunk) => {
-          uploadHash.update(chunk)
-          uploadedBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength
-          const current = transfer.task.files.find((file) => file.fileId === fileId)
-          if (current === undefined) return
-          const transferred = Math.min(uploadedBytes, current.size)
-          const elapsedSeconds = Math.max((Date.now() - startedAt) / 1_000, 0.001)
-          transfer.task = updateFile(
-            transfer.task,
-            fileId,
-            'transferring',
-            transferred,
-            Math.round(transferred / elapsedSeconds),
-            'transferring',
-          )
-          if (Date.now() - lastUpdateAt >= TRANSFER_PROGRESS_UPDATE_INTERVAL_MS) {
-            lastUpdateAt = Date.now()
-            this.emitTask(transfer.task)
-          }
-        })
-        void pipeline(source, uploadRequest).catch(rejectResponse)
-      })
+        const plaintext = await readFileChunk(sourceHandle, descriptor)
+        uploadHash.update(plaintext)
+        const encrypted = this.connectionManager.encryptFileChunk(descriptor, plaintext)
+        plaintext.fill(0)
+        if (encrypted === null) throw new Error('CONNECTION_CLOSED')
+        try {
+          await this.uploadEncryptedChunk(transfer, descriptor, encrypted, uploadKey)
+        } finally {
+          encrypted.fill(0)
+        }
+        const transferredBytes = descriptor.plaintextOffset + descriptor.plaintextLength
+        const elapsedSeconds = Math.max((Date.now() - startedAt) / 1_000, 0.001)
+        transfer.task = updateFile(
+          transfer.task,
+          fileId,
+          'transferring',
+          transferredBytes,
+          Math.round(transferredBytes / elapsedSeconds),
+          'transferring',
+        )
+        this.emitTask(transfer.task)
+      }
       if (uploadHash.digest('hex') !== expectedDigest) throw new Error('SOURCE_FILE_CHANGED')
+      if (secureManifest.chunkCount === 0) return 'completed'
       this.completeOutgoingFile(transfer, fileId)
       return 'completed'
     } catch (error) {
@@ -907,9 +904,54 @@ export class FolderTransferCoordinator {
     }
   }
 
-  private async receiveUpload(
+  private uploadEncryptedChunk(
+    transfer: OutgoingFolderTransfer,
+    descriptor: EncryptedChunkDescriptor,
+    encrypted: Buffer,
+    uploadKey: string,
+  ): Promise<void> {
+    return new Promise((resolveResponse, rejectResponse) => {
+      const uploadRequest = createHttpRequest(
+        {
+          host: transfer.task.peer.ipAddress,
+          port: transfer.task.peer.servicePort,
+          path: `/v3/transfers/${descriptor.transferId}/files/${descriptor.fileId}/chunks/${String(descriptor.chunkIndex)}`,
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${deriveChunkUploadToken(
+              uploadKey,
+              descriptor.transferId,
+              descriptor.fileId,
+              descriptor.chunkIndex,
+            )}`,
+            'Content-Length': descriptor.ciphertextLength,
+            'Content-Type': 'application/octet-stream',
+          },
+        },
+        (response) => {
+          response.resume()
+          response.once('end', () => {
+            if (response.statusCode === 200) resolveResponse()
+            else
+              rejectResponse(
+                new Error(response.statusCode === 422 ? 'CHUNK_INVALID' : 'TRANSFER_FAILED'),
+              )
+          })
+        },
+      )
+      transfer.abortUpload = () => uploadRequest.destroy(new Error('TRANSFER_CANCELLED'))
+      uploadRequest.setTimeout(TRANSFER_IDLE_TIMEOUT_MS, () => {
+        uploadRequest.destroy(new Error('TRANSFER_TIMEOUT'))
+      })
+      uploadRequest.once('error', rejectResponse)
+      uploadRequest.end(encrypted)
+    })
+  }
+
+  private async receiveChunkUpload(
     transfer: IncomingFolderTransfer,
     file: IncomingFolderFile,
+    descriptor: EncryptedChunkDescriptor,
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
@@ -919,82 +961,65 @@ export class FolderTransferCoordinator {
     }
     const fileId = file.manifest.fileId
     const startedAt = Date.now()
-    const temporaryPath = resolve(transfer.stagingRoot, `.lindu-file-${randomUUID()}.part`)
-    file.temporaryPath = temporaryPath
-    transfer.task = updateFile(transfer.task, fileId, 'transferring', 0, 0, 'transferring')
-    this.emitTask(transfer.task)
     try {
-      const targetPath = resolveManifestPath(transfer.stagingRoot, file.manifest.relativePath)
-      await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 })
-      const output = createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 })
-      const receivedHash = createHash('sha256')
-      let receivedBytes = 0
-      let lastUpdateAt = 0
-      let lastProgressMessageAt = 0
-      request.on('data', (chunk: Buffer) => {
-        receivedHash.update(chunk)
-        receivedBytes += chunk.byteLength
-        if (receivedBytes > file.manifest.size) {
-          file.failureOverride = 'PROTOCOL_INVALID'
-          request.destroy(new Error('PROTOCOL_INVALID'))
-          return
+      if (file.temporaryPath === undefined) {
+        file.temporaryPath = resolve(transfer.stagingRoot, `.lindu-file-${randomUUID()}.part`)
+        const temporaryHandle = await open(file.temporaryPath, 'wx+', 0o600)
+        try {
+          await temporaryHandle.truncate(file.manifest.size)
+        } finally {
+          await temporaryHandle.close().catch(() => undefined)
         }
-        if (transfer.task === undefined) return
-        const elapsedSeconds = Math.max((Date.now() - startedAt) / 1_000, 0.001)
-        transfer.task = updateFile(
-          transfer.task,
-          fileId,
-          'transferring',
-          receivedBytes,
-          Math.round(receivedBytes / elapsedSeconds),
-          'transferring',
-        )
-        const now = Date.now()
-        if (now - lastUpdateAt >= TRANSFER_PROGRESS_UPDATE_INTERVAL_MS) {
-          lastUpdateAt = now
-          this.emitTask(transfer.task)
-        }
-        if (now - lastProgressMessageAt >= TRANSFER_PROGRESS_MESSAGE_INTERVAL_MS) {
-          lastProgressMessageAt = now
-          void this.connectionManager.sendFolderProgress({
-            transferId: transfer.offer.transferId,
-            fileId,
-            transferredBytes: receivedBytes,
-            totalTransferredBytes: transfer.task.transferredBytes,
-          })
-        }
-      })
-      await pipeline(request, output)
-      if (receivedBytes !== file.manifest.size) throw new Error('TRANSFER_FAILED')
-      if (receivedHash.digest('hex') !== file.manifest.sha256) {
-        throw new Error('FILE_INTEGRITY_FAILED')
       }
-      await link(temporaryPath, targetPath)
-      await unlink(temporaryPath)
-      delete file.temporaryPath
+      const encrypted = await readEncryptedRequest(request, descriptor.ciphertextLength)
+      const encryptedDigest = createHash('sha256').update(encrypted).digest('hex')
+      const verifiedDigest = file.verifiedChunks.get(descriptor.chunkIndex)
+      if (verifiedDigest !== undefined) {
+        if (verifiedDigest !== encryptedDigest) throw new Error('CHUNK_INVALID')
+        this.writeResponse(response, 200)
+        return
+      }
+      let plaintext: Buffer
+      try {
+        plaintext = this.connectionManager.decryptFileChunk(descriptor, encrypted)
+      } finally {
+        encrypted.fill(0)
+      }
+      try {
+        await writePlaintextChunk(file.temporaryPath, descriptor, plaintext)
+      } finally {
+        plaintext.fill(0)
+      }
+      file.verifiedChunks.set(descriptor.chunkIndex, encryptedDigest)
+      const receivedBytes = [...file.verifiedChunks.keys()].reduce(
+        (total, chunkIndex) =>
+          total +
+          createChunkDescriptor(transfer.offer.transferId, file.manifest, chunkIndex)
+            .plaintextLength,
+        0,
+      )
+      const elapsedSeconds = Math.max((Date.now() - startedAt) / 1_000, 0.001)
       transfer.task = updateFile(
         transfer.task,
         fileId,
-        'completed',
+        'transferring',
         receivedBytes,
-        0,
-        transfer.task.files.every((item) => item.fileId === fileId || item.status === 'completed')
-          ? 'publishing'
-          : 'transferring',
+        Math.round(descriptor.plaintextLength / elapsedSeconds),
+        'transferring',
       )
       this.emitTask(transfer.task)
-      await this.connectionManager.sendFolderComplete({
-        scope: 'file',
+      await this.connectionManager.sendFolderProgress({
         transferId: transfer.offer.transferId,
         fileId,
-        size: receivedBytes,
+        transferredBytes: receivedBytes,
+        totalTransferredBytes: transfer.task.transferredBytes,
       })
-      this.writeResponse(response, 200)
-      if (transfer.task.files.every((item) => item.status === 'completed')) {
-        await this.finishIncomingContent(transfer)
+      if (file.verifiedChunks.size === file.manifest.chunkCount) {
+        await this.finalizeIncomingFile(transfer, file)
       }
+      this.writeResponse(response, 200)
     } catch (error) {
-      await unlink(temporaryPath).catch(() => undefined)
+      if (file.temporaryPath !== undefined) await unlink(file.temporaryPath).catch(() => undefined)
       delete file.temporaryPath
       const errorCode = file.failureOverride ?? mapFileError(error)
       if (errorCode === 'TRANSFER_CANCELLED') {
@@ -1002,7 +1027,7 @@ export class FolderTransferCoordinator {
         this.writeResponse(response, 409)
       } else {
         await this.failIncoming(transfer, errorCode)
-        this.writeResponse(response, 500)
+        this.writeResponse(response, errorCode === 'CHUNK_INVALID' ? 422 : 500)
         await this.connectionManager.sendFolderError({
           transferId: transfer.offer.transferId,
           fileId,
@@ -1010,6 +1035,57 @@ export class FolderTransferCoordinator {
         })
       }
       delete file.failureOverride
+    }
+  }
+
+  private getNextMissingChunk(file: IncomingFolderFile): number {
+    for (let chunkIndex = 0; chunkIndex < file.manifest.chunkCount; chunkIndex += 1) {
+      if (!file.verifiedChunks.has(chunkIndex)) return chunkIndex
+    }
+    return file.manifest.chunkCount
+  }
+
+  private async finalizeIncomingFile(
+    transfer: IncomingFolderTransfer,
+    file: IncomingFolderFile,
+  ): Promise<void> {
+    if (transfer.task === undefined || transfer.stagingRoot === undefined) {
+      throw new Error('PROTOCOL_INVALID')
+    }
+    if (file.temporaryPath === undefined) {
+      file.temporaryPath = resolve(transfer.stagingRoot, `.lindu-file-${randomUUID()}.part`)
+      const emptyHandle = await open(file.temporaryPath, 'wx', 0o600)
+      await emptyHandle.close()
+    }
+    if ((await calculateFileSha256(file.temporaryPath)) !== file.manifest.sha256) {
+      throw new Error('FILE_INTEGRITY_FAILED')
+    }
+    const targetPath = resolveManifestPath(transfer.stagingRoot, file.manifest.relativePath)
+    await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 })
+    await link(file.temporaryPath, targetPath)
+    await unlink(file.temporaryPath)
+    delete file.temporaryPath
+    transfer.task = updateFile(
+      transfer.task,
+      file.manifest.fileId,
+      'completed',
+      file.manifest.size,
+      0,
+      transfer.task.files.every(
+        (item) => item.fileId === file.manifest.fileId || item.status === 'completed',
+      )
+        ? 'publishing'
+        : 'transferring',
+    )
+    this.emitTask(transfer.task)
+    await this.connectionManager.sendFolderComplete({
+      scope: 'file',
+      transferId: transfer.offer.transferId,
+      fileId: file.manifest.fileId,
+      size: file.manifest.size,
+    })
+    if (transfer.task.files.every((item) => item.status === 'completed')) {
+      await this.finishIncomingContent(transfer)
     }
   }
 

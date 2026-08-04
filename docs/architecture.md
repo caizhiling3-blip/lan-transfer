@@ -116,7 +116,7 @@ HTTP 服务只把精确上传路由交给协调器，其他路径保持 404。�
 
 阶段 3 已实现独立 `FolderTransferCoordinator`。发送端消费 folder selectionToken，计算 manifest SHA-256 并按 96 KiB 目标大小分片；接收端按 manifestId 和 chunkIndex 有界组装，验证摘要、数量、总大小、fileId、可移植路径冲突以及“文件占用父目录”冲突后才产生 IPC offer。文件与文件夹协调器共享单活动发送约束，基础 UI 每次只允许一个待发送文件夹。接受时只解析主进程持有的默认目录或 directoryToken，路径和 uploadKey 不暴露给 renderer。阶段 3 不注册文件夹 HTTP 路由。
 
-阶段 4 在同一 HTTP server 注册精确的 `/v2/folder-transfers/:transferId/files/:fileId` 路由。接收方接受时先校验目录与空间，独占创建 `.lindu-folder-<transferId>.part`，再创建 manifest 声明的空目录和文件父目录。任务级 uploadKey 只在两个主进程间传递，逐文件 bearer token 由 HMAC-SHA-256 绑定 transferId/fileId 派生；接收端还绑定当前连接、来源 IP、到期时间、精确长度、MIME、队首顺序和单次消费状态。
+阶段 4 最初为文件夹注册整文件 HTTP 流路由；阶段 6 已由统一 `/v3/transfers/:transferId/files/:fileId/chunks/:chunkIndex` 加密块路由取代。接收方接受时仍先校验目录与空间，独占创建 `.lindu-folder-<transferId>.part`，再创建 manifest 声明的空目录和文件父目录。任务级 uploadKey 只在两个主进程间传递，逐块 bearer 绑定 transferId、fileId 和 chunkIndex；接收端还绑定当前连接、来源 IP、到期时间、精确长度、MIME 和队首顺序。
 
 发送端逐文件重新 `lstat`、打开并核对设备号、inode、mtime 和大小，然后用 Node stream 串行上传。接收文件先写入 staging 根内随机 `.part`，完整关闭后使用不覆盖硬链接放入已验证相对位置。双方的任务 DTO 在接受后包含可移植相对路径和逐文件进度，不包含绝对路径、staging 路径或授权 token。全部内容到齐后状态为 `publishing`；该状态明确表示内容完整但最终目录尚未由阶段 5 发布。失败、取消、超时、断线或退出会中止活动流并递归清理当前任务独占的 staging。
 
@@ -203,8 +203,10 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 阶段 3 的 key-agreement 模块只返回内存中的 X25519 私钥对象、公开 DER 和 nonce。规范 transcript 使用固定数组顺序绑定协议版本、双方角色、deviceId、nonce、临时公钥和长期公钥，避免对象键顺序形成不同派生结果。`PairingCoordinator` 是首次信任审批的事实来源：UI 只投影短指纹、六位验证码和截止时间，双方确认前不写 store；已信任设备只有相同公钥才可免配对刷新验证时间。可信设备 IPC 返回不含公钥的摘要，取消信任与最近设备删除保持独立。
 
-阶段 4 的 `ConnectionManager` 只在明文握手阶段接受 `secure:hello/challenge/proof`。双方签名验证和共享秘密派生完成后，`SecureSessionCipher` 按方向持有独立 AES-256-GCM key、四字节 nonce 前缀和从 0 开始的精确单调 sequence；envelope 的版本、connectionId 与 sequence 同时作为 AAD。配对决定、心跳、断开、文字及既有文件/文件夹控制消息全部进入密文，任何明文业务消息、tag 篡改或序号重放都失败关闭。重置连接时立即清零控制 key、nonce 前缀和文件根 key 引用。HTTP 文件内容在阶段 6 前仍沿用现有流，不能仅凭控制通道加密宣称文件端到端加密。
+阶段 4 的 `ConnectionManager` 只在明文握手阶段接受 `secure:hello/challenge/proof`。双方签名验证和共享秘密派生完成后，`SecureSessionCipher` 按方向持有独立 AES-256-GCM key、四字节 nonce 前缀和从 0 开始的精确单调 sequence；envelope 的版本、connectionId 与 sequence同时作为 AAD。配对决定、心跳、断开、文字及文件/文件夹控制消息全部进入密文，任何明文业务消息、tag 篡改或序号重放都失败关闭。重置连接时立即清零控制 key、nonce 前缀和文件根 key 引用。
 
-阶段 5 的 `file-hash` 使用打开后的文件句柄流式计算 SHA-256，并在计算前后复核路径条目、设备号、inode、大小和修改时间。文件 offer 使用 secure schema，文件夹 manifest 的总摘要覆盖逐文件摘要与分块参数。上传流再次计算发送内容摘要，接收流则在随机临时文件发布前计算摘要；不匹配会失败并清理临时内容。renderer、历史和日志都不取得完整摘要。阶段 6 前 HTTP 正文仍可被同网段观察，但篡改内容不能作为完整文件发布。
+阶段 5 的 `file-hash` 使用打开后的文件句柄流式计算 SHA-256，并在计算前后复核路径条目、设备号、inode、大小和修改时间。文件 offer 使用 secure schema，文件夹 manifest 的总摘要覆盖逐文件摘要与分块参数。renderer、历史和日志都不取得完整摘要。
+
+阶段 6 的 `secure-file-chunk` 从会话文件根密钥按 connectionId、transferId、fileId 和 chunkIndex 派生独立 AES-256-GCM key/nonce，AAD 绑定协议版本、偏移和明文长度。`chunk-transfer` 负责精确读取、逐块 HMAC bearer、受限 HTTP body 和偏移写入。文件与文件夹协调器共用 `/v3/transfers/.../chunks/...` 路由，接收端先认证最多 4 MiB 的单块再写入预分配临时文件，并保存有界 verified map；最终 SHA-256 通过前不会发布。连接重置会清零文件根密钥，旧会话块无法在新连接使用。
 
 恢复状态机以接收端已认证分块 bitmap 为事实来源，发送端只调度缺失块。最终 SHA-256 通过前 staging 永远不能发布；持久化恢复记录与路径同样使用 `safeStorage`，损坏、过期、身份变化或源文件变化时失败关闭。完整设计与威胁模型见 [v0.4.0 设计](v0.4.0.md)。

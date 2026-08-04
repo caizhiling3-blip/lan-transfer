@@ -103,12 +103,12 @@ describe('LocalServer', () => {
     })
     runningServers.push(server)
     const port = await server.start(0, '127.0.0.1')
-    const uploadUrl = `http://127.0.0.1:${String(port)}/v2/folder-transfers/transfer/files/file`
+    const uploadUrl = `http://127.0.0.1:${String(port)}/v3/transfers/transfer/files/file/chunks/0`
 
     expect((await fetch(`http://127.0.0.1:${String(port)}/health`)).status).toBe(200)
-    expect((await fetch(uploadUrl, { method: 'POST' })).status).toBe(404)
-    expect((await fetch(uploadUrl, { method: 'POST' })).status).toBe(404)
-    expect((await fetch(uploadUrl, { method: 'POST' })).status).toBe(429)
+    expect((await fetch(uploadUrl, { method: 'PUT' })).status).toBe(404)
+    expect((await fetch(uploadUrl, { method: 'PUT' })).status).toBe(404)
+    expect((await fetch(uploadUrl, { method: 'PUT' })).status).toBe(429)
     expect((await fetch(`http://127.0.0.1:${String(port)}/health`)).status).toBe(429)
   })
 

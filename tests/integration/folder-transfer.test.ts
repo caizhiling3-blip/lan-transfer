@@ -241,9 +241,9 @@ describe('folder transfer', () => {
     const firstFile = source.manifest.files[0]
     if (firstFile === undefined) throw new Error('Expected a manifest file')
     const replayResponse = await fetch(
-      `http://127.0.0.1:${String(receiverPort)}/v2/folder-transfers/${offer.transferId}/files/${firstFile.fileId}`,
+      `http://127.0.0.1:${String(receiverPort)}/v3/transfers/${offer.transferId}/files/${firstFile.fileId}/chunks/0`,
       {
-        method: 'POST',
+        method: 'PUT',
         headers: {
           Authorization: 'Bearer invalid-replay-token',
           'Content-Length': '0',
@@ -251,7 +251,7 @@ describe('folder transfer', () => {
         },
       },
     )
-    expect(replayResponse.status).toBe(409)
+    expect(replayResponse.status).toBe(403)
     expect(sender.getTasks().find((task) => task.transferId === offer.transferId)?.status).toBe(
       'completed',
     )

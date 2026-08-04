@@ -20,8 +20,7 @@ import { FixedWindowRateLimiter } from '../security'
 
 const HEALTH_PATH = '/health'
 const WEBSOCKET_PATH = '/v1/ws'
-const FILE_UPLOAD_PATH = /^\/v1\/transfers\/[^/?]+\/files\/[^/?]+$/u
-const FOLDER_UPLOAD_PATH = /^\/v2\/folder-transfers\/[^/?]+\/files\/[^/?]+$/u
+const ENCRYPTED_CHUNK_UPLOAD_PATH = /^\/v3\/transfers\/[^/?]+\/files\/[^/?]+\/chunks\/\d+$/u
 
 const writeJson = (response: ServerResponse, statusCode: number, body: unknown): void => {
   const content = JSON.stringify(body)
@@ -50,8 +49,7 @@ const getRemoteIdentity = (request: IncomingMessage): string => {
 }
 
 const isTransferUploadRequest = (request: IncomingMessage): boolean =>
-  request.method === 'POST' &&
-  (FILE_UPLOAD_PATH.test(request.url ?? '') || FOLDER_UPLOAD_PATH.test(request.url ?? ''))
+  request.method === 'PUT' && ENCRYPTED_CHUNK_UPLOAD_PATH.test(request.url ?? '')
 
 const rejectUpgrade = (socket: Duplex, statusCode: number, statusText: string): void => {
   socket.end(
