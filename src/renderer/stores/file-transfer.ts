@@ -239,6 +239,22 @@ export const useFileTransferStore = defineStore('fileTransfer', {
       }
       this.tasks = upsertTask(this.tasks, result.data)
     },
+    async pause(transferId: TransferTaskDto['transferId']): Promise<void> {
+      const result = await window.lanTransfer.transfer.pause(transferId)
+      if (!result.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+        return
+      }
+      this.tasks = upsertTask(this.tasks, result.data)
+    },
+    async resume(transferId: TransferTaskDto['transferId']): Promise<void> {
+      const result = await window.lanTransfer.transfer.resume(transferId)
+      if (!result.ok) {
+        this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+        return
+      }
+      this.tasks = upsertTask(this.tasks, result.data)
+    },
     async retry(transferId: TransferTaskDto['transferId']): Promise<void> {
       const result = await window.lanTransfer.transfer.retry(transferId)
       if (!result.ok) {

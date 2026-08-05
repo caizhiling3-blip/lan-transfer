@@ -42,8 +42,7 @@ export type SecureSessionState =
   | 'closed'
   | 'error'
 
-export type RecoverableTransferStatus =
-  TransferStatus | 'paused' | 'reconnecting' | 'verifying' | 'recoverable'
+export type RecoverableTransferStatus = TransferStatus
 
 export interface RecoverableTransferSummaryDto {
   readonly transferId: TransferId

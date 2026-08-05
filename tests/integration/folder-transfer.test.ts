@@ -364,7 +364,7 @@ describe('folder transfer', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('cleans staging when the connection closes during an active upload', async () => {
+  it('cleans staging when the peer connection closes during an active upload', async () => {
     const sourceRoot = await mkdtemp(join(tmpdir(), 'lindu-interrupted-source-'))
     const sourcePath = join(sourceRoot, '中断测试')
     const receiveDirectory = await mkdtemp(join(tmpdir(), 'lindu-interrupted-receive-'))
@@ -374,20 +374,32 @@ describe('folder transfer', () => {
     const source = await createSource(sourcePath, 'i'.repeat(43))
     const { sender, receiver, senderManager } = await createConnectedPair(source, receiveDirectory)
     const offerPromise = waitForOffer(receiver)
-    const receiverTransferring = waitForStatus(receiver, 'transferring')
-    const senderFailed = waitForStatus(sender, 'failed')
-    const receiverFailed = waitForStatus(receiver, 'failed')
+    const encryptChunk = senderManager.encryptFileChunk.bind(senderManager)
+    let disconnectScheduled = false
+    senderManager.encryptFileChunk = (descriptor, plaintext) => {
+      const encrypted = encryptChunk(descriptor, plaintext)
+      if (!disconnectScheduled) {
+        disconnectScheduled = true
+        queueMicrotask(() => senderManager.disconnect())
+      }
+      return encrypted
+    }
 
     await sender.offerFolder(source.selection.selectionToken)
     const offer = await offerPromise
     await receiver.respondToOffer(offer.transferId, 'accept')
-    await receiverTransferring
-    senderManager.disconnect()
 
-    await expect(senderFailed).resolves.toMatchObject({ errorCode: 'CONNECTION_CLOSED' })
-    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'CONNECTION_CLOSED' })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(sender.getTasks().at(-1)).toMatchObject({
+      status: 'failed',
+      errorCode: 'CONNECTION_CLOSED',
+    })
+    expect(receiver.getTasks().at(-1)).toMatchObject({
+      status: 'failed',
+      errorCode: 'CONNECTION_CLOSED',
+    })
     await expect(
       stat(join(receiveDirectory, `.lindu-folder-${offer.transferId}.part`)),
     ).rejects.toMatchObject({ code: 'ENOENT' })
-  })
+  }, 10_000)
 })

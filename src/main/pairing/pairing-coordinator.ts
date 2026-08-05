@@ -108,6 +108,11 @@ export class PairingCoordinator {
     return this.pending?.request ?? null
   }
 
+  public isTrustedIdentity(deviceId: DeviceInfo['deviceId'], identity: PublicIdentityDto): boolean {
+    const trusted = this.trustedDevices.get(deviceId)
+    return trusted !== null && trusted.identity.publicKey === identity.publicKey
+  }
+
   public respond(requestId: RequestId, decision: 'accept' | 'reject'): boolean {
     const pending = this.pending
     if (pending === null || pending.request.requestId !== requestId) return false

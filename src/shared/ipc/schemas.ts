@@ -129,6 +129,10 @@ export const historyCleanupCriteriaSchema = z
           'awaitingAcceptance',
           'accepted',
           'transferring',
+          'paused',
+          'reconnecting',
+          'verifying',
+          'recoverable',
           'publishing',
           'completed',
           'failed',
@@ -137,7 +141,7 @@ export const historyCleanupCriteriaSchema = z
         ]),
       )
       .min(1)
-      .max(9)
+      .max(13)
       .optional(),
     query: z.string().trim().min(1).max(MAX_HISTORY_SEARCH_LENGTH).optional(),
     before: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -217,6 +221,8 @@ export const ipcInvokeRequestSchemas = {
   'transfer:cancel': z
     .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })
     .strict(),
+  'transfer:pause': z.object({ transferId: transferIdSchema }).strict(),
+  'transfer:resume': z.object({ transferId: transferIdSchema }).strict(),
   'transfer:retry': z.object({ transferId: transferIdSchema }).strict(),
   'transfer:show-received-file': z
     .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })

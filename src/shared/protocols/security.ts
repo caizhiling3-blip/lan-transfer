@@ -7,6 +7,7 @@ import {
   MAX_FILE_CHUNKS,
   MAX_FILE_SIZE_BYTES,
   MAX_FILES_PER_TRANSFER,
+  MAX_FOLDER_FILES,
   MAX_VERIFIED_CHUNK_RANGES,
   SECURE_PROTOCOL_VERSION,
 } from '../constants'
@@ -237,7 +238,7 @@ export const transferResumeStateMessageSchema = createSecureControlMessageSchema
   z
     .object({
       transferId: transferIdSchema,
-      files: z.array(resumableFileStateSchema).min(1).max(MAX_FILES_PER_TRANSFER),
+      files: z.array(resumableFileStateSchema).min(1).max(MAX_FOLDER_FILES),
     })
     .strict(),
 )

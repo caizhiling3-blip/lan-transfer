@@ -16,7 +16,11 @@ import {
 } from '@shared/constants'
 import type { ErrorCode } from '@shared/errors'
 import type { FolderOfferReceivedDto } from '@shared/ipc'
-import type { EncryptedChunkDescriptor, FolderManifestMessage } from '@shared/protocols'
+import type {
+  EncryptedChunkDescriptor,
+  FolderManifestMessage,
+  TransferResumeStateMessage,
+} from '@shared/protocols'
 import { fileIdSchema, manifestIdSchema, transferIdSchema } from '@shared/types'
 import type {
   ConnectionId,
@@ -33,7 +37,7 @@ import { parsePortableRelativePath } from '@shared/utils'
 
 import { assertSafeReceiveDirectory, assertSufficientDiskSpace } from '../security'
 import type { SessionHistory } from '../storage'
-import type { ConnectionManager, FolderControlMessage } from '../websocket'
+import type { ConnectionManager, FolderControlMessage, TransferControlMessage } from '../websocket'
 import type { AuthorizedSourceFolder } from './file-access-registry'
 import type { AuthorizedFolderFile } from './folder-scanner'
 import {
@@ -85,6 +89,7 @@ interface OutgoingFolderTransfer {
   abortUpload?: () => void
   queuePromise?: Promise<void>
   readonly remoteProgress: Map<FileId, number>
+  readonly verifiedChunks: Map<FileId, Set<number>>
   remoteFolderComplete: boolean
   timeout?: ReturnType<typeof setTimeout>
 }
@@ -101,7 +106,7 @@ interface IncomingFolderFile {
 interface IncomingFolderTransfer {
   task?: TransferTaskDto
   readonly peer: DeviceInfo
-  readonly connectionId: ConnectionId
+  connectionId: ConnectionId
   readonly offer: Extract<FolderControlMessage, { type: 'folder:offer' }>['payload']
   readonly chunks: Map<number, ManifestChunk>
   readonly files: Map<FileId, IncomingFolderFile>
@@ -114,9 +119,10 @@ interface IncomingFolderTransfer {
   publishedPath?: string
   publishPromise?: Promise<void>
   timeout?: ReturnType<typeof setTimeout>
+  preserveInterruption: boolean
 }
 
-type UploadOutcome = 'completed' | 'cancelled' | 'failed'
+type UploadOutcome = 'completed' | 'cancelled' | 'failed' | 'paused'
 
 const FOLDER_UPLOAD_ROUTE = /^\/v3\/transfers\/([^/]+)\/files\/([^/]+)\/chunks\/(\d+)$/u
 const TERMINAL_TASK_STATUSES: readonly TransferStatus[] = [
@@ -224,6 +230,7 @@ export class FolderTransferCoordinator {
   private readonly retiredTransferIds = new Map<TransferId, number>()
   private readonly unsubscribeMessages: () => void
   private readonly unsubscribeConnection: () => void
+  private readonly unsubscribeTransferMessages: () => void
 
   public constructor(
     private readonly connectionManager: ConnectionManager,
@@ -234,9 +241,35 @@ export class FolderTransferCoordinator {
     this.unsubscribeMessages = connectionManager.subscribeFolderMessages((message) =>
       this.handleMessage(message),
     )
+    this.unsubscribeTransferMessages = connectionManager.subscribeTransferMessages((message) =>
+      this.handleTransferControlMessage(message),
+    )
     this.unsubscribeConnection = connectionManager.subscribeStatus((status) => {
       if (status.state === 'disconnected') {
-        void this.failActiveTransfers('CONNECTION_CLOSED')
+        if (status.errorCode === 'RESUME_EXPIRED') {
+          this.markRecoverableTransfers()
+        } else if (this.hasActiveTransfers() && connectionManager.shouldResumeTransfers()) {
+          this.markTransfersReconnecting()
+        } else if (this.hasActiveTransfers() && connectionManager.allowsTransferRecovery()) {
+          const peer = this.getTasks().find(
+            (task) => !TERMINAL_TASK_STATUSES.includes(task.status),
+          )?.peer
+          if (peer !== undefined) {
+            connectionManager.expectTransferReconnect(peer.deviceId)
+            this.markTransfersReconnecting()
+          } else void this.failActiveTransfers('CONNECTION_CLOSED')
+        } else if (this.hasActiveTransfers()) {
+          void this.failActiveTransfers('CONNECTION_CLOSED')
+        }
+      } else if (status.state === 'connected' && status.peer !== undefined) {
+        for (const transfer of this.outgoing.values()) {
+          if (
+            transfer.task.status === 'reconnecting' &&
+            status.peer.deviceId === transfer.task.peer.deviceId
+          ) {
+            void this.resume(transfer.task.transferId)
+          }
+        }
       }
     })
   }
@@ -381,6 +414,7 @@ export class FolderTransferCoordinator {
       manifestSha256,
       chunks,
       remoteProgress: new Map(),
+      verifiedChunks: new Map(),
       remoteFolderComplete: false,
     }
     this.outgoing.set(transferId, transfer)
@@ -514,6 +548,38 @@ export class FolderTransferCoordinator {
     return incoming.task
   }
 
+  public async pause(transferId: TransferId): Promise<TransferTaskDto | null> {
+    const transfer = this.outgoing.get(transferId)
+    if (
+      transfer === undefined ||
+      !['accepted', 'transferring', 'verifying'].includes(transfer.task.status)
+    ) {
+      return null
+    }
+    if (!(await this.connectionManager.sendTransferPause(transferId))) return null
+    transfer.task = this.createPausedTask(transfer.task)
+    transfer.abortUpload?.()
+    this.emitTask(transfer.task)
+    return transfer.task
+  }
+
+  public async resume(transferId: TransferId): Promise<TransferTaskDto | null> {
+    const transfer = this.outgoing.get(transferId)
+    if (
+      transfer === undefined ||
+      !['paused', 'reconnecting', 'recoverable'].includes(transfer.task.status)
+    ) {
+      return null
+    }
+    transfer.task = rebuildTask(transfer.task, transfer.task.files, 'verifying')
+    this.emitTask(transfer.task)
+    if (!(await this.connectionManager.sendTransferResumeRequest(transferId))) {
+      transfer.task = rebuildTask(transfer.task, transfer.task.files, 'reconnecting')
+      this.emitTask(transfer.task)
+    }
+    return transfer.task
+  }
+
   public handleHttpRequest(request: IncomingMessage, response: ServerResponse): boolean {
     const match = FOLDER_UPLOAD_ROUTE.exec(request.url ?? '')
     if (match === null) return false
@@ -597,6 +663,7 @@ export class FolderTransferCoordinator {
 
   public async shutdown(): Promise<void> {
     this.unsubscribeMessages()
+    this.unsubscribeTransferMessages()
     this.unsubscribeConnection()
     await this.failActiveTransfers('TRANSFER_CANCELLED')
   }
@@ -619,6 +686,181 @@ export class FolderTransferCoordinator {
       if (outgoing !== undefined) void this.failOutgoing(outgoing, 'TRANSFER_CANCELLED')
       if (incoming !== undefined) void this.failIncoming(incoming, 'TRANSFER_CANCELLED')
     }
+  }
+
+  private handleTransferControlMessage(message: TransferControlMessage): void {
+    const transferId = message.payload.transferId
+    if (message.type === 'transfer:pause') {
+      const outgoing = this.outgoing.get(transferId)
+      if (outgoing !== undefined && !TERMINAL_TASK_STATUSES.includes(outgoing.task.status)) {
+        outgoing.task = this.createPausedTask(outgoing.task)
+        outgoing.abortUpload?.()
+        this.emitTask(outgoing.task)
+      }
+      const incoming = this.incoming.get(transferId)
+      if (incoming?.task !== undefined && !TERMINAL_TASK_STATUSES.includes(incoming.task.status)) {
+        incoming.preserveInterruption = true
+        incoming.task = this.createPausedTask(incoming.task)
+        for (const file of incoming.files.values()) file.abortUpload?.()
+        this.emitTask(incoming.task)
+      }
+      return
+    }
+    if (message.type === 'transfer:resume-request') {
+      const incoming = this.incoming.get(transferId)
+      if (incoming !== undefined) void this.sendIncomingResumeState(incoming)
+      return
+    }
+    const outgoing = this.outgoing.get(transferId)
+    if (outgoing !== undefined) this.applyOutgoingResumeState(outgoing, message)
+  }
+
+  private async sendIncomingResumeState(transfer: IncomingFolderTransfer): Promise<void> {
+    if (
+      transfer.task === undefined ||
+      transfer.manifest === undefined ||
+      TERMINAL_TASK_STATUSES.includes(transfer.task.status)
+    ) {
+      return
+    }
+    const connectionStatus = this.connectionManager.getStatus()
+    if (connectionStatus.state !== 'connected' || connectionStatus.connectionId === undefined)
+      return
+    transfer.connectionId = connectionStatus.connectionId
+    transfer.preserveInterruption = false
+    transfer.uploadKey = randomBytes(32).toString('base64url')
+    transfer.tokenExpiresAt = Date.now() + FOLDER_TRANSFER_TIMEOUT_MS
+    if (
+      !(await this.connectionManager.sendFolderAccept({
+        transferId: transfer.offer.transferId,
+        uploadKey: transfer.uploadKey,
+        expiresAt: transfer.tokenExpiresAt,
+      }))
+    ) {
+      return
+    }
+    const files: TransferResumeStateMessage['payload']['files'] = transfer.manifest.files.map(
+      (manifestFile) => ({
+        fileId: manifestFile.fileId,
+        size: manifestFile.size,
+        sha256: manifestFile.sha256,
+        chunkSize: manifestFile.chunkSize,
+        chunkCount: manifestFile.chunkCount,
+        verifiedRanges: this.createVerifiedRanges(
+          transfer.files.get(manifestFile.fileId)?.verifiedChunks ?? new Map(),
+          manifestFile.chunkCount,
+        ),
+      }),
+    )
+    transfer.task = rebuildTask(
+      transfer.task,
+      transfer.task.files.map((file) =>
+        file.status === 'completed'
+          ? file
+          : { ...file, status: 'pending' as const, bytesPerSecond: 0 },
+      ),
+      'transferring',
+    )
+    this.emitTask(transfer.task)
+    await this.connectionManager.sendTransferResumeState({
+      transferId: transfer.offer.transferId,
+      files,
+    })
+  }
+
+  private applyOutgoingResumeState(
+    transfer: OutgoingFolderTransfer,
+    message: TransferResumeStateMessage,
+  ): void {
+    if (!['verifying', 'reconnecting', 'paused', 'recoverable'].includes(transfer.task.status))
+      return
+    if (
+      message.payload.files.length !== transfer.manifest.files.length ||
+      new Set(message.payload.files.map((file) => file.fileId)).size !==
+        transfer.manifest.files.length
+    ) {
+      void this.failOutgoing(transfer, 'RESUME_STATE_INVALID', true)
+      return
+    }
+    try {
+      const nextFiles = transfer.task.files.map((taskFile) => {
+        const manifestFile = transfer.manifest.files.find((file) => file.fileId === taskFile.fileId)
+        const state = message.payload.files.find((file) => file.fileId === taskFile.fileId)
+        if (
+          manifestFile === undefined ||
+          state === undefined ||
+          state.size !== manifestFile.size ||
+          state.sha256 !== manifestFile.sha256 ||
+          state.chunkSize !== manifestFile.chunkSize ||
+          state.chunkCount !== manifestFile.chunkCount
+        ) {
+          throw new Error('RESUME_STATE_INVALID')
+        }
+        const verified = this.expandVerifiedRanges(state.verifiedRanges, state.chunkCount)
+        transfer.verifiedChunks.set(taskFile.fileId, verified)
+        const transferredBytes = [...verified].reduce(
+          (total, chunkIndex) =>
+            total +
+            createChunkDescriptor(transfer.task.transferId, state, chunkIndex).plaintextLength,
+          0,
+        )
+        return {
+          ...taskFile,
+          status:
+            verified.size === state.chunkCount ? ('completed' as const) : ('pending' as const),
+          transferredBytes,
+          bytesPerSecond: 0,
+        }
+      })
+      transfer.task = rebuildTask(transfer.task, nextFiles, 'accepted')
+      this.emitTask(transfer.task)
+      this.startOutgoingQueue(transfer)
+    } catch {
+      void this.failOutgoing(transfer, 'RESUME_STATE_INVALID', true)
+    }
+  }
+
+  private createVerifiedRanges(
+    verifiedChunks: ReadonlyMap<number, string>,
+    chunkCount: number,
+  ): TransferResumeStateMessage['payload']['files'][number]['verifiedRanges'] {
+    const indexes = [...verifiedChunks.keys()]
+      .filter((index) => index < chunkCount)
+      .sort((a, b) => a - b)
+    const ranges: { start: number; end: number }[] = []
+    for (const index of indexes) {
+      const previous = ranges.at(-1)
+      if (previous !== undefined && previous.end === index) previous.end += 1
+      else ranges.push({ start: index, end: index + 1 })
+    }
+    return ranges
+  }
+
+  private expandVerifiedRanges(
+    ranges: TransferResumeStateMessage['payload']['files'][number]['verifiedRanges'],
+    chunkCount: number,
+  ): Set<number> {
+    const verified = new Set<number>()
+    let previousEnd = 0
+    for (const range of ranges) {
+      if (range.start < previousEnd || range.end > chunkCount)
+        throw new Error('RESUME_STATE_INVALID')
+      for (let index = range.start; index < range.end; index += 1) verified.add(index)
+      previousEnd = range.end
+    }
+    return verified
+  }
+
+  private createPausedTask(task: TransferTaskDto): TransferTaskDto {
+    return rebuildTask(
+      task,
+      task.files.map((file) =>
+        ['completed', 'failed', 'cancelled', 'rejected'].includes(file.status)
+          ? file
+          : { ...file, status: 'paused' as const, bytesPerSecond: 0 },
+      ),
+      'paused',
+    )
   }
 
   private handleOffer(
@@ -646,6 +888,7 @@ export class FolderTransferCoordinator {
       offer,
       chunks: new Map(),
       files: new Map(),
+      preserveInterruption: false,
     }
     transfer.timeout = this.createTimeout(() => {
       void this.failIncoming(transfer, 'TRANSFER_TIMEOUT', true)
@@ -713,17 +956,22 @@ export class FolderTransferCoordinator {
   ): void {
     const transfer = this.outgoing.get(accept.transferId)
     if (transfer === undefined) return
-    if (transfer.task.status !== 'awaitingAcceptance' || accept.expiresAt <= Date.now()) {
+    if (
+      !['awaitingAcceptance', 'paused', 'reconnecting', 'verifying'].includes(
+        transfer.task.status,
+      ) ||
+      accept.expiresAt <= Date.now()
+    ) {
       void this.failOutgoing(transfer, 'PROTOCOL_INVALID', true)
       return
     }
     transfer.uploadKey = accept.uploadKey
     transfer.tokenExpiresAt = accept.expiresAt
-    transfer.task = rebuildTask(transfer.task, transfer.task.files, 'accepted')
-    this.emitTask(transfer.task)
-    const queuePromise = this.runOutgoingQueue(transfer)
-    transfer.queuePromise = queuePromise
-    void queuePromise.finally(() => delete transfer.queuePromise)
+    if (transfer.task.status === 'awaitingAcceptance') {
+      transfer.task = rebuildTask(transfer.task, transfer.task.files, 'accepted')
+      this.emitTask(transfer.task)
+      this.startOutgoingQueue(transfer)
+    }
   }
 
   private handleReject(transferId: TransferId): void {
@@ -805,9 +1053,16 @@ export class FolderTransferCoordinator {
     }
     for (const source of transfer.source.files) {
       if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) break
+      if (
+        transfer.task.files.find((file) => file.fileId === source.manifest.fileId)?.status ===
+        'completed'
+      )
+        continue
       const outcome = await this.uploadFile(transfer, source, uploadKey)
       if (outcome !== 'completed') break
     }
+    if (['paused', 'reconnecting', 'verifying', 'recoverable'].includes(transfer.task.status))
+      return
     if (
       transfer.task.status !== 'completed' &&
       transfer.task.files.every((file) => file.status === 'completed')
@@ -818,6 +1073,18 @@ export class FolderTransferCoordinator {
     }
   }
 
+  private startOutgoingQueue(transfer: OutgoingFolderTransfer): void {
+    if (transfer.queuePromise !== undefined) {
+      void transfer.queuePromise.finally(() => {
+        if (transfer.task.status === 'accepted') this.startOutgoingQueue(transfer)
+      })
+      return
+    }
+    const queuePromise = this.runOutgoingQueue(transfer)
+    transfer.queuePromise = queuePromise
+    void queuePromise.finally(() => delete transfer.queuePromise)
+  }
+
   private async uploadFile(
     transfer: OutgoingFolderTransfer,
     sourceFile: AuthorizedFolderFile,
@@ -825,8 +1092,25 @@ export class FolderTransferCoordinator {
   ): Promise<UploadOutcome> {
     const fileId = sourceFile.manifest.fileId
     const startedAt = Date.now()
+    const secureManifest = transfer.manifest.files.find((file) => file.fileId === fileId)
+    if (secureManifest === undefined) return 'failed'
+    const verifiedChunks = transfer.verifiedChunks.get(fileId) ?? new Set<number>()
+    transfer.verifiedChunks.set(fileId, verifiedChunks)
+    const resumedBytes = [...verifiedChunks].reduce(
+      (total, chunkIndex) =>
+        total +
+        createChunkDescriptor(transfer.task.transferId, secureManifest, chunkIndex).plaintextLength,
+      0,
+    )
     transfer.activeFileId = fileId
-    transfer.task = updateFile(transfer.task, fileId, 'transferring', 0, 0, 'transferring')
+    transfer.task = updateFile(
+      transfer.task,
+      fileId,
+      'transferring',
+      resumedBytes,
+      0,
+      'transferring',
+    )
     this.emitTask(transfer.task)
     let sourceHandle: Awaited<ReturnType<typeof open>> | null = null
     try {
@@ -850,19 +1134,27 @@ export class FolderTransferCoordinator {
       ) {
         throw new Error('FILE_NOT_FOUND')
       }
-      const expectedDigest = transfer.manifest.files.find((file) => file.fileId === fileId)?.sha256
-      if (expectedDigest === undefined) throw new Error('PROTOCOL_INVALID')
-      const secureManifest = transfer.manifest.files.find((file) => file.fileId === fileId)
-      if (secureManifest === undefined) throw new Error('PROTOCOL_INVALID')
-      const uploadHash = createHash('sha256')
+      const expectedDigest = secureManifest.sha256
+      if (
+        (await calculateAuthorizedFileSha256({
+          path: sourceFile.path,
+          size: sourceFile.manifest.size,
+          identity: sourceFile.identity,
+        })) !== expectedDigest
+      ) {
+        throw new Error('SOURCE_FILE_CHANGED')
+      }
       for (let chunkIndex = 0; chunkIndex < secureManifest.chunkCount; chunkIndex += 1) {
+        if (verifiedChunks.has(chunkIndex)) continue
+        if (['paused', 'reconnecting', 'recoverable'].includes(transfer.task.status)) {
+          throw new Error('TRANSFER_CANCELLED')
+        }
         const descriptor = createChunkDescriptor(
           transfer.task.transferId,
           secureManifest,
           chunkIndex,
         )
         const plaintext = await readFileChunk(sourceHandle, descriptor)
-        uploadHash.update(plaintext)
         const encrypted = this.connectionManager.encryptFileChunk(descriptor, plaintext)
         plaintext.fill(0)
         if (encrypted === null) throw new Error('CONNECTION_CLOSED')
@@ -871,6 +1163,7 @@ export class FolderTransferCoordinator {
         } finally {
           encrypted.fill(0)
         }
+        verifiedChunks.add(chunkIndex)
         const transferredBytes = descriptor.plaintextOffset + descriptor.plaintextLength
         const elapsedSeconds = Math.max((Date.now() - startedAt) / 1_000, 0.001)
         transfer.task = updateFile(
@@ -883,11 +1176,11 @@ export class FolderTransferCoordinator {
         )
         this.emitTask(transfer.task)
       }
-      if (uploadHash.digest('hex') !== expectedDigest) throw new Error('SOURCE_FILE_CHANGED')
       if (secureManifest.chunkCount === 0) return 'completed'
       this.completeOutgoingFile(transfer, fileId)
       return 'completed'
     } catch (error) {
+      if (['paused', 'reconnecting', 'recoverable'].includes(transfer.task.status)) return 'paused'
       if (transfer.task.status === 'cancelled') return 'cancelled'
       const errorCode = mapFileError(error)
       await this.failOutgoing(transfer, errorCode)
@@ -1019,6 +1312,16 @@ export class FolderTransferCoordinator {
       }
       this.writeResponse(response, 200)
     } catch (error) {
+      if (
+        transfer.preserveInterruption ||
+        transfer.task === undefined ||
+        ['paused', 'reconnecting'].includes(transfer.task.status)
+      ) {
+        delete file.abortUpload
+        delete file.failureOverride
+        if (!response.writableEnded) this.writeResponse(response, 409)
+        return
+      }
       if (file.temporaryPath !== undefined) await unlink(file.temporaryPath).catch(() => undefined)
       delete file.temporaryPath
       const errorCode = file.failureOverride ?? mapFileError(error)
@@ -1189,6 +1492,43 @@ export class FolderTransferCoordinator {
         .filter(({ task }) => task !== undefined && !TERMINAL_TASK_STATUSES.includes(task.status))
         .map((transfer) => this.failIncoming(transfer, errorCode)),
     ])
+  }
+
+  private markTransfersReconnecting(): void {
+    for (const transfer of this.outgoing.values()) {
+      if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) continue
+      const pausedTask = this.createPausedTask(transfer.task)
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'reconnecting')
+      transfer.abortUpload?.()
+      this.emitTask(transfer.task)
+    }
+    for (const transfer of this.incoming.values()) {
+      if (transfer.task === undefined || TERMINAL_TASK_STATUSES.includes(transfer.task.status)) {
+        continue
+      }
+      transfer.preserveInterruption = true
+      const pausedTask = this.createPausedTask(transfer.task)
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'reconnecting')
+      for (const file of transfer.files.values()) file.abortUpload?.()
+      this.emitTask(transfer.task)
+    }
+  }
+
+  private markRecoverableTransfers(): void {
+    for (const transfer of this.outgoing.values()) {
+      if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) continue
+      const pausedTask = this.createPausedTask(transfer.task)
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'recoverable', 'RESUME_EXPIRED')
+      this.emitTask(transfer.task)
+    }
+    for (const transfer of this.incoming.values()) {
+      if (transfer.task === undefined || TERMINAL_TASK_STATUSES.includes(transfer.task.status)) {
+        continue
+      }
+      const pausedTask = this.createPausedTask(transfer.task)
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'recoverable', 'RESUME_EXPIRED')
+      this.emitTask(transfer.task)
+    }
   }
 
   private async failOutgoing(

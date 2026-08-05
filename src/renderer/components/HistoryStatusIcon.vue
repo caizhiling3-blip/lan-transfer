@@ -20,6 +20,11 @@ defineProps<{ readonly status: TransferStatus }>()
         v-else-if="status === 'transferring' || status === 'publishing'"
         d="M5 7h8.5m-2.7-2.5L13.5 7l-2.7 2.5M15 13H6.5m2.7 2.5L6.5 13l2.7-2.5"
       />
+      <path v-else-if="status === 'paused'" d="M7.5 6v8m5-8v8" />
+      <path
+        v-else-if="status === 'reconnecting' || status === 'verifying' || status === 'recoverable'"
+        d="M14.2 7.5A5 5 0 1 0 15 11m-.8-3.5V4.8m0 2.7h-2.7"
+      />
       <path v-else d="M10 5.2v5l3.1 1.8" />
     </svg>
   </span>
@@ -73,8 +78,15 @@ defineProps<{ readonly status: TransferStatus }>()
 }
 
 .is-transferring,
+.is-reconnecting,
+.is-verifying,
 .is-publishing {
   background: #3478f6;
+}
+
+.is-paused,
+.is-recoverable {
+  background: #d97706;
 }
 
 .is-awaitingAcceptance {

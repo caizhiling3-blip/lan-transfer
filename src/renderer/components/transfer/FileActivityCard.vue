@@ -23,6 +23,8 @@ defineEmits<{
   respond: [decision: 'accept' | 'reject', chooseDirectory?: boolean]
   cancelTask: []
   cancelFile: [fileId: FileId]
+  pause: []
+  resume: []
   retry: []
   showReceivedFile: []
   navigate: [page: 'home' | 'settings']
@@ -33,6 +35,10 @@ const statusLabels: Readonly<Record<TransferStatus, string>> = {
   awaitingAcceptance: '等待确认',
   accepted: '已接受',
   transferring: '传输中',
+  paused: '已暂停',
+  reconnecting: '正在重连',
+  verifying: '校验续传状态',
+  recoverable: '可继续',
   publishing: '等待发布',
   completed: '已完成',
   failed: '失败',
@@ -42,9 +48,25 @@ const statusLabels: Readonly<Record<TransferStatus, string>> = {
 
 const isIncomingOffer = computed(() => props.incomingOffer?.transferId === props.task.transferId)
 const isTaskActive = computed(() =>
-  ['awaitingAcceptance', 'accepted', 'transferring', 'publishing', 'pending'].includes(
-    props.task.status,
-  ),
+  [
+    'awaitingAcceptance',
+    'accepted',
+    'transferring',
+    'paused',
+    'reconnecting',
+    'verifying',
+    'recoverable',
+    'publishing',
+    'pending',
+  ].includes(props.task.status),
+)
+const canPause = computed(
+  () =>
+    props.task.direction === 'send' &&
+    ['accepted', 'transferring', 'verifying'].includes(props.task.status),
+)
+const canResume = computed(
+  () => props.task.direction === 'send' && ['paused', 'recoverable'].includes(props.task.status),
 )
 const canRetry = computed(
   () =>
@@ -70,7 +92,10 @@ const canShowReceivedFile = computed(
 const tagType = computed(() => {
   if (props.task.status === 'completed') return 'success'
   if (['failed', 'rejected', 'cancelled'].includes(props.task.status)) return 'danger'
-  if (['transferring', 'publishing'].includes(props.task.status)) return 'primary'
+  if (['transferring', 'reconnecting', 'verifying', 'publishing'].includes(props.task.status)) {
+    return 'primary'
+  }
+  if (props.task.status === 'recoverable') return 'warning'
   return 'info'
 })
 const isTaskTerminal = computed(() =>
@@ -219,6 +244,10 @@ const getUnfinishedReason = (file: TransferTaskDto['files'][number]): string => 
     </section>
 
     <div v-if="!isIncomingOffer" class="task-actions">
+      <el-button v-if="canPause" size="small" plain @click="$emit('pause')">暂停</el-button>
+      <el-button v-if="canResume" size="small" type="primary" plain @click="$emit('resume')">
+        继续传输
+      </el-button>
       <el-button v-if="isTaskActive" size="small" type="danger" plain @click="$emit('cancelTask')">
         取消任务
       </el-button>

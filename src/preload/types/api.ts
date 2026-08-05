@@ -102,6 +102,8 @@ export interface LanTransferApi {
       directoryToken?: string,
     ): Promise<IpcInvokeResponse<'transfer:respond-to-offer'>>
     cancel(transferId: TransferId, fileId?: FileId): Promise<IpcInvokeResponse<'transfer:cancel'>>
+    pause(transferId: TransferId): Promise<IpcInvokeResponse<'transfer:pause'>>
+    resume(transferId: TransferId): Promise<IpcInvokeResponse<'transfer:resume'>>
     retry(transferId: TransferId): Promise<IpcInvokeResponse<'transfer:retry'>>
     showReceivedFile(
       transferId: TransferId,

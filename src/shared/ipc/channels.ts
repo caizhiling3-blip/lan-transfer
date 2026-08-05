@@ -30,6 +30,8 @@ export const IPC_INVOKE_CHANNELS = [
   'transfer:cancel-queued',
   'transfer:respond-to-offer',
   'transfer:cancel',
+  'transfer:pause',
+  'transfer:resume',
   'transfer:retry',
   'transfer:show-received-file',
   'history:list',

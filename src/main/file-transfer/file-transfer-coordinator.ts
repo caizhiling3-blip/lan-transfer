@@ -18,6 +18,7 @@ import type {
   EncryptedChunkDescriptor,
   FileAcceptMessage,
   SecureFileMetadata,
+  TransferResumeStateMessage,
 } from '@shared/protocols'
 import { fileIdSchema, transferIdSchema } from '@shared/types'
 import type {
@@ -32,7 +33,7 @@ import type {
 
 import type { SessionHistory } from '../storage'
 import { assertSafeReceiveDirectory, assertSufficientDiskSpace } from '../security'
-import type { ConnectionManager, FileControlMessage } from '../websocket'
+import type { ConnectionManager, FileControlMessage, TransferControlMessage } from '../websocket'
 import type { AuthorizedSourceFile } from './file-access-registry'
 import {
   createChunkDescriptor,
@@ -65,6 +66,7 @@ interface OutgoingTransfer {
   readonly authorizations: Map<FileId, string>
   readonly remoteProgress: Map<FileId, number>
   readonly expectedDigests: Map<FileId, string>
+  readonly verifiedChunks: Map<FileId, Set<number>>
   readonly cancelledFiles: Set<FileId>
   cancelAll: boolean
   activeFileId?: FileId
@@ -88,13 +90,14 @@ interface IncomingFileState {
 interface IncomingTransfer {
   task: TransferTaskDto
   readonly files: Map<FileId, IncomingFileState>
-  readonly connectionId: ConnectionId
+  connectionId: ConnectionId
   directoryPath?: string
   cancelAll: boolean
+  preserveInterruption: boolean
   offerTimeout?: ReturnType<typeof setTimeout>
 }
 
-type UploadOutcome = 'completed' | 'cancelled' | 'failed'
+type UploadOutcome = 'completed' | 'cancelled' | 'failed' | 'paused'
 
 const UPLOAD_ROUTE = /^\/v3\/transfers\/([^/]+)\/files\/([^/]+)\/chunks\/(\d+)$/u
 const TERMINAL_TASK_STATUSES: readonly TransferStatus[] = [
@@ -124,6 +127,7 @@ export class FileTransferCoordinator {
   private readonly recordedTransfers = new Map<TransferId, number>()
   private readonly unsubscribeFromMessages: () => void
   private readonly unsubscribeFromConnection: () => void
+  private readonly unsubscribeFromTransferMessages: () => void
 
   public constructor(
     private readonly connectionManager: ConnectionManager,
@@ -135,8 +139,36 @@ export class FileTransferCoordinator {
     this.unsubscribeFromMessages = connectionManager.subscribeFileMessages((message) => {
       this.handleControlMessage(message)
     })
+    this.unsubscribeFromTransferMessages = connectionManager.subscribeTransferMessages((message) =>
+      this.handleTransferControlMessage(message),
+    )
     this.unsubscribeFromConnection = connectionManager.subscribeStatus((status) => {
-      if (status.state === 'disconnected') void this.failActiveTransfers('CONNECTION_CLOSED')
+      if (status.state === 'disconnected') {
+        if (status.errorCode === 'RESUME_EXPIRED') {
+          this.markRecoverableTransfers()
+        } else if (this.hasActiveTransfers() && connectionManager.shouldResumeTransfers()) {
+          this.markTransfersReconnecting()
+        } else if (this.hasActiveTransfers() && connectionManager.allowsTransferRecovery()) {
+          const peer = this.getTasks().find(
+            (task) => !TERMINAL_TASK_STATUSES.includes(task.status),
+          )?.peer
+          if (peer !== undefined) {
+            connectionManager.expectTransferReconnect(peer.deviceId)
+            this.markTransfersReconnecting()
+          } else void this.failActiveTransfers('CONNECTION_CLOSED')
+        } else if (this.hasActiveTransfers()) {
+          void this.failActiveTransfers('CONNECTION_CLOSED')
+        }
+      } else if (status.state === 'connected' && status.peer !== undefined) {
+        for (const transfer of this.outgoing.values()) {
+          if (
+            transfer.task.status === 'reconnecting' &&
+            status.peer.deviceId === transfer.task.peer.deviceId
+          ) {
+            void this.resume(transfer.task.transferId)
+          }
+        }
+      }
     })
   }
 
@@ -284,6 +316,40 @@ export class FileTransferCoordinator {
     return incoming.task
   }
 
+  public async pause(transferId: TransferId): Promise<TransferTaskDto | null> {
+    const transfer = this.outgoing.get(transferId)
+    if (
+      transfer === undefined ||
+      transfer.task.direction !== 'send' ||
+      !['accepted', 'transferring', 'verifying'].includes(transfer.task.status)
+    ) {
+      return null
+    }
+    if (!(await this.connectionManager.sendTransferPause(transferId))) return null
+    transfer.task = this.createPausedTask(transfer.task)
+    transfer.abortUpload?.()
+    this.emitTask(transfer.task)
+    return transfer.task
+  }
+
+  public async resume(transferId: TransferId): Promise<TransferTaskDto | null> {
+    const transfer = this.outgoing.get(transferId)
+    if (
+      transfer === undefined ||
+      transfer.task.direction !== 'send' ||
+      !['paused', 'reconnecting', 'recoverable'].includes(transfer.task.status)
+    ) {
+      return null
+    }
+    transfer.task = rebuildTask(transfer.task, transfer.task.files, 'verifying')
+    this.emitTask(transfer.task)
+    if (!(await this.connectionManager.sendTransferResumeRequest(transferId))) {
+      transfer.task = rebuildTask(transfer.task, transfer.task.files, 'reconnecting')
+      this.emitTask(transfer.task)
+    }
+    return transfer.task
+  }
+
   public async retry(transferId: TransferId): Promise<TransferTaskDto | null> {
     const previous = this.outgoing.get(transferId)
     if (
@@ -389,6 +455,7 @@ export class FileTransferCoordinator {
 
   public async shutdown(): Promise<void> {
     this.unsubscribeFromMessages()
+    this.unsubscribeFromTransferMessages()
     this.unsubscribeFromConnection()
     await this.failActiveTransfers('TRANSFER_CANCELLED')
   }
@@ -416,6 +483,7 @@ export class FileTransferCoordinator {
       authorizations: new Map(),
       remoteProgress: new Map(),
       expectedDigests: new Map(),
+      verifiedChunks: new Map(),
       cancelledFiles: new Set(),
       cancelAll: false,
     }
@@ -537,6 +605,184 @@ export class FileTransferCoordinator {
     }
   }
 
+  private handleTransferControlMessage(message: TransferControlMessage): void {
+    const transferId = message.payload.transferId
+    if (message.type === 'transfer:pause') {
+      const outgoing = this.outgoing.get(transferId)
+      if (outgoing !== undefined && !TERMINAL_TASK_STATUSES.includes(outgoing.task.status)) {
+        outgoing.task = this.createPausedTask(outgoing.task)
+        outgoing.abortUpload?.()
+        this.emitTask(outgoing.task)
+      }
+      const incoming = this.incoming.get(transferId)
+      if (incoming !== undefined && !TERMINAL_TASK_STATUSES.includes(incoming.task.status)) {
+        incoming.preserveInterruption = true
+        incoming.task = this.createPausedTask(incoming.task)
+        for (const file of incoming.files.values()) file.abortUpload?.()
+        this.emitTask(incoming.task)
+      }
+      return
+    }
+    if (message.type === 'transfer:resume-request') {
+      const incoming = this.incoming.get(transferId)
+      if (incoming !== undefined) void this.sendIncomingResumeState(incoming)
+      return
+    }
+    const outgoing = this.outgoing.get(transferId)
+    if (outgoing !== undefined) this.applyOutgoingResumeState(outgoing, message)
+  }
+
+  private async sendIncomingResumeState(transfer: IncomingTransfer): Promise<void> {
+    if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) return
+    const connectionStatus = this.connectionManager.getStatus()
+    if (connectionStatus.state !== 'connected' || connectionStatus.connectionId === undefined)
+      return
+    transfer.connectionId = connectionStatus.connectionId
+    transfer.preserveInterruption = false
+    const authorizationStartedAt = Date.now()
+    const authorizations: FileAcceptMessage['payload']['files'] = []
+    let authorizationIndex = 0
+    for (const file of transfer.files.values()) {
+      const taskFile = transfer.task.files.find(
+        (candidate) => candidate.fileId === file.metadata.fileId,
+      )
+      if (taskFile === undefined || taskFile.status === 'completed') continue
+      authorizationIndex += 1
+      file.uploadToken = randomBytes(32).toString('base64url')
+      file.tokenExpiresAt = authorizationStartedAt + TRANSFER_TIMEOUT_MS * authorizationIndex
+      authorizations.push({
+        fileId: file.metadata.fileId,
+        uploadToken: file.uploadToken,
+        expiresAt: file.tokenExpiresAt,
+      })
+    }
+    if (
+      authorizations.length > 0 &&
+      !(await this.connectionManager.sendFileAccept(transfer.task.transferId, authorizations))
+    ) {
+      return
+    }
+    const files: TransferResumeStateMessage['payload']['files'] = [...transfer.files.values()].map(
+      (file) => ({
+        fileId: file.metadata.fileId,
+        size: file.metadata.size,
+        sha256: file.metadata.sha256,
+        chunkSize: file.metadata.chunkSize,
+        chunkCount: file.metadata.chunkCount,
+        verifiedRanges: this.createVerifiedRanges(file.verifiedChunks, file.metadata.chunkCount),
+      }),
+    )
+    transfer.task = rebuildTask(
+      transfer.task,
+      transfer.task.files.map((file) =>
+        file.status === 'completed'
+          ? file
+          : { ...file, status: 'pending' as const, bytesPerSecond: 0 },
+      ),
+      'transferring',
+    )
+    this.emitTask(transfer.task)
+    await this.connectionManager.sendTransferResumeState({
+      transferId: transfer.task.transferId,
+      files,
+    })
+  }
+
+  private applyOutgoingResumeState(
+    transfer: OutgoingTransfer,
+    message: TransferResumeStateMessage,
+  ): void {
+    if (!['verifying', 'reconnecting', 'paused', 'recoverable'].includes(transfer.task.status))
+      return
+    const expectedIds = new Set(transfer.sources.map((source) => source.selection.fileId))
+    if (
+      message.payload.files.length !== expectedIds.size ||
+      new Set(message.payload.files.map((file) => file.fileId)).size !== expectedIds.size
+    ) {
+      this.failWholeOutgoing(transfer, 'RESUME_STATE_INVALID')
+      return
+    }
+    try {
+      const nextFiles = transfer.task.files.map((taskFile) => {
+        const state = message.payload.files.find((file) => file.fileId === taskFile.fileId)
+        const expectedDigest = transfer.expectedDigests.get(taskFile.fileId)
+        if (
+          state === undefined ||
+          !expectedIds.has(state.fileId) ||
+          state.size !== taskFile.size ||
+          state.sha256 !== expectedDigest ||
+          state.chunkSize !== DEFAULT_FILE_CHUNK_SIZE_BYTES ||
+          state.chunkCount !== Math.ceil(taskFile.size / DEFAULT_FILE_CHUNK_SIZE_BYTES)
+        ) {
+          throw new Error('RESUME_STATE_INVALID')
+        }
+        const verified = this.expandVerifiedRanges(state.verifiedRanges, state.chunkCount)
+        transfer.verifiedChunks.set(taskFile.fileId, verified)
+        const transferredBytes = [...verified].reduce(
+          (total, chunkIndex) =>
+            total +
+            createChunkDescriptor(transfer.task.transferId, state, chunkIndex).plaintextLength,
+          0,
+        )
+        return {
+          ...taskFile,
+          status:
+            verified.size === state.chunkCount ? ('completed' as const) : ('pending' as const),
+          transferredBytes,
+          bytesPerSecond: 0,
+        }
+      })
+      transfer.task = rebuildTask(transfer.task, nextFiles, 'accepted')
+      this.emitTask(transfer.task)
+      this.startOutgoingQueue(transfer)
+    } catch {
+      this.failWholeOutgoing(transfer, 'RESUME_STATE_INVALID')
+    }
+  }
+
+  private createVerifiedRanges(
+    verifiedChunks: ReadonlyMap<number, string>,
+    chunkCount: number,
+  ): TransferResumeStateMessage['payload']['files'][number]['verifiedRanges'] {
+    const indexes = [...verifiedChunks.keys()]
+      .filter((index) => index < chunkCount)
+      .sort((a, b) => a - b)
+    const ranges: { start: number; end: number }[] = []
+    for (const index of indexes) {
+      const previous = ranges.at(-1)
+      if (previous !== undefined && previous.end === index) previous.end += 1
+      else ranges.push({ start: index, end: index + 1 })
+    }
+    return ranges
+  }
+
+  private expandVerifiedRanges(
+    ranges: TransferResumeStateMessage['payload']['files'][number]['verifiedRanges'],
+    chunkCount: number,
+  ): Set<number> {
+    const verified = new Set<number>()
+    let previousEnd = 0
+    for (const range of ranges) {
+      if (range.start < previousEnd || range.end > chunkCount)
+        throw new Error('RESUME_STATE_INVALID')
+      for (let index = range.start; index < range.end; index += 1) verified.add(index)
+      previousEnd = range.end
+    }
+    return verified
+  }
+
+  private createPausedTask(task: TransferTaskDto): TransferTaskDto {
+    return rebuildTask(
+      task,
+      task.files.map((file) =>
+        ['completed', 'failed', 'cancelled', 'rejected'].includes(file.status)
+          ? file
+          : { ...file, status: 'paused' as const, bytesPerSecond: 0 },
+      ),
+      'paused',
+    )
+  }
+
   private handleOffer(transferId: TransferId, files: readonly SecureFileMetadata[]): void {
     const peer = this.connectionManager.getPeer()
     const connectionId = this.connectionManager.getStatus().connectionId
@@ -589,6 +835,7 @@ export class FileTransferCoordinator {
       ),
       connectionId,
       cancelAll: false,
+      preserveInterruption: false,
     }
     this.incoming.set(transferId, transfer)
     transfer.offerTimeout = this.createOfferTimeout(() => {
@@ -605,7 +852,12 @@ export class FileTransferCoordinator {
       }
     })
     this.emitTask(transfer.task)
-    const offer = { transferId, peer, files, receivedAt: Date.now() }
+    const offer = {
+      transferId,
+      peer,
+      files: files.map(toFileMetadata),
+      receivedAt: Date.now(),
+    }
     for (const listener of this.offerListeners) listener(offer)
   }
 
@@ -619,12 +871,16 @@ export class FileTransferCoordinator {
         .map(({ selection }) => selection.fileId)
         .filter(
           (fileId) =>
-            transfer.task.files.find((file) => file.fileId === fileId)?.status !== 'cancelled',
+            !['cancelled', 'completed'].includes(
+              transfer.task.files.find((file) => file.fileId === fileId)?.status ?? 'cancelled',
+            ),
         ),
     )
     const receivedIds = new Set(authorizations.map(({ fileId }) => fileId))
     if (
-      transfer.task.status !== 'awaitingAcceptance' ||
+      !['awaitingAcceptance', 'verifying', 'reconnecting', 'paused'].includes(
+        transfer.task.status,
+      ) ||
       authorizations.length !== expectedIds.size ||
       receivedIds.size !== expectedIds.size ||
       authorizations.some(
@@ -637,11 +893,11 @@ export class FileTransferCoordinator {
     for (const authorization of authorizations) {
       transfer.authorizations.set(authorization.fileId, authorization.uploadToken)
     }
-    transfer.task = rebuildTask(transfer.task, transfer.task.files, 'accepted')
-    this.emitTask(transfer.task)
-    const queuePromise = this.runOutgoingQueue(transfer)
-    transfer.queuePromise = queuePromise
-    void queuePromise.finally(() => delete transfer.queuePromise)
+    if (transfer.task.status === 'awaitingAcceptance') {
+      transfer.task = rebuildTask(transfer.task, transfer.task.files, 'accepted')
+      this.emitTask(transfer.task)
+      this.startOutgoingQueue(transfer)
+    }
   }
 
   private async runOutgoingQueue(transfer: OutgoingTransfer): Promise<void> {
@@ -649,18 +905,34 @@ export class FileTransferCoordinator {
       const fileId = source.selection.fileId
       if (transfer.cancelAll) break
       if (transfer.cancelledFiles.has(fileId)) continue
+      if (transfer.task.files.find((file) => file.fileId === fileId)?.status === 'completed')
+        continue
       const uploadToken = transfer.authorizations.get(fileId)
       if (uploadToken === undefined) {
         this.failOutgoingFile(transfer, fileId, 'PROTOCOL_INVALID')
         break
       }
       const outcome = await this.uploadFile(transfer, source, uploadToken)
-      if (outcome === 'failed') break
+      if (outcome === 'failed' || outcome === 'paused') break
     }
+    if (['paused', 'reconnecting', 'verifying', 'recoverable'].includes(transfer.task.status))
+      return
     const status = calculateFinishedStatus(transfer.task.files)
     transfer.task = rebuildTask(transfer.task, transfer.task.files, status)
     this.emitTask(transfer.task)
     if (TERMINAL_TASK_STATUSES.includes(status)) this.recordHistory(transfer.task)
+  }
+
+  private startOutgoingQueue(transfer: OutgoingTransfer): void {
+    if (transfer.queuePromise !== undefined) {
+      void transfer.queuePromise.finally(() => {
+        if (transfer.task.status === 'accepted') this.startOutgoingQueue(transfer)
+      })
+      return
+    }
+    const queuePromise = this.runOutgoingQueue(transfer)
+    transfer.queuePromise = queuePromise
+    void queuePromise.finally(() => delete transfer.queuePromise)
   }
 
   private async uploadFile(
@@ -670,8 +942,29 @@ export class FileTransferCoordinator {
   ): Promise<UploadOutcome> {
     const fileId = sourceFile.selection.fileId
     const startedAt = Date.now()
+    const secureMetadata = {
+      fileId,
+      size: sourceFile.selection.size,
+      chunkSize: DEFAULT_FILE_CHUNK_SIZE_BYTES,
+      chunkCount: Math.ceil(sourceFile.selection.size / DEFAULT_FILE_CHUNK_SIZE_BYTES),
+    }
+    const verifiedChunks = transfer.verifiedChunks.get(fileId) ?? new Set<number>()
+    transfer.verifiedChunks.set(fileId, verifiedChunks)
+    const resumedBytes = [...verifiedChunks].reduce(
+      (total, chunkIndex) =>
+        total +
+        createChunkDescriptor(transfer.task.transferId, secureMetadata, chunkIndex).plaintextLength,
+      0,
+    )
     transfer.activeFileId = fileId
-    transfer.task = updateFile(transfer.task, fileId, 'transferring', 0, 0, 'transferring')
+    transfer.task = updateFile(
+      transfer.task,
+      fileId,
+      'transferring',
+      resumedBytes,
+      0,
+      'transferring',
+    )
     this.emitTask(transfer.task)
     let sourceHandle: Awaited<ReturnType<typeof open>> | null = null
     try {
@@ -703,14 +996,20 @@ export class FileTransferCoordinator {
       }
       const expectedDigest = transfer.expectedDigests.get(fileId)
       if (expectedDigest === undefined) throw new Error('PROTOCOL_INVALID')
-      const uploadHash = createHash('sha256')
-      const secureMetadata = {
-        fileId,
-        size: sourceFile.selection.size,
-        chunkSize: DEFAULT_FILE_CHUNK_SIZE_BYTES,
-        chunkCount: Math.ceil(sourceFile.selection.size / DEFAULT_FILE_CHUNK_SIZE_BYTES),
+      if (
+        (await calculateAuthorizedFileSha256({
+          path: sourceFile.path,
+          size: sourceFile.selection.size,
+          ...(sourceFile.identity === undefined ? {} : { identity: sourceFile.identity }),
+        })) !== expectedDigest
+      ) {
+        throw new Error('SOURCE_FILE_CHANGED')
       }
       for (let chunkIndex = 0; chunkIndex < secureMetadata.chunkCount; chunkIndex += 1) {
+        if (verifiedChunks.has(chunkIndex)) continue
+        if (['paused', 'reconnecting', 'recoverable'].includes(transfer.task.status)) {
+          throw new Error('TRANSFER_CANCELLED')
+        }
         if (transfer.cancelAll || transfer.cancelledFiles.has(fileId)) {
           throw new Error('TRANSFER_CANCELLED')
         }
@@ -720,7 +1019,6 @@ export class FileTransferCoordinator {
           chunkIndex,
         )
         const plaintext = await readFileChunk(sourceHandle, descriptor)
-        uploadHash.update(plaintext)
         const encrypted = this.connectionManager.encryptFileChunk(descriptor, plaintext)
         plaintext.fill(0)
         if (encrypted === null) throw new Error('CONNECTION_CLOSED')
@@ -729,6 +1027,7 @@ export class FileTransferCoordinator {
         } finally {
           encrypted.fill(0)
         }
+        verifiedChunks.add(chunkIndex)
         const transferredBytes = descriptor.plaintextOffset + descriptor.plaintextLength
         const elapsedSeconds = Math.max((Date.now() - startedAt) / 1_000, 0.001)
         transfer.task = updateFile(
@@ -741,11 +1040,11 @@ export class FileTransferCoordinator {
         )
         this.emitTask(transfer.task)
       }
-      if (uploadHash.digest('hex') !== expectedDigest) throw new Error('SOURCE_FILE_CHANGED')
       if (secureMetadata.chunkCount === 0) return 'completed'
       this.completeOutgoingFile(transfer, fileId)
       return 'completed'
     } catch (error) {
+      if (['paused', 'reconnecting', 'recoverable'].includes(transfer.task.status)) return 'paused'
       if (transfer.cancelAll || transfer.cancelledFiles.has(fileId)) {
         this.markOutgoingFileCancelled(transfer, fileId)
         return 'cancelled'
@@ -874,6 +1173,15 @@ export class FileTransferCoordinator {
       }
       this.writeResponse(response, 200)
     } catch (error) {
+      if (
+        transfer.preserveInterruption ||
+        ['paused', 'reconnecting'].includes(transfer.task.status)
+      ) {
+        delete file.abortUpload
+        delete file.failureOverride
+        if (!response.writableEnded) this.writeResponse(response, 409)
+        return
+      }
       if (file.temporaryPath !== undefined) await unlink(file.temporaryPath).catch(() => undefined)
       delete file.temporaryPath
       delete file.abortUpload
@@ -1167,6 +1475,33 @@ export class FileTransferCoordinator {
         errorCode,
       )
       this.finishTask(transfer.task)
+    }
+  }
+
+  private markTransfersReconnecting(): void {
+    for (const transfer of this.outgoing.values()) {
+      if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) continue
+      const pausedTask = this.createPausedTask(transfer.task)
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'reconnecting')
+      transfer.abortUpload?.()
+      this.emitTask(transfer.task)
+    }
+    for (const transfer of this.incoming.values()) {
+      if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) continue
+      transfer.preserveInterruption = true
+      const pausedTask = this.createPausedTask(transfer.task)
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'reconnecting')
+      for (const file of transfer.files.values()) file.abortUpload?.()
+      this.emitTask(transfer.task)
+    }
+  }
+
+  private markRecoverableTransfers(): void {
+    for (const transfer of [...this.outgoing.values(), ...this.incoming.values()]) {
+      if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) continue
+      const pausedTask = this.createPausedTask(transfer.task)
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'recoverable', 'RESUME_EXPIRED')
+      this.emitTask(transfer.task)
     }
   }
 

@@ -10,6 +10,10 @@ export type TransferStatus =
   | 'awaitingAcceptance'
   | 'accepted'
   | 'transferring'
+  | 'paused'
+  | 'reconnecting'
+  | 'verifying'
+  | 'recoverable'
   | 'publishing'
   | 'completed'
   | 'failed'
@@ -17,7 +21,7 @@ export type TransferStatus =
   | 'rejected'
 
 export type FileTransferStatus =
-  'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled' | 'rejected'
+  'pending' | 'transferring' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'rejected'
 
 export interface FileMetadata {
   readonly fileId: FileId

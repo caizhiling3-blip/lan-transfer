@@ -11,6 +11,8 @@ import {
   MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
   PROTOCOL_VERSION,
   RATE_LIMIT_WINDOW_MS,
+  TRANSFER_RECONNECT_INTERVAL_MS,
+  TRANSFER_RECONNECT_WINDOW_MS,
 } from '@shared/constants'
 import type { ErrorCode } from '@shared/errors'
 import {
@@ -37,8 +39,12 @@ import {
   secureHelloMessageSchema,
   secureProofMessageSchema,
   secureFileOfferMessageSchema,
+  secureControlMessageSchema,
   textAcknowledgementMessageSchema,
   textSendMessageSchema,
+  transferPauseMessageSchema,
+  transferResumeRequestMessageSchema,
+  transferResumeStateMessageSchema,
 } from '@shared/protocols'
 import type {
   FileAcceptMessage,
@@ -60,6 +66,9 @@ import type {
   SecureFileOfferMessage,
   SecureHelloMessage,
   SecureFileMetadata,
+  TransferPauseMessage,
+  TransferResumeRequestMessage,
+  TransferResumeStateMessage,
 } from '@shared/protocols'
 import {
   connectionIdSchema,
@@ -125,6 +134,9 @@ export type FolderControlMessage =
   | FolderCompleteMessage
   | FolderErrorMessage
 type FolderMessageListener = (message: FolderControlMessage) => void
+export type TransferControlMessage =
+  TransferPauseMessage | TransferResumeRequestMessage | TransferResumeStateMessage
+type TransferMessageListener = (message: TransferControlMessage) => void
 
 interface PendingConnection {
   readonly requestId: RequestId
@@ -184,12 +196,21 @@ export class ConnectionManager {
   private readonly textListeners = new Set<TextListener>()
   private readonly fileMessageListeners = new Set<FileMessageListener>()
   private readonly folderMessageListeners = new Set<FolderMessageListener>()
+  private readonly transferMessageListeners = new Set<TransferMessageListener>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private connectionId: ConnectionId | null = null
   private secureContext: SecureConnectionContext | null = null
   private fileRootKey: Buffer | null = null
   private peer: DeviceInfo | null = null
+  private outboundTarget: { readonly host: string; readonly port: number } | null = null
+  private reconnectExpectation: {
+    readonly deviceId: DeviceInfo['deviceId']
+    expiresAt: number
+  } | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private lastConnectionInitiatedLocally = false
+  private intentionalDisconnect = false
   private heartbeatSequence = 0
   private lastMessageAt = 0
   private readonly pendingTextAcknowledgements = new Map<MessageId, PendingTextAcknowledgement>()
@@ -242,6 +263,54 @@ export class ConnectionManager {
   public subscribeFolderMessages(listener: FolderMessageListener): () => void {
     this.folderMessageListeners.add(listener)
     return () => this.folderMessageListeners.delete(listener)
+  }
+
+  public subscribeTransferMessages(listener: TransferMessageListener): () => void {
+    this.transferMessageListeners.add(listener)
+    return () => this.transferMessageListeners.delete(listener)
+  }
+
+  public expectTransferReconnect(deviceId: DeviceInfo['deviceId']): void {
+    if (this.intentionalDisconnect) return
+    const existing = this.reconnectExpectation
+    this.reconnectExpectation = {
+      deviceId,
+      expiresAt:
+        existing?.deviceId === deviceId
+          ? existing.expiresAt
+          : Date.now() + TRANSFER_RECONNECT_WINDOW_MS,
+    }
+    this.scheduleReconnect()
+  }
+
+  public shouldResumeTransfers(): boolean {
+    return !this.intentionalDisconnect && this.reconnectExpectation !== null
+  }
+
+  public allowsTransferRecovery(): boolean {
+    return !this.intentionalDisconnect
+  }
+
+  public sendTransferPause(transferId: TransferId): Promise<boolean> {
+    return this.sendSecureTransferMessage('transfer:pause', transferPauseMessageSchema, {
+      transferId,
+    })
+  }
+
+  public sendTransferResumeRequest(transferId: TransferId): Promise<boolean> {
+    return this.sendSecureTransferMessage(
+      'transfer:resume-request',
+      transferResumeRequestMessageSchema,
+      { transferId },
+    )
+  }
+
+  public sendTransferResumeState(payload: TransferResumeStateMessage['payload']): Promise<boolean> {
+    return this.sendSecureTransferMessage(
+      'transfer:resume-state',
+      transferResumeStateMessageSchema,
+      payload,
+    )
   }
 
   public sendFolderOffer(payload: FolderOfferMessage['payload']): Promise<boolean> {
@@ -477,6 +546,7 @@ export class ConnectionManager {
       return
     }
 
+    this.lastConnectionInitiatedLocally = false
     this.socket = socket
     this.setStatus({ state: 'connecting' })
     const timeout = setTimeout(() => {
@@ -523,6 +593,17 @@ export class ConnectionManager {
           hello: message,
           timeout: approvalTimeout,
         }
+        const reconnect = this.reconnectExpectation
+        if (reconnect?.deviceId === peer.deviceId) {
+          if (!this.pairingCoordinator.isTrustedIdentity(peer.deviceId, message.payload.identity)) {
+            socket.close(1008, 'Reconnect identity mismatch')
+            this.reset('IDENTITY_MISMATCH')
+            return
+          }
+          this.setStatus({ state: 'awaitingApproval', peer, pendingRequest: incomingRequest })
+          queueMicrotask(() => this.respondToRequest(requestId, 'accept'))
+          return
+        }
         this.setStatus({ state: 'awaitingApproval', peer, pendingRequest: incomingRequest })
         for (const listener of this.requestListeners) listener(incomingRequest)
       } catch {
@@ -543,6 +624,9 @@ export class ConnectionManager {
       return this.getStatus()
     }
 
+    this.intentionalDisconnect = false
+    this.lastConnectionInitiatedLocally = true
+    this.outboundTarget = { host, port }
     this.setStatus({ state: 'connecting' })
     const socket = new WebSocket(`ws://${host}:${String(port)}/v1/ws`, {
       handshakeTimeout: CONNECTION_TIMEOUT_MS,
@@ -787,13 +871,15 @@ export class ConnectionManager {
 
   public disconnect(reason: 'user_requested' | 'app_shutdown' = 'user_requested'): void {
     const socket = this.socket
-    if (socket === null) return
-    this.setStatus({ state: 'disconnecting', ...(this.peer === null ? {} : { peer: this.peer }) })
-    if (
-      socket.readyState === WebSocket.OPEN &&
+    const canNotifyPeer =
+      socket?.readyState === WebSocket.OPEN &&
       this.connectionId !== null &&
       this.status.state === 'connected'
-    ) {
+    this.intentionalDisconnect = true
+    this.clearReconnectExpectation()
+    if (socket === null) return
+    this.setStatus({ state: 'disconnecting', ...(this.peer === null ? {} : { peer: this.peer }) })
+    if (canNotifyPeer && this.connectionId !== null) {
       const localDevice = this.getLocalDevice()
       this.sendEncryptedMessage(
         deviceDisconnectMessageSchema.parse({
@@ -808,7 +894,7 @@ export class ConnectionManager {
     } else {
       socket.terminate()
     }
-    this.reset()
+    this.reset('TRANSFER_CANCELLED')
   }
 
   private startSecureAuthentication(
@@ -820,6 +906,14 @@ export class ConnectionManager {
     secrets: SecureSessionSecrets,
     settle?: () => void,
   ): void {
+    if (
+      this.reconnectExpectation !== null &&
+      this.reconnectExpectation.deviceId !== peer.deviceId
+    ) {
+      socket.close(1008, 'Reconnect peer mismatch')
+      this.reset('IDENTITY_MISMATCH')
+      return
+    }
     socket.removeAllListeners()
     this.socket = socket
     this.peer = peer
@@ -841,8 +935,15 @@ export class ConnectionManager {
     socket.once('error', (error) => {
       if (this.socket === socket) this.reset(mapConnectionError(error))
     })
-    socket.once('close', () => {
-      if (this.socket === socket) this.reset()
+    socket.once('close', (code, reason) => {
+      if (this.socket !== socket) return
+      if (code === 1000 && reason.toString() === 'Disconnected') {
+        this.intentionalDisconnect = true
+        this.clearReconnectExpectation()
+        this.reset('TRANSFER_CANCELLED')
+        return
+      }
+      this.reset()
     })
 
     const pairing = this.pairingCoordinator.begin(
@@ -878,6 +979,9 @@ export class ConnectionManager {
   private activateSecureContext(): void {
     const context = this.secureContext
     if (context === null || this.status.state === 'connected') return
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.intentionalDisconnect = false
     this.lastMessageAt = Date.now()
     this.heartbeatSequence = 0
     this.setStatus({ state: 'connected', connectionId: context.connectionId, peer: context.peer })
@@ -936,6 +1040,26 @@ export class ConnectionManager {
         for (const listener of this.fileMessageListeners) listener(message)
         return
       }
+      const secureControl = secureControlMessageSchema.safeParse(decrypted)
+      if (
+        secureControl.success &&
+        (secureControl.data.type === 'transfer:pause' ||
+          secureControl.data.type === 'transfer:resume-request' ||
+          secureControl.data.type === 'transfer:resume-state')
+      ) {
+        const message = secureControl.data
+        if (
+          this.peer === null ||
+          message.senderId !== this.peer.deviceId ||
+          !isMessageTimestampAllowed(message.timestamp)
+        ) {
+          throw new Error('Invalid secure transfer message')
+        }
+        if (this.messageDeduplicator.isDuplicate(message.messageId)) return
+        this.lastMessageAt = Date.now()
+        for (const listener of this.transferMessageListeners) listener(message)
+        return
+      }
       const message = parseProtocolMessage(decrypted)
       if (this.peer === null || message.senderId !== this.peer.deviceId) {
         throw new Error('Unexpected message sender')
@@ -956,8 +1080,10 @@ export class ConnectionManager {
         if (message.payload.connectionId !== this.connectionId) throw new Error('Wrong connection')
       } else if (message.type === 'device:disconnect') {
         if (message.payload.connectionId !== this.connectionId) throw new Error('Wrong connection')
+        this.intentionalDisconnect = true
+        this.clearReconnectExpectation()
         this.socket?.close(1000, 'Peer disconnected')
-        this.reset()
+        this.reset('TRANSFER_CANCELLED')
       } else if (message.type === 'text:send') {
         const received = {
           messageId: message.messageId,
@@ -1098,8 +1224,24 @@ export class ConnectionManager {
     )
   }
 
+  private sendSecureTransferMessage<
+    TMessage extends TransferControlMessage,
+    TSchema extends { parse(input: unknown): TMessage },
+  >(type: TMessage['type'], schema: TSchema, payload: TMessage['payload']): Promise<boolean> {
+    const localDevice = this.getLocalDevice()
+    return this.sendProtocolMessage(
+      schema.parse({
+        type,
+        messageId: createMessageId(),
+        senderId: localDevice.deviceId,
+        timestamp: Date.now(),
+        payload,
+      }),
+    )
+  }
+
   private async sendProtocolMessage(
-    message: FileControlMessage | FolderControlMessage,
+    message: FileControlMessage | FolderControlMessage | TransferControlMessage,
   ): Promise<boolean> {
     const socket = this.socket
     if (
@@ -1154,6 +1296,47 @@ export class ConnectionManager {
     this.peer = null
     this.setStatus({ state: 'disconnected', ...(errorCode === undefined ? {} : { errorCode }) })
     secureContext?.settle?.()
+    this.scheduleReconnect()
+  }
+
+  private scheduleReconnect(): void {
+    const expectation = this.reconnectExpectation
+    if (
+      this.intentionalDisconnect ||
+      expectation === null ||
+      this.status.state !== 'disconnected' ||
+      this.reconnectTimer !== null
+    ) {
+      return
+    }
+    const remaining = expectation.expiresAt - Date.now()
+    if (remaining <= 0) {
+      this.reconnectExpectation = null
+      this.setStatus({ state: 'disconnected', errorCode: 'RESUME_EXPIRED' })
+      return
+    }
+    this.reconnectTimer = setTimeout(
+      () => {
+        this.reconnectTimer = null
+        if (
+          this.lastConnectionInitiatedLocally &&
+          this.outboundTarget !== null &&
+          this.status.state === 'disconnected'
+        ) {
+          void this.connect(this.outboundTarget.host, this.outboundTarget.port)
+        } else {
+          this.scheduleReconnect()
+        }
+      },
+      Math.min(TRANSFER_RECONNECT_INTERVAL_MS, remaining),
+    )
+    this.reconnectTimer.unref()
+  }
+
+  private clearReconnectExpectation(): void {
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.reconnectExpectation = null
   }
 
   private setStatus(status: ConnectionStatusDto): void {

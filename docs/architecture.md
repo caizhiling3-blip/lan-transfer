@@ -199,6 +199,8 @@ macOS 第一版分别输出 arm64 和 x64，避免 Universal 包体积及合并�
 
 v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer 和 recovery-store 模块。长期 Ed25519 私钥经 Electron `safeStorage` 加密持久化；每次连接使用 X25519 临时密钥、Ed25519 transcript 签名和 HKDF 派生方向密钥。WebSocket 业务消息与 HTTP 固定分块均使用 AES-256-GCM，renderer 只看到公开指纹、验证码和任务 DTO，不接触长期/临时私钥、会话密钥、路径、bitmap 或密文。
 
+阶段 7 的运行时恢复由接收端 verified chunk map 驱动。发送方暂停时终止当前请求但保留已确认块；继续或短时重连后，接收方在新安全会话内签发新授权并返回 verified ranges，发送方复核源文件完整摘要后跳过已确认块。非主动断线只为同一可信 deviceId 与公钥自动重连，窗口默认两分钟；主动断开仍清理任务。renderer 只显示 paused、reconnecting、verifying、recoverable 等投影状态，不接触内部 bitmap、摘要和授权。
+
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。
 
 阶段 3 的 key-agreement 模块只返回内存中的 X25519 私钥对象、公开 DER 和 nonce。规范 transcript 使用固定数组顺序绑定协议版本、双方角色、deviceId、nonce、临时公钥和长期公钥，避免对象键顺序形成不同派生结果。`PairingCoordinator` 是首次信任审批的事实来源：UI 只投影短指纹、六位验证码和截止时间，双方确认前不写 store；已信任设备只有相同公钥才可免配对刷新验证时间。可信设备 IPC 返回不含公钥的摘要，取消信任与最近设备删除保持独立。

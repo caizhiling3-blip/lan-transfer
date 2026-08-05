@@ -159,6 +159,46 @@ describe('ConnectionManager', () => {
     expect(receiver.getStatus().state).toBe('disconnected')
   })
 
+  it('automatically reconnects a trusted transfer peer without another approval prompt', async () => {
+    const incomingSocketHolder: { socket: WebSocket | null } = { socket: null }
+    const { sender, receiver, serverPort } = await createPair((socket) => {
+      incomingSocketHolder.socket = socket
+    })
+    const requestPromise = waitForRequest(receiver)
+    const connectionPromise = sender.connect('127.0.0.1', serverPort)
+    receiver.respondToRequest((await requestPromise).requestId, 'accept')
+    await connectionPromise
+    const peer = sender.getPeer()
+    const reversePeer = receiver.getPeer()
+    const socket = incomingSocketHolder.socket
+    if (peer === null || reversePeer === null || socket === null) {
+      throw new Error('Expected an active paired connection')
+    }
+    sender.expectTransferReconnect(peer.deviceId)
+    receiver.expectTransferReconnect(reversePeer.deviceId)
+    let repeatedApprovalRequests = 0
+    const unsubscribeRequests = receiver.subscribeRequests(() => {
+      repeatedApprovalRequests += 1
+    })
+    const reconnected = new Promise<void>((resolve) => {
+      let observedDisconnect = false
+      const unsubscribe = sender.subscribeStatus((status) => {
+        if (status.state === 'disconnected') observedDisconnect = true
+        if (!observedDisconnect || status.state !== 'connected') return
+        unsubscribe()
+        resolve()
+      })
+    })
+
+    socket.terminate()
+    await reconnected
+    unsubscribeRequests()
+
+    expect(sender.getStatus().state).toBe('connected')
+    expect(receiver.getStatus().state).toBe('connected')
+    expect(repeatedApprovalRequests).toBe(0)
+  }, 10_000)
+
   it('sends text to the approved peer and reports a completed task', async () => {
     const { sender, receiver, serverPort } = await createPair()
     const incomingRequestPromise = waitForRequest(receiver)

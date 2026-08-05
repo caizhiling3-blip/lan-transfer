@@ -128,6 +128,8 @@ export interface IpcInvokeMap {
     { readonly transferId: TransferId; readonly fileId?: FileId },
     TransferTaskDto
   >
+  readonly 'transfer:pause': InvokeContract<{ readonly transferId: TransferId }, TransferTaskDto>
+  readonly 'transfer:resume': InvokeContract<{ readonly transferId: TransferId }, TransferTaskDto>
   readonly 'transfer:retry': InvokeContract<{ readonly transferId: TransferId }, TransferTaskDto>
   readonly 'transfer:show-received-file': InvokeContract<
     { readonly transferId: TransferId; readonly fileId?: FileId },

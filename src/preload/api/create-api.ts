@@ -115,6 +115,8 @@ export const createLanTransferApi = (): LanTransferApi => {
           : invoke('transfer:respond-to-offer', { transferId, decision }),
       cancel: (transferId, fileId) =>
         invoke('transfer:cancel', fileId === undefined ? { transferId } : { transferId, fileId }),
+      pause: (transferId) => invoke('transfer:pause', { transferId }),
+      resume: (transferId) => invoke('transfer:resume', { transferId }),
       retry: (transferId) => invoke('transfer:retry', { transferId }),
       showReceivedFile: (transferId, fileId) =>
         invoke(

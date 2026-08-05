@@ -321,6 +321,61 @@ describe('single file transfer', () => {
     expect(duplicateResponse.status).toBe(200)
   })
 
+  it('pauses after an authenticated chunk and resumes only the remaining chunks', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
+    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const sourcePath = join(sourceDirectory, 'resume.bin')
+    const content = Buffer.alloc(DEFAULT_FILE_CHUNK_SIZE_BYTES * 3 + 17, 0x6b)
+    await writeFile(sourcePath, content)
+    const source: AuthorizedSourceFile = {
+      path: sourcePath,
+      selection: {
+        selectionToken: 'r'.repeat(43),
+        fileId: fileIdSchema.parse('51515151-5151-4151-8151-515151515151'),
+        displayName: 'resume.bin',
+        size: content.byteLength,
+        mimeType: 'application/octet-stream',
+      },
+    }
+    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
+      source,
+      receiveDirectory,
+    )
+    const offerPromise = waitForOffer(receiverCoordinator)
+    const senderPaused = waitForStatus(senderCoordinator, 'paused')
+    const receiverPaused = waitForStatus(receiverCoordinator, 'paused')
+    let pauseRequested = false
+    const unsubscribe = senderCoordinator.subscribeTasks((task) => {
+      if (
+        pauseRequested ||
+        task.status !== 'transferring' ||
+        task.transferredBytes < DEFAULT_FILE_CHUNK_SIZE_BYTES
+      ) {
+        return
+      }
+      pauseRequested = true
+      void senderCoordinator.pause(task.transferId)
+    })
+    await senderCoordinator.offerFiles([source.selection.selectionToken])
+    const offer = await offerPromise
+    expect(offer.files[0]).not.toHaveProperty('sha256')
+    await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
+
+    const pausedTask = await senderPaused
+    await receiverPaused
+    unsubscribe()
+    expect(pausedTask.transferredBytes).toBeGreaterThanOrEqual(DEFAULT_FILE_CHUNK_SIZE_BYTES)
+    expect(pausedTask.transferredBytes).toBeLessThan(content.byteLength)
+
+    const senderCompleted = waitForStatus(senderCoordinator, 'completed')
+    const receiverCompleted = waitForStatus(receiverCoordinator, 'completed')
+    await senderCoordinator.resume(offer.transferId)
+    await expect(senderCompleted).resolves.toMatchObject({ transferredBytes: content.byteLength })
+    await expect(receiverCompleted).resolves.toMatchObject({ transferredBytes: content.byteLength })
+    await expect(readFile(join(receiveDirectory, 'resume.bin'))).resolves.toEqual(content)
+  }, 20_000)
+
   it('rejects an authenticated chunk whose ciphertext is modified', async () => {
     const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
     const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
@@ -429,7 +484,7 @@ describe('single file transfer', () => {
     await receiverCoordinator.respondToOffer(offer.transferId, 'accept')
 
     await expect(senderFailed).resolves.toMatchObject({ status: 'failed' })
-    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'FILE_INTEGRITY_FAILED' })
+    await expect(receiverFailed).resolves.toMatchObject({ errorCode: 'SOURCE_FILE_CHANGED' })
     await expect(readFile(join(receiveDirectory, 'same-size.txt'))).rejects.toMatchObject({
       code: 'ENOENT',
     })

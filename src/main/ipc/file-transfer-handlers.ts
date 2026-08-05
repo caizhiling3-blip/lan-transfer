@@ -144,6 +144,24 @@ export const registerFileTransferIpcHandlers = (
       : { ok: true, data: task }
   })
 
+  registerIpcHandler('transfer:pause', getWindow, async ({ transferId }) => {
+    const task = folderCoordinator.ownsTransfer(transferId)
+      ? await folderCoordinator.pause(transferId)
+      : await coordinator.pause(transferId)
+    return task === null
+      ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
+      : { ok: true, data: task }
+  })
+
+  registerIpcHandler('transfer:resume', getWindow, async ({ transferId }) => {
+    const task = folderCoordinator.ownsTransfer(transferId)
+      ? await folderCoordinator.resume(transferId)
+      : await coordinator.resume(transferId)
+    return task === null
+      ? { ok: false, error: { code: 'MESSAGE_INVALID' } }
+      : { ok: true, data: task }
+  })
+
   registerIpcHandler('transfer:retry', getWindow, async ({ transferId }) => {
     const task = folderCoordinator.ownsTransfer(transferId)
       ? await folderCoordinator.retry(transferId)
