@@ -113,6 +113,8 @@ Content-Length: <plaintext-length + 16-byte-authentication-tag>
 
 应用重启不会复用旧 connectionId、会话密钥、sequence、密文或上传 token。双方只从各自经操作系统保护的本地记录恢复任务身份、源/接收授权和 verified bitmap；重新连接仍完整执行协议 v3 身份认证并派生新会话密钥，然后通过相同的 `transfer:resume-request/state` 协商。发送源摘要复核通过前不发送任何块，接收端完整摘要通过前仍不发布文件或文件夹。
 
+verified range 使用半开区间 `[start, end)`，必须按 start 严格升序且彼此不重叠，`0 <= start < end <= chunkCount`。接收端只生成规范合并区间；发送端不因消息通过结构 schema 就信任其语义，仍在任务上下文中验证文件身份、摘要、块参数、区间顺序和边界。
+
 ## 1.2 文件夹消息
 
 阶段 3 已实现 `folder:offer`、`folder:manifest`、`folder:accept` 和 `folder:reject`。offer 只发送摘要；最大 2 MiB manifest 拆成最多 32 个、单个目标上限 96 KiB 的严格分片，接收端完成索引、容量、汇总值、SHA-256、重复 ID 和跨平台路径冲突校验后才允许用户确认。

@@ -217,6 +217,7 @@ export const ipcInvokeRequestSchemas = {
       'Selection tokens must be unique',
     ),
   'transfer:cancel-queued': z.object({ queueItemId: queueItemIdSchema }).strict(),
+  'transfer:get-tasks': z.undefined(),
   'transfer:respond-to-offer': respondToOfferRequestSchema,
   'transfer:cancel': z
     .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { MAX_TEXT_BYTES } from '@shared/constants'
-import type { FileId } from '@shared/types'
+import type { FileId, TransferTaskDto } from '@shared/types'
 import { classifyTextContent, getUtf8ByteLength } from '@shared/utils'
 
 import FileActivityCard from '../components/transfer/FileActivityCard.vue'
@@ -112,6 +112,21 @@ const cancelFile = (
   void fileTransferStore.cancel(transferId, fileId)
 }
 
+const cancelTransfer = async (task: TransferTaskDto): Promise<void> => {
+  if (['paused', 'recoverable', 'reconnecting', 'verifying'].includes(task.status)) {
+    try {
+      await ElMessageBox.confirm(
+        '取消后会删除本机恢复记录和未完成的临时内容，无法继续当前进度。',
+        '取消可恢复传输',
+        { type: 'warning', confirmButtonText: '确认取消', cancelButtonText: '保留任务' },
+      )
+    } catch {
+      return
+    }
+  }
+  await fileTransferStore.cancel(task.transferId)
+}
+
 const retryTransfer = async (
   transferId: Parameters<typeof fileTransferStore.retry>[0],
 ): Promise<void> => {
@@ -179,8 +194,11 @@ onBeforeUnmount(() => {
             :task="activity.task"
             :incoming-offer="fileTransferStore.incomingOffer"
             :responding="fileTransferStore.responding"
+            :connected="
+              isConnected && connectionStore.status.peer?.deviceId === activity.task.peer.deviceId
+            "
             @respond="respondToOffer"
-            @cancel-task="fileTransferStore.cancel(activity.task.transferId)"
+            @cancel-task="cancelTransfer(activity.task)"
             @cancel-file="cancelFile(activity.task.transferId, $event)"
             @pause="fileTransferStore.pause(activity.task.transferId)"
             @resume="fileTransferStore.resume(activity.task.transferId)"

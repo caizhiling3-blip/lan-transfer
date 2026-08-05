@@ -205,6 +205,10 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 恢复任务在主窗口创建前重建为 `recoverable`。应用正常退出会先保存并保留非终态任务，再以 `app_shutdown` 通知对端进入恢复流程；用户主动断开仍按取消处理。常规过期临时文件清理会跳过当前加密恢复记录声明的 staging 路径，记录过期或撤销信任时只删除文件名与 transferId 所有权格式严格匹配的应用临时内容。
 
+阶段 9 增加 `transfer:get-tasks` 只读 IPC 快照，renderer 先注册事件监听再拉取快照并按 transferId 合并，避免页面挂载晚于 `did-finish-load` 时丢失重启恢复任务。任务卡会区分暂停、自动重连、状态校验和等待手动恢复；连接到错误设备时不提供继续按钮，取消可恢复任务前明确提示会删除本地进度。取消信任会断开匹配的活动会话，并删除该设备的加密恢复记录与严格归属的 staging。
+
+verified range 的编码和展开集中在单一安全模块。只接受安全整数、严格升序、非空且互不重叠的半开区间，并要求 end 不超过文件块数；任一违规均返回 `RESUME_STATE_INVALID`。诊断摘要只新增可恢复任务数量，报告不包含恢复 payload、路径、文件名、摘要、bitmap、指纹、公钥或 token。
+
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。
 
 阶段 3 的 key-agreement 模块只返回内存中的 X25519 私钥对象、公开 DER 和 nonce。规范 transcript 使用固定数组顺序绑定协议版本、双方角色、deviceId、nonce、临时公钥和长期公钥，避免对象键顺序形成不同派生结果。`PairingCoordinator` 是首次信任审批的事实来源：UI 只投影短指纹、六位验证码和截止时间，双方确认前不写 store；已信任设备只有相同公钥才可免配对刷新验证时间。可信设备 IPC 返回不含公钥的摘要，取消信任与最近设备删除保持独立。

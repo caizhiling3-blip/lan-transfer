@@ -49,6 +49,13 @@ export const useFileTransferStore = defineStore('fileTransfer', {
           this.queueItems = [...items]
         }),
       ]
+      void window.lanTransfer.transfer.getTasks().then((result) => {
+        if (!result.ok) {
+          this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+          return
+        }
+        for (const task of result.data) this.tasks = upsertTask(this.tasks, task)
+      })
     },
     async selectFiles(): Promise<void> {
       this.selecting = true

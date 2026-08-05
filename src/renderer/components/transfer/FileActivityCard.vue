@@ -17,6 +17,7 @@ const props = defineProps<{
   readonly task: TransferTaskDto
   readonly incomingOffer: TransferOfferReceivedDto | null
   readonly responding: boolean
+  readonly connected: boolean
 }>()
 
 defineEmits<{
@@ -68,6 +69,20 @@ const canPause = computed(
 const canResume = computed(
   () => props.task.direction === 'send' && ['paused', 'recoverable'].includes(props.task.status),
 )
+const statusHint = computed(() => {
+  if (props.task.status === 'reconnecting')
+    return '网络中断，正在安全重连原设备。已完成的分块会保留。'
+  if (props.task.status === 'verifying') return '正在向接收端核对已保存分块，只会补传缺失内容。'
+  if (props.task.status === 'recoverable') {
+    return props.task.direction === 'send'
+      ? props.connected
+        ? '恢复状态已通过本机校验，可以继续传输。'
+        : `恢复状态已安全保存。请先连接 ${props.task.peer.deviceName}，再继续传输。`
+      : `已保存收到的分块，等待 ${props.task.peer.deviceName} 连接并继续发送。`
+  }
+  if (props.task.status === 'paused') return '传输已暂停，已验证的分块不会重复发送。'
+  return null
+})
 const canRetry = computed(
   () =>
     props.task.direction === 'send' &&
@@ -212,6 +227,18 @@ const getUnfinishedReason = (file: TransferTaskDto['files'][number]): string => 
       </el-button>
     </div>
 
+    <div v-if="statusHint" class="recovery-hint">
+      <span>{{ statusHint }}</span>
+      <el-button
+        v-if="canResume && !connected"
+        link
+        type="primary"
+        @click="$emit('navigate', 'home')"
+      >
+        前往连接
+      </el-button>
+    </div>
+
     <section
       v-if="isTaskTerminal"
       class="completion-summary"
@@ -245,7 +272,13 @@ const getUnfinishedReason = (file: TransferTaskDto['files'][number]): string => 
 
     <div v-if="!isIncomingOffer" class="task-actions">
       <el-button v-if="canPause" size="small" plain @click="$emit('pause')">暂停</el-button>
-      <el-button v-if="canResume" size="small" type="primary" plain @click="$emit('resume')">
+      <el-button
+        v-if="canResume && connected"
+        size="small"
+        type="primary"
+        plain
+        @click="$emit('resume')"
+      >
         继续传输
       </el-button>
       <el-button v-if="isTaskActive" size="small" type="danger" plain @click="$emit('cancelTask')">
@@ -369,6 +402,20 @@ const getUnfinishedReason = (file: TransferTaskDto['files'][number]): string => 
   margin: 10px 0 0;
   color: #f56c6c;
   font-size: 13px;
+}
+
+.recovery-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, #d97706 42%, var(--app-border));
+  border-radius: 9px;
+  background: color-mix(in srgb, #d97706 9%, var(--app-surface-raised));
+  color: var(--app-text-secondary);
+  font-size: 12px;
 }
 
 .completion-summary {

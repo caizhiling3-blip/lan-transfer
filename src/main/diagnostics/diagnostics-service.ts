@@ -72,6 +72,7 @@ export class DiagnosticsService {
       connectionState: summary.connectionState,
       discoveryRunning: summary.discoveryRunning,
       activeTransferCount: summary.activeTransferCount,
+      recoverableTransferCount: summary.recoverableTransferCount,
       historyEntries: summary.historyEntries,
       historyStorageBytes: summary.historyStorageBytes,
       logFiles: summary.logFiles,

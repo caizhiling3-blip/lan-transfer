@@ -116,6 +116,7 @@ export interface IpcInvokeMap {
     { readonly queueItemId: QueueItemId },
     readonly TransferQueueItemDto[]
   >
+  readonly 'transfer:get-tasks': InvokeContract<undefined, readonly TransferTaskDto[]>
   readonly 'transfer:respond-to-offer': InvokeContract<
     {
       readonly transferId: TransferId

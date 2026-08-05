@@ -68,6 +68,7 @@ import {
 } from './folder-manifest-validation'
 import { publishFolderStaging } from './folder-publish'
 import { rebuildTask, updateAllNonTerminalFiles, updateFile } from './task-state'
+import { createVerifiedChunkRanges, expandVerifiedChunkRanges } from './verified-chunk-ranges'
 
 type TaskListener = (task: TransferTaskDto) => void
 type OfferListener = (offer: FolderOfferReceivedDto) => void
@@ -1132,7 +1133,7 @@ export class FolderTransferCoordinator {
         sha256: manifestFile.sha256,
         chunkSize: manifestFile.chunkSize,
         chunkCount: manifestFile.chunkCount,
-        verifiedRanges: this.createVerifiedRanges(
+        verifiedRanges: createVerifiedChunkRanges(
           transfer.files.get(manifestFile.fileId)?.verifiedChunks ?? new Map(),
           manifestFile.chunkCount,
         ),
@@ -1182,7 +1183,7 @@ export class FolderTransferCoordinator {
         ) {
           throw new Error('RESUME_STATE_INVALID')
         }
-        const verified = this.expandVerifiedRanges(state.verifiedRanges, state.chunkCount)
+        const verified = expandVerifiedChunkRanges(state.verifiedRanges, state.chunkCount)
         transfer.verifiedChunks.set(taskFile.fileId, verified)
         const transferredBytes = [...verified].reduce(
           (total, chunkIndex) =>
@@ -1204,37 +1205,6 @@ export class FolderTransferCoordinator {
     } catch {
       void this.failOutgoing(transfer, 'RESUME_STATE_INVALID', true)
     }
-  }
-
-  private createVerifiedRanges(
-    verifiedChunks: ReadonlyMap<number, string>,
-    chunkCount: number,
-  ): TransferResumeStateMessage['payload']['files'][number]['verifiedRanges'] {
-    const indexes = [...verifiedChunks.keys()]
-      .filter((index) => index < chunkCount)
-      .sort((a, b) => a - b)
-    const ranges: { start: number; end: number }[] = []
-    for (const index of indexes) {
-      const previous = ranges.at(-1)
-      if (previous !== undefined && previous.end === index) previous.end += 1
-      else ranges.push({ start: index, end: index + 1 })
-    }
-    return ranges
-  }
-
-  private expandVerifiedRanges(
-    ranges: TransferResumeStateMessage['payload']['files'][number]['verifiedRanges'],
-    chunkCount: number,
-  ): Set<number> {
-    const verified = new Set<number>()
-    let previousEnd = 0
-    for (const range of ranges) {
-      if (range.start < previousEnd || range.end > chunkCount)
-        throw new Error('RESUME_STATE_INVALID')
-      for (let index = range.start; index < range.end; index += 1) verified.add(index)
-      previousEnd = range.end
-    }
-    return verified
   }
 
   private createPausedTask(task: TransferTaskDto): TransferTaskDto {

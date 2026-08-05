@@ -110,6 +110,7 @@ export interface DiagnosticsSummaryDto {
   readonly connectionState: ConnectionState
   readonly discoveryRunning: boolean
   readonly activeTransferCount: number
+  readonly recoverableTransferCount: number
   readonly historyEntries: number
   readonly historyStorageBytes: number
   readonly logFiles: number

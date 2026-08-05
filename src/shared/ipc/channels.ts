@@ -23,6 +23,7 @@ export const IPC_INVOKE_CHANNELS = [
   'transfer:select-folder',
   'transfer:register-dropped-files',
   'transfer:register-dropped-items',
+  'transfer:get-tasks',
   'transfer:send-text',
   'transfer:offer-files',
   'transfer:offer-folder',

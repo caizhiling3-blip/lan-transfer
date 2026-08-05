@@ -144,6 +144,11 @@ export const registerFileTransferIpcHandlers = (
       : { ok: true, data: task }
   })
 
+  registerIpcHandler('transfer:get-tasks', getWindow, () => ({
+    ok: true,
+    data: [...coordinator.getTasks(), ...folderCoordinator.getTasks()],
+  }))
+
   registerIpcHandler('transfer:pause', getWindow, async ({ transferId }) => {
     const task = folderCoordinator.ownsTransfer(transferId)
       ? await folderCoordinator.pause(transferId)

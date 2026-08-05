@@ -69,6 +69,9 @@ onMounted(() => void store.load())
         <el-descriptions-item label="活动任务">{{
           store.summary.activeTransferCount
         }}</el-descriptions-item>
+        <el-descriptions-item label="可恢复任务">{{
+          store.summary.recoverableTransferCount
+        }}</el-descriptions-item>
         <el-descriptions-item label="历史摘要">
           {{ store.summary.historyEntries }} 条 ·
           {{ formatSize(store.summary.historyStorageBytes) }}

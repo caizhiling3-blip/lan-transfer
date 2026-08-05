@@ -73,11 +73,15 @@ const revokeTrustedDevice = async (
   deviceId: (typeof securityStore.trustedDevices)[number]['deviceId'],
 ): Promise<void> => {
   try {
-    await ElMessageBox.confirm('取消信任后，下次连接该设备需要重新核对验证码。', '取消信任', {
-      type: 'warning',
-      confirmButtonText: '取消信任',
-      cancelButtonText: '保留',
-    })
+    await ElMessageBox.confirm(
+      '取消信任后，下次连接需要重新核对验证码；与该设备关联的可恢复任务和未完成临时内容也会删除。',
+      '取消信任',
+      {
+        type: 'warning',
+        confirmButtonText: '取消信任并清理',
+        cancelButtonText: '保留',
+      },
+    )
     if (await securityStore.revoke(deviceId)) ElMessage.success('已取消信任该设备')
   } catch {
     // 用户取消确认时无需提示错误。
@@ -87,7 +91,7 @@ const revokeTrustedDevice = async (
 const clearTrustedDevices = async (): Promise<void> => {
   try {
     await ElMessageBox.confirm(
-      '确定取消信任全部设备吗？之后每台设备都需要重新核对验证码。',
+      '确定取消信任全部设备吗？之后每台设备都需要重新核对验证码，所有可恢复任务和未完成临时内容也会删除。',
       '清空可信设备',
       {
         type: 'warning',

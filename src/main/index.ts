@@ -219,6 +219,7 @@ void app.whenReady().then(async () => {
         connectionState: activeConnectionManager.getStatus().state,
         discoveryRunning: activeDiscoveryManager.isRunning(),
         activeTransferCount: activeTasks.length + queuedTaskCount,
+        recoverableTransferCount: recoverableTransfers.load().length,
         historyEntries: historyStats.totalEntries,
         historyStorageBytes: historyStats.storageBytes,
         logFiles: logStats.fileCount,
