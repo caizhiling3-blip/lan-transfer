@@ -2,7 +2,9 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { lstat, open, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { request as createHttpRequest } from 'node:http'
-import { join } from 'node:path'
+import { basename, isAbsolute, relative, resolve, sep, join } from 'node:path'
+
+import { z } from 'zod'
 
 import {
   DEFAULT_FILE_CHUNK_SIZE_BYTES,
@@ -12,6 +14,7 @@ import {
   TRANSFER_ID_RETENTION_MS,
   TRANSFER_TIMEOUT_MS,
 } from '@shared/constants'
+import { errorCodeSchema } from '@shared/errors'
 import type { ErrorCode } from '@shared/errors'
 import type { FileOfferReceivedDto } from '@shared/ipc'
 import type {
@@ -20,6 +23,7 @@ import type {
   SecureFileMetadata,
   TransferResumeStateMessage,
 } from '@shared/protocols'
+import { deviceInfoSchema, secureFileMetadataSchema } from '@shared/protocols'
 import { fileIdSchema, transferIdSchema } from '@shared/types'
 import type {
   ConnectionId,
@@ -31,7 +35,11 @@ import type {
   TransferTaskDto,
 } from '@shared/types'
 
-import type { SessionHistory } from '../storage'
+import type {
+  LoadedRecoverableTransfer,
+  RecoverableTransfersStore,
+  SessionHistory,
+} from '../storage'
 import { assertSafeReceiveDirectory, assertSufficientDiskSpace } from '../security'
 import type { ConnectionManager, FileControlMessage, TransferControlMessage } from '../websocket'
 import type { AuthorizedSourceFile } from './file-access-registry'
@@ -90,7 +98,7 @@ interface IncomingFileState {
 interface IncomingTransfer {
   task: TransferTaskDto
   readonly files: Map<FileId, IncomingFileState>
-  connectionId: ConnectionId
+  connectionId?: ConnectionId
   directoryPath?: string
   cancelAll: boolean
   preserveInterruption: boolean
@@ -112,6 +120,14 @@ const normalizeRemoteAddress = (address: string | undefined): string => {
   return address.startsWith('::ffff:') ? address.slice(7) : address
 }
 
+const isWithinDirectory = (root: string, candidate: string): boolean => {
+  const relativePath = relative(resolve(root), resolve(candidate))
+  return (
+    relativePath === '' ||
+    (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${sep}`))
+  )
+}
+
 const toFileMetadata = (file: SecureFileMetadata): FileMetadata => ({
   fileId: file.fileId,
   displayName: file.displayName,
@@ -119,9 +135,107 @@ const toFileMetadata = (file: SecureFileMetadata): FileMetadata => ({
   mimeType: file.mimeType,
 })
 
+const recoveredFileItemSchema = z
+  .object({
+    fileId: fileIdSchema,
+    displayName: z.string().min(1).max(512),
+    size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    mimeType: z.string().min(1).max(255),
+    transferredBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    bytesPerSecond: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    status: z.enum([
+      'pending',
+      'transferring',
+      'paused',
+      'completed',
+      'failed',
+      'cancelled',
+      'rejected',
+    ]),
+    errorCode: errorCodeSchema.optional(),
+  })
+  .strict()
+
+const recoveredTaskSchema = z
+  .object({
+    transferId: transferIdSchema,
+    direction: z.enum(['send', 'receive']),
+    kind: z.literal('file'),
+    peer: deviceInfoSchema,
+    status: z.enum([
+      'pending',
+      'awaitingAcceptance',
+      'accepted',
+      'transferring',
+      'paused',
+      'reconnecting',
+      'verifying',
+      'recoverable',
+      'publishing',
+      'completed',
+      'failed',
+      'cancelled',
+      'rejected',
+    ]),
+    files: z.array(recoveredFileItemSchema).min(1).max(MAX_FILES_PER_TRANSFER),
+    totalBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    transferredBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    bytesPerSecond: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    createdAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    updatedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    errorCode: errorCodeSchema.optional(),
+  })
+  .strict()
+
+const recoveredSourceSchema = z
+  .object({
+    path: z.string().min(1).max(32_768),
+    selection: z
+      .object({
+        selectionToken: z.string().min(1).max(256),
+        fileId: fileIdSchema,
+        displayName: z.string().min(1).max(512),
+        size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        mimeType: z.string().min(1).max(255),
+      })
+      .strict(),
+    identity: z
+      .object({
+        device: z.number().int(),
+        inode: z.number().int(),
+        modifiedAt: z.number().nonnegative(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
+const recoveredIncomingFileSchema = z
+  .object({
+    metadata: secureFileMetadataSchema,
+    verifiedChunks: z.array(z.tuple([z.number().int().nonnegative(), z.string().min(1).max(128)])),
+    temporaryPath: z.string().min(1).max(32_768).optional(),
+  })
+  .strict()
+
+const fileRecoveryPayloadSchema = z
+  .object({
+    format: z.literal('file-v1'),
+    direction: z.enum(['send', 'receive']),
+    task: recoveredTaskSchema,
+    sources: z.array(recoveredSourceSchema).max(MAX_FILES_PER_TRANSFER).optional(),
+    expectedDigests: z
+      .array(z.tuple([fileIdSchema, z.string().regex(/^[a-f0-9]{64}$/u)]))
+      .optional(),
+    files: z.array(recoveredIncomingFileSchema).max(MAX_FILES_PER_TRANSFER).optional(),
+    directoryPath: z.string().min(1).max(32_768).optional(),
+  })
+  .strict()
+
 export class FileTransferCoordinator {
   private readonly outgoing = new Map<TransferId, OutgoingTransfer>()
   private readonly incoming = new Map<TransferId, IncomingTransfer>()
+  private readonly restorationFailures: TransferTaskDto[] = []
   private readonly taskListeners = new Set<TaskListener>()
   private readonly offerListeners = new Set<OfferListener>()
   private readonly recordedTransfers = new Map<TransferId, number>()
@@ -135,6 +249,7 @@ export class FileTransferCoordinator {
     private readonly history: SessionHistory,
     private readonly getMaximumFileSize: () => number = () => Number.MAX_SAFE_INTEGER,
     private readonly canStartTransfer: () => boolean = () => true,
+    private readonly recoveryStore?: RecoverableTransfersStore,
   ) {
     this.unsubscribeFromMessages = connectionManager.subscribeFileMessages((message) => {
       this.handleControlMessage(message)
@@ -172,6 +287,194 @@ export class FileTransferCoordinator {
     })
   }
 
+  public async restoreRecoverableTransfers(
+    records: readonly LoadedRecoverableTransfer[],
+  ): Promise<void> {
+    for (const record of records) {
+      if (
+        record.kind !== 'file' ||
+        this.outgoing.has(record.transferId) ||
+        this.incoming.has(record.transferId)
+      ) {
+        continue
+      }
+      const parsed = fileRecoveryPayloadSchema.safeParse(record.payload)
+      if (!parsed.success) {
+        this.recoveryStore?.remove(record.transferId)
+        continue
+      }
+      const task = this.parseRecoveredTask(parsed.data.task, record)
+      if (task === null) continue
+      if (parsed.data.direction === 'send') {
+        await this.restoreOutgoingTransfer(record, task, parsed.data)
+      } else {
+        await this.restoreIncomingTransfer(record, task, parsed.data)
+      }
+    }
+  }
+
+  private parseRecoveredTask(
+    task: z.infer<typeof recoveredTaskSchema>,
+    record: LoadedRecoverableTransfer,
+  ): TransferTaskDto | null {
+    if (
+      task.transferId !== record.transferId ||
+      task.peer.deviceId !== record.peerDeviceId ||
+      task.direction !== record.direction ||
+      TERMINAL_TASK_STATUSES.includes(task.status)
+    ) {
+      this.recoveryStore?.remove(record.transferId)
+      return null
+    }
+    const normalizedTask: TransferTaskDto = {
+      transferId: task.transferId,
+      direction: task.direction,
+      kind: task.kind,
+      peer: task.peer,
+      status: task.status,
+      files: task.files.map(({ errorCode, ...file }) => ({
+        ...file,
+        ...(errorCode === undefined ? {} : { errorCode }),
+      })),
+      totalBytes: task.totalBytes,
+      transferredBytes: task.transferredBytes,
+      bytesPerSecond: task.bytesPerSecond,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      ...(task.errorCode === undefined ? {} : { errorCode: task.errorCode }),
+    }
+    return rebuildTask(
+      normalizedTask,
+      normalizedTask.files.map((file) =>
+        file.status === 'completed'
+          ? file
+          : { ...file, status: 'paused' as const, bytesPerSecond: 0 },
+      ),
+      'recoverable',
+    )
+  }
+
+  private async restoreOutgoingTransfer(
+    record: LoadedRecoverableTransfer,
+    task: TransferTaskDto,
+    payload: z.infer<typeof fileRecoveryPayloadSchema>,
+  ): Promise<void> {
+    if (payload.sources === undefined || payload.expectedDigests === undefined) {
+      this.recoveryStore?.remove(record.transferId)
+      return
+    }
+    const expectedDigests = new Map(payload.expectedDigests)
+    try {
+      if (
+        payload.sources.length !== task.files.length ||
+        expectedDigests.size !== task.files.length ||
+        payload.sources.some(
+          (source) =>
+            !isAbsolute(source.path) ||
+            !task.files.some((file) => file.fileId === source.selection.fileId),
+        )
+      ) {
+        throw new Error('SOURCE_FILE_CHANGED')
+      }
+      for (const source of payload.sources) {
+        const expectedDigest = expectedDigests.get(source.selection.fileId)
+        if (
+          expectedDigest === undefined ||
+          (await calculateAuthorizedFileSha256({
+            path: source.path,
+            size: source.selection.size,
+            ...(source.identity === undefined ? {} : { identity: source.identity }),
+          })) !== expectedDigest
+        ) {
+          throw new Error('SOURCE_FILE_CHANGED')
+        }
+      }
+      const sources: AuthorizedSourceFile[] = payload.sources.map(({ identity, ...source }) => ({
+        ...source,
+        ...(identity === undefined ? {} : { identity }),
+      }))
+      this.outgoing.set(record.transferId, {
+        task,
+        sources,
+        authorizations: new Map(),
+        remoteProgress: new Map(),
+        expectedDigests,
+        verifiedChunks: new Map(),
+        cancelledFiles: new Set(),
+        cancelAll: false,
+      })
+    } catch (error) {
+      this.recoveryStore?.remove(record.transferId)
+      this.registerRestorationFailure(task, mapFileError(error))
+    }
+  }
+
+  private async restoreIncomingTransfer(
+    record: LoadedRecoverableTransfer,
+    task: TransferTaskDto,
+    payload: z.infer<typeof fileRecoveryPayloadSchema>,
+  ): Promise<void> {
+    if (payload.files === undefined || payload.directoryPath === undefined) {
+      this.recoveryStore?.remove(record.transferId)
+      return
+    }
+    try {
+      const directoryPath = await assertSafeReceiveDirectory(payload.directoryPath)
+      if (payload.files.length !== task.files.length) throw new Error('RESUME_STATE_INVALID')
+      const files = new Map<FileId, IncomingFileState>()
+      for (const recovered of payload.files) {
+        const verifiedChunks = new Map(recovered.verifiedChunks)
+        if (
+          !task.files.some((file) => file.fileId === recovered.metadata.fileId) ||
+          [...verifiedChunks.keys()].some((index) => index >= recovered.metadata.chunkCount)
+        ) {
+          throw new Error('RESUME_STATE_INVALID')
+        }
+        if (recovered.temporaryPath !== undefined) {
+          if (
+            !isWithinDirectory(directoryPath, recovered.temporaryPath) ||
+            !basename(recovered.temporaryPath).startsWith(`.lan-transfer-${record.transferId}-`)
+          ) {
+            throw new Error('SAVE_DIRECTORY_INVALID')
+          }
+          const metadata = await lstat(recovered.temporaryPath)
+          if (
+            !metadata.isFile() ||
+            metadata.isSymbolicLink() ||
+            metadata.size !== recovered.metadata.size
+          ) {
+            throw new Error('RESUME_STATE_INVALID')
+          }
+        } else if (verifiedChunks.size > 0) {
+          throw new Error('RESUME_STATE_INVALID')
+        }
+        files.set(recovered.metadata.fileId, {
+          metadata: recovered.metadata,
+          verifiedChunks,
+          ...(recovered.temporaryPath === undefined
+            ? {}
+            : { temporaryPath: recovered.temporaryPath }),
+        })
+      }
+      this.incoming.set(record.transferId, {
+        task,
+        files,
+        directoryPath,
+        cancelAll: false,
+        preserveInterruption: true,
+      })
+    } catch (error) {
+      this.recoveryStore?.remove(record.transferId)
+      this.registerRestorationFailure(task, mapFileError(error))
+    }
+  }
+
+  private registerRestorationFailure(task: TransferTaskDto, errorCode: ErrorCode): void {
+    const failedTask = updateAllNonTerminalFiles(task, 'failed', 'failed', errorCode)
+    this.restorationFailures.push(failedTask)
+    this.recordHistory(failedTask)
+  }
+
   public subscribeTasks(listener: TaskListener): () => void {
     this.taskListeners.add(listener)
     return () => this.taskListeners.delete(listener)
@@ -186,6 +489,7 @@ export class FileTransferCoordinator {
     return [
       ...[...this.outgoing.values()].map((transfer) => transfer.task),
       ...[...this.incoming.values()].map((transfer) => transfer.task),
+      ...this.restorationFailures,
     ]
   }
 
@@ -252,7 +556,9 @@ export class FileTransferCoordinator {
     }
 
     try {
-      transfer.directoryPath = await this.fileAccess.resolveReceiveDirectory(directoryToken)
+      transfer.directoryPath = await assertSafeReceiveDirectory(
+        await this.fileAccess.resolveReceiveDirectory(directoryToken),
+      )
       await assertSufficientDiskSpace(
         transfer.directoryPath,
         transfer.task.files
@@ -453,10 +759,19 @@ export class FileTransferCoordinator {
     return true
   }
 
-  public async shutdown(): Promise<void> {
+  public async shutdown(preserveRecoverable = false): Promise<void> {
     this.unsubscribeFromMessages()
     this.unsubscribeFromTransferMessages()
     this.unsubscribeFromConnection()
+    if (preserveRecoverable) {
+      this.markRecoverableTransfers()
+      for (const transfer of this.outgoing.values()) transfer.abortUpload?.()
+      for (const transfer of this.incoming.values()) {
+        transfer.preserveInterruption = true
+        for (const file of transfer.files.values()) file.abortUpload?.()
+      }
+      return
+    }
     await this.failActiveTransfers('TRANSFER_CANCELLED')
   }
 
@@ -1122,7 +1437,10 @@ export class FileTransferCoordinator {
       const safeDirectoryPath = await assertSafeReceiveDirectory(directoryPath)
       if (file.temporaryPath === undefined) {
         await assertSufficientDiskSpace(safeDirectoryPath, file.metadata.size)
-        file.temporaryPath = join(directoryPath, `.lan-transfer-${randomUUID()}.part`)
+        file.temporaryPath = join(
+          directoryPath,
+          `.lan-transfer-${transfer.task.transferId}-${randomUUID()}.part`,
+        )
         const temporaryHandle = await open(file.temporaryPath, 'wx+', 0o600)
         try {
           await temporaryHandle.truncate(file.metadata.size)
@@ -1224,7 +1542,10 @@ export class FileTransferCoordinator {
     const directoryPath = transfer.directoryPath
     if (directoryPath === undefined) throw new Error('SAVE_DIRECTORY_INVALID')
     if (file.temporaryPath === undefined) {
-      file.temporaryPath = join(directoryPath, `.lan-transfer-${randomUUID()}.part`)
+      file.temporaryPath = join(
+        directoryPath,
+        `.lan-transfer-${transfer.task.transferId}-${randomUUID()}.part`,
+      )
       const emptyHandle = await open(file.temporaryPath, 'wx', 0o600)
       await emptyHandle.close()
     }
@@ -1500,7 +1821,7 @@ export class FileTransferCoordinator {
     for (const transfer of [...this.outgoing.values(), ...this.incoming.values()]) {
       if (TERMINAL_TASK_STATUSES.includes(transfer.task.status)) continue
       const pausedTask = this.createPausedTask(transfer.task)
-      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'recoverable', 'RESUME_EXPIRED')
+      transfer.task = rebuildTask(pausedTask, pausedTask.files, 'recoverable')
       this.emitTask(transfer.task)
     }
   }
@@ -1514,7 +1835,58 @@ export class FileTransferCoordinator {
   }
 
   private emitTask(task: TransferTaskDto): void {
+    this.persistRecoverableTask(task)
     for (const listener of this.taskListeners) listener(task)
+  }
+
+  private persistRecoverableTask(task: TransferTaskDto): void {
+    if (this.recoveryStore === undefined) return
+    if (TERMINAL_TASK_STATUSES.includes(task.status)) {
+      this.recoveryStore.remove(task.transferId)
+      return
+    }
+    const outgoing = this.outgoing.get(task.transferId)
+    if (outgoing !== undefined) {
+      if (outgoing.expectedDigests.size !== outgoing.sources.length) return
+      this.recoveryStore.save({
+        transferId: task.transferId,
+        peerDeviceId: task.peer.deviceId,
+        kind: 'file',
+        direction: 'send',
+        payload: {
+          format: 'file-v1',
+          direction: 'send',
+          task,
+          sources: outgoing.sources,
+          expectedDigests: [...outgoing.expectedDigests],
+        },
+      })
+      return
+    }
+    const incoming = this.incoming.get(task.transferId)
+    if (incoming === undefined || incoming.directoryPath === undefined) return
+    const files = [...incoming.files.values()].map((file) => ({
+      metadata: file.metadata,
+      verifiedChunks: [...file.verifiedChunks],
+      ...(file.temporaryPath === undefined ? {} : { temporaryPath: file.temporaryPath }),
+    }))
+    const stagingPaths = files.flatMap((file) =>
+      file.temporaryPath === undefined ? [] : [file.temporaryPath],
+    )
+    this.recoveryStore.save({
+      transferId: task.transferId,
+      peerDeviceId: task.peer.deviceId,
+      kind: 'file',
+      direction: 'receive',
+      payload: {
+        format: 'file-v1',
+        direction: 'receive',
+        task,
+        files,
+        directoryPath: incoming.directoryPath,
+      },
+      ...(stagingPaths.length === 0 ? {} : { stagingPaths }),
+    })
   }
 
   private recordHistory(task: TransferTaskDto): void {

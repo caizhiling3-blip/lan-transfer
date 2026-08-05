@@ -74,17 +74,26 @@ describe('temporary file lifecycle', () => {
     const directory = await createDirectory()
     const now = Date.now()
     const stale = join(directory, '.lan-transfer-11111111-1111-4111-8111-111111111111.part')
+    const protectedStale = join(
+      directory,
+      '.lan-transfer-33333333-3333-4333-8333-333333333333-44444444-4444-4444-8444-444444444444.part',
+    )
     const recent = join(directory, '.lan-transfer-22222222-2222-4222-8222-222222222222.part')
     const unrelated = join(directory, 'notes.part')
     await Promise.all([
       writeFile(stale, 'stale'),
+      writeFile(protectedStale, 'recoverable'),
       writeFile(recent, 'recent'),
       writeFile(unrelated, 'keep'),
     ])
     const oldDate = new Date(now - TEMPORARY_FILE_MAX_AGE_MS - 1)
     await utimes(stale, oldDate, oldDate)
+    await utimes(protectedStale, oldDate, oldDate)
 
-    await expect(cleanupStaleTemporaryFiles(directory, now)).resolves.toBe(1)
+    await expect(
+      cleanupStaleTemporaryFiles(directory, now, new Set([protectedStale])),
+    ).resolves.toBe(1)
+    await expect(readFile(protectedStale, 'utf8')).resolves.toBe('recoverable')
     await expect(readFile(recent, 'utf8')).resolves.toBe('recent')
     await expect(readFile(unrelated, 'utf8')).resolves.toBe('keep')
   })

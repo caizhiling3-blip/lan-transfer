@@ -1080,10 +1080,14 @@ export class ConnectionManager {
         if (message.payload.connectionId !== this.connectionId) throw new Error('Wrong connection')
       } else if (message.type === 'device:disconnect') {
         if (message.payload.connectionId !== this.connectionId) throw new Error('Wrong connection')
-        this.intentionalDisconnect = true
-        this.clearReconnectExpectation()
+        if (message.payload.reason === 'user_requested') {
+          this.intentionalDisconnect = true
+          this.clearReconnectExpectation()
+        }
         this.socket?.close(1000, 'Peer disconnected')
-        this.reset('TRANSFER_CANCELLED')
+        this.reset(
+          message.payload.reason === 'user_requested' ? 'TRANSFER_CANCELLED' : 'CONNECTION_CLOSED',
+        )
       } else if (message.type === 'text:send') {
         const received = {
           messageId: message.messageId,

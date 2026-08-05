@@ -201,6 +201,10 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 阶段 7 的运行时恢复由接收端 verified chunk map 驱动。发送方暂停时终止当前请求但保留已确认块；继续或短时重连后，接收方在新安全会话内签发新授权并返回 verified ranges，发送方复核源文件完整摘要后跳过已确认块。非主动断线只为同一可信 deviceId 与公钥自动重连，窗口默认两分钟；主动断开仍清理任务。renderer 只显示 paused、reconnecting、verifying、recoverable 等投影状态，不接触内部 bitmap、摘要和授权。
 
+阶段 8 的 `RecoverableTransfersStore` 只在外层索引保存 transferId、对端 deviceId、方向、种类和过期时间；源路径、接收目录、manifest、摘要与 verified bitmap 作为单一 payload 交给 Electron `safeStorage` 加密后保存。启动时先清理七天过期记录，再只加载仍受信任设备的记录；取消信任会同时安全丢弃对应恢复状态。文件和文件夹协调器分别用严格 schema 解析 payload，重新计算发送源 SHA-256，并复核接收目录、staging 类型、大小、归属名称和块边界。任何失败都会删除恢复记录并生成本地失败任务，绝不尝试猜测或发布内容。
+
+恢复任务在主窗口创建前重建为 `recoverable`。应用正常退出会先保存并保留非终态任务，再以 `app_shutdown` 通知对端进入恢复流程；用户主动断开仍按取消处理。常规过期临时文件清理会跳过当前加密恢复记录声明的 staging 路径，记录过期或撤销信任时只删除文件名与 transferId 所有权格式严格匹配的应用临时内容。
+
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。
 
 阶段 3 的 key-agreement 模块只返回内存中的 X25519 私钥对象、公开 DER 和 nonce。规范 transcript 使用固定数组顺序绑定协议版本、双方角色、deviceId、nonce、临时公钥和长期公钥，避免对象键顺序形成不同派生结果。`PairingCoordinator` 是首次信任审批的事实来源：UI 只投影短指纹、六位验证码和截止时间，双方确认前不写 store；已信任设备只有相同公钥才可免配对刷新验证时间。可信设备 IPC 返回不含公钥的摘要，取消信任与最近设备删除保持独立。

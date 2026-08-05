@@ -50,6 +50,7 @@ import {
   HistoryStore,
   IdentityStore,
   RecentDevicesStore,
+  RecoverableTransfersStore,
   SessionHistory,
   SettingsStore,
   TrustedDevicesStore,
@@ -115,7 +116,7 @@ const openMainWindow = (): void => {
   })
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   initializeLogger()
   logger.info('application_started', {
     appVersion: app.getVersion(),
@@ -132,6 +133,18 @@ void app.whenReady().then(() => {
   const recentDevices = new RecentDevicesStore(app.getPath('userData'))
   const identityStore = new IdentityStore(app.getPath('userData'), safeStorage)
   const trustedDevices = new TrustedDevicesStore(app.getPath('userData'))
+  const recoverableTransfers = new RecoverableTransfersStore(app.getPath('userData'), safeStorage)
+  await recoverableTransfers.pruneExpired()
+  const loadedRecoveryRecords = recoverableTransfers.load()
+  const recoveryRecords = loadedRecoveryRecords.filter(
+    (record) => trustedDevices.get(record.peerDeviceId) !== null,
+  )
+  await Promise.all(
+    loadedRecoveryRecords
+      .filter((record) => trustedDevices.get(record.peerDeviceId) === null)
+      .map((record) => recoverableTransfers.discard(record.transferId)),
+  )
+  const protectedRecoveryPaths = new Set(recoveryRecords.flatMap((record) => record.stagingPaths))
   const pairingCoordinator = new PairingCoordinator(trustedDevices)
   logger.info('secure_identity_ready', { trustedDeviceCount: trustedDevices.list().length })
   const logLifecycle = new LogLifecycle(app.getPath('logs'), getActiveLogFilePath)
@@ -159,13 +172,17 @@ void app.whenReady().then(() => {
     sessionHistory,
     () => settingsStore.getSettings().maxFileSizeBytes,
     () => folderTransferCoordinator?.hasActiveTransfers() !== true,
+    recoverableTransfers,
   )
   const activeFolderTransferCoordinator = new FolderTransferCoordinator(
     activeConnectionManager,
     fileAccessRegistry,
     () => !activeFileTransferCoordinator.hasActiveTransfers(),
     sessionHistory,
+    recoverableTransfers,
   )
+  await activeFileTransferCoordinator.restoreRecoverableTransfers(recoveryRecords)
+  await activeFolderTransferCoordinator.restoreRecoverableTransfers(recoveryRecords)
   const activeDiscoveryManager = new DiscoveryManager(
     () => deviceIdentity.getDeviceInfo(activeServiceManager.getStatus()),
     (error) => logger.warn('device_discovery_error', { error: String(error) }),
@@ -248,6 +265,19 @@ void app.whenReady().then(() => {
     pairingCoordinator,
     trustedDevices,
     () => sendToRenderer(TRUSTED_DEVICES_CHANGED_EVENT_CHANNEL, trustedDevices.listSummaries()),
+    async (deviceId) => {
+      const connectedPeer = activeConnectionManager.getPeer()
+      if (
+        connectedPeer !== null &&
+        (deviceId === undefined || connectedPeer.deviceId === deviceId)
+      ) {
+        activeConnectionManager.disconnect('user_requested')
+      }
+      const records = recoverableTransfers
+        .load()
+        .filter((record) => deviceId === undefined || record.peerDeviceId === deviceId)
+      await Promise.all(records.map((record) => recoverableTransfers.discard(record.transferId)))
+    },
   )
   registerDiscoveryIpcHandlers(() => mainWindow, activeDiscoveryManager)
   registerDiagnosticsIpcHandlers(() => mainWindow, diagnosticsService)
@@ -284,8 +314,8 @@ void app.whenReady().then(() => {
     .resolveReceiveDirectory()
     .then(async (directoryPath) => {
       const [removedFiles, removedFolders] = await Promise.all([
-        cleanupStaleTemporaryFiles(directoryPath),
-        cleanupStaleFolderArtifacts(directoryPath),
+        cleanupStaleTemporaryFiles(directoryPath, Date.now(), protectedRecoveryPaths),
+        cleanupStaleFolderArtifacts(directoryPath, Date.now(), protectedRecoveryPaths),
       ])
       return { removedFiles, removedFolders }
     })
@@ -476,9 +506,9 @@ app.on('before-quit', (event) => {
     const options = {
       type: 'warning' as const,
       title: '传输尚未完成',
-      message: '仍有文件正在等待或传输中，退出将取消这些任务。',
-      detail: '建议等待传输完成后再退出。',
-      buttons: ['继续传输', '退出并取消'],
+      message: '仍有文件正在等待或传输中，退出后可在下次启动时继续。',
+      detail: '恢复前会重新校验源文件和临时内容；也可以留在应用内等待完成。',
+      buttons: ['继续传输', '保存状态并退出'],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
@@ -499,10 +529,10 @@ app.on('before-quit', (event) => {
   discoveryManager?.stop()
   transferPowerSaveController?.stop()
   transferQueueCoordinator?.shutdown()
-  connectionManager.disconnect('app_shutdown')
   void fileTransferCoordinator
-    .shutdown()
-    .then(() => folderTransferCoordinator?.shutdown())
+    .shutdown(true)
+    .then(() => folderTransferCoordinator?.shutdown(true))
+    .then(() => connectionManager?.disconnect('app_shutdown'))
     .then(() => serviceManager?.stop())
     .finally(() => {
       unsubscribeFromService?.()

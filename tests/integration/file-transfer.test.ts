@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,7 @@ import {
 import { FileTransferCoordinator } from '../../src/main/file-transfer'
 import { LocalServer } from '../../src/main/server/local-server'
 import { SessionHistory } from '../../src/main/storage/session-history'
+import { RecoverableTransfersStore, type SecretProtector } from '../../src/main/storage'
 import type { ConnectionManager } from '../../src/main/websocket/connection-manager'
 import { createAutoPairingConnectionManager } from '../helpers/secure-connection'
 import { DEFAULT_FILE_CHUNK_SIZE_BYTES } from '@shared/constants'
@@ -41,6 +42,22 @@ class TestFileAccess implements FileAccessAdapter {
 
   public async resolveReceiveDirectory(): Promise<string> {
     return this.receiveDirectory
+  }
+}
+
+class TestSecretProtector implements SecretProtector {
+  public isEncryptionAvailable(): boolean {
+    return true
+  }
+
+  public encryptString(value: string): Buffer {
+    return Buffer.from(`protected:${value}`, 'utf8')
+  }
+
+  public decryptString(value: Buffer): string {
+    const protectedValue = value.toString('utf8')
+    if (!protectedValue.startsWith('protected:')) throw new Error('Invalid ciphertext')
+    return protectedValue.slice('protected:'.length)
   }
 }
 
@@ -101,6 +118,10 @@ const waitForFileStatus = (
 const createConnectedTransferPair = async (
   source: AuthorizedSourceFile | readonly AuthorizedSourceFile[],
   receiveDirectory: string,
+  recoveryStores?: {
+    readonly sender: RecoverableTransfersStore
+    readonly receiver: RecoverableTransfersStore
+  },
 ) => {
   const server = new LocalServer()
   servers.push(server)
@@ -116,11 +137,17 @@ const createConnectedTransferPair = async (
     sender,
     new TestFileAccess(Array.isArray(source) ? source : [source], receiveDirectory),
     new SessionHistory(),
+    () => Number.MAX_SAFE_INTEGER,
+    () => true,
+    recoveryStores?.sender,
   )
   const receiverCoordinator = new FileTransferCoordinator(
     receiver,
     new TestFileAccess([], receiveDirectory),
     new SessionHistory(),
+    () => Number.MAX_SAFE_INTEGER,
+    () => true,
+    recoveryStores?.receiver,
   )
   coordinators.push(senderCoordinator, receiverCoordinator)
   server.setConnectionHandler((socket, request) => receiver.acceptIncoming(socket, request))
@@ -133,7 +160,14 @@ const createConnectedTransferPair = async (
   const incomingRequest = await incomingRequestPromise
   receiver.respondToRequest(incomingRequest.requestId, 'accept')
   await connectionPromise
-  return { senderCoordinator, receiverCoordinator, senderManager: sender, receiverPort: serverPort }
+  return {
+    senderCoordinator,
+    receiverCoordinator,
+    senderManager: sender,
+    receiverManager: receiver,
+    receiverPort: serverPort,
+    server,
+  }
 }
 
 afterEach(async () => {
@@ -183,7 +217,7 @@ describe('single file transfer', () => {
       'new content',
     )
     expect(receiverCoordinator.getReceivedFilePath(offer.transferId)).toBe(
-      join(receiveDirectory, '测试 file (1).txt'),
+      join(await realpath(receiveDirectory), '测试 file (1).txt'),
     )
   })
 
@@ -321,10 +355,20 @@ describe('single file transfer', () => {
     expect(duplicateResponse.status).toBe(200)
   })
 
-  it('pauses after an authenticated chunk and resumes only the remaining chunks', async () => {
+  it('restores a paused task and resumes only the remaining authenticated chunks', async () => {
     const sourceDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-source-'))
     const receiveDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receive-'))
-    temporaryDirectories.push(sourceDirectory, receiveDirectory)
+    const senderStoreDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-sender-store-'))
+    const receiverStoreDirectory = await mkdtemp(join(tmpdir(), 'lan-transfer-receiver-store-'))
+    temporaryDirectories.push(
+      sourceDirectory,
+      receiveDirectory,
+      senderStoreDirectory,
+      receiverStoreDirectory,
+    )
+    const protector = new TestSecretProtector()
+    const senderStore = new RecoverableTransfersStore(senderStoreDirectory, protector)
+    const receiverStore = new RecoverableTransfersStore(receiverStoreDirectory, protector)
     const sourcePath = join(sourceDirectory, 'resume.bin')
     const content = Buffer.alloc(DEFAULT_FILE_CHUNK_SIZE_BYTES * 3 + 17, 0x6b)
     await writeFile(sourcePath, content)
@@ -338,10 +382,11 @@ describe('single file transfer', () => {
         mimeType: 'application/octet-stream',
       },
     }
-    const { senderCoordinator, receiverCoordinator } = await createConnectedTransferPair(
-      source,
-      receiveDirectory,
-    )
+    const { senderCoordinator, receiverCoordinator, senderManager, receiverManager, server } =
+      await createConnectedTransferPair(source, receiveDirectory, {
+        sender: senderStore,
+        receiver: receiverStore,
+      })
     const offerPromise = waitForOffer(receiverCoordinator)
     const senderPaused = waitForStatus(senderCoordinator, 'paused')
     const receiverPaused = waitForStatus(receiverCoordinator, 'paused')
@@ -368,9 +413,44 @@ describe('single file transfer', () => {
     expect(pausedTask.transferredBytes).toBeGreaterThanOrEqual(DEFAULT_FILE_CHUNK_SIZE_BYTES)
     expect(pausedTask.transferredBytes).toBeLessThan(content.byteLength)
 
-    const senderCompleted = waitForStatus(senderCoordinator, 'completed')
-    const receiverCompleted = waitForStatus(receiverCoordinator, 'completed')
-    await senderCoordinator.resume(offer.transferId)
+    await senderCoordinator.shutdown(true)
+    await receiverCoordinator.shutdown(true)
+    const restoredSender = new FileTransferCoordinator(
+      senderManager,
+      new TestFileAccess([], receiveDirectory),
+      new SessionHistory(),
+      () => Number.MAX_SAFE_INTEGER,
+      () => true,
+      senderStore,
+    )
+    const restoredReceiver = new FileTransferCoordinator(
+      receiverManager,
+      new TestFileAccess([], receiveDirectory),
+      new SessionHistory(),
+      () => Number.MAX_SAFE_INTEGER,
+      () => true,
+      receiverStore,
+    )
+    coordinators.push(restoredSender, restoredReceiver)
+    server.setRequestHandler((request, response) =>
+      restoredReceiver.handleHttpRequest(request, response),
+    )
+    const senderRecoveryRecords = senderStore.load()
+    const receiverRecoveryRecords = receiverStore.load()
+    expect(senderRecoveryRecords).toHaveLength(1)
+    expect(receiverRecoveryRecords).toHaveLength(1)
+    await restoredSender.restoreRecoverableTransfers(senderRecoveryRecords)
+    await restoredReceiver.restoreRecoverableTransfers(receiverRecoveryRecords)
+    expect(restoredSender.getTasks()).toEqual([
+      expect.objectContaining({ transferId: offer.transferId, status: 'recoverable' }),
+    ])
+    expect(restoredReceiver.getTasks()).toEqual([
+      expect.objectContaining({ transferId: offer.transferId, status: 'recoverable' }),
+    ])
+
+    const senderCompleted = waitForStatus(restoredSender, 'completed')
+    const receiverCompleted = waitForStatus(restoredReceiver, 'completed')
+    await restoredSender.resume(offer.transferId)
     await expect(senderCompleted).resolves.toMatchObject({ transferredBytes: content.byteLength })
     await expect(receiverCompleted).resolves.toMatchObject({ transferredBytes: content.byteLength })
     await expect(readFile(join(receiveDirectory, 'resume.bin'))).resolves.toEqual(content)

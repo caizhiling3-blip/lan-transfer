@@ -96,6 +96,7 @@ export const publishFolderStaging = async (
 export const cleanupStaleFolderArtifacts = async (
   receiveDirectory: string,
   now = Date.now(),
+  protectedPaths: ReadonlySet<string> = new Set(),
 ): Promise<FolderArtifactCleanupResult> => {
   let stagingDirectories = 0
   let incompleteDirectories = 0
@@ -104,6 +105,7 @@ export const cleanupStaleFolderArtifacts = async (
     try {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue
       const directoryPath = resolve(receiveDirectory, entry.name)
+      if (protectedPaths.has(directoryPath)) continue
       const metadata = await lstat(directoryPath)
       if (
         metadata.isSymbolicLink() ||

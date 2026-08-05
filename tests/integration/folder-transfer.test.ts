@@ -8,8 +8,10 @@ import type { AuthorizedSourceFolder, FolderAccessAdapter } from '../../src/main
 import { FolderTransferCoordinator, scanFolder } from '../../src/main/file-transfer'
 import { LocalServer } from '../../src/main/server/local-server'
 import { SessionHistory } from '../../src/main/storage/session-history'
+import { RecoverableTransfersStore, type SecretProtector } from '../../src/main/storage'
 import type { ConnectionManager } from '../../src/main/websocket/connection-manager'
 import { createAutoPairingConnectionManager } from '../helpers/secure-connection'
+import { DEFAULT_FILE_CHUNK_SIZE_BYTES } from '@shared/constants'
 import type { FolderOfferReceivedDto } from '@shared/ipc'
 import { deviceIdSchema } from '@shared/types'
 import type { DeviceInfo, IncomingConnectionRequestDto, TransferTaskDto } from '@shared/types'
@@ -32,6 +34,22 @@ class TestFolderAccess implements FolderAccessAdapter {
 
   public async resolveReceiveDirectory(): Promise<string> {
     return this.receiveDirectory
+  }
+}
+
+class TestSecretProtector implements SecretProtector {
+  public isEncryptionAvailable(): boolean {
+    return true
+  }
+
+  public encryptString(value: string): Buffer {
+    return Buffer.from(`protected:${value}`, 'utf8')
+  }
+
+  public decryptString(value: Buffer): string {
+    const protectedValue = value.toString('utf8')
+    if (!protectedValue.startsWith('protected:')) throw new Error('Invalid ciphertext')
+    return protectedValue.slice('protected:'.length)
   }
 }
 
@@ -107,6 +125,10 @@ const createSource = async (
 const createConnectedPair = async (
   source: AuthorizedSourceFolder,
   receiveDirectory: string,
+  recoveryStores?: {
+    readonly sender: RecoverableTransfersStore
+    readonly receiver: RecoverableTransfersStore
+  },
 ): Promise<{
   sender: FolderTransferCoordinator
   receiver: FolderTransferCoordinator
@@ -114,6 +136,8 @@ const createConnectedPair = async (
   senderHistory: SessionHistory
   receiverHistory: SessionHistory
   senderManager: ConnectionManager
+  receiverManager: ConnectionManager
+  server: LocalServer
 }> => {
   const server = new LocalServer()
   servers.push(server)
@@ -132,12 +156,14 @@ const createConnectedPair = async (
     new TestFolderAccess([source], receiveDirectory),
     () => true,
     senderHistory,
+    recoveryStores?.sender,
   )
   const receiver = new FolderTransferCoordinator(
     receiverManager,
     new TestFolderAccess([], receiveDirectory),
     () => true,
     receiverHistory,
+    recoveryStores?.receiver,
   )
   coordinators.push(sender, receiver)
   server.setConnectionHandler((socket, request) => receiverManager.acceptIncoming(socket, request))
@@ -149,7 +175,16 @@ const createConnectedPair = async (
   const request = await requestPromise
   receiverManager.respondToRequest(request.requestId, 'accept')
   await connectionPromise
-  return { sender, receiver, receiverPort, senderHistory, receiverHistory, senderManager }
+  return {
+    sender,
+    receiver,
+    receiverPort,
+    senderHistory,
+    receiverHistory,
+    senderManager,
+    receiverManager,
+    server,
+  }
 }
 
 afterEach(async () => {
@@ -256,6 +291,94 @@ describe('folder transfer', () => {
       'completed',
     )
   })
+
+  it('restores a paused folder task and continues its missing chunks', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'lindu-folder-recovery-source-'))
+    const sourcePath = join(sourceRoot, '恢复文件夹')
+    const receiveDirectory = await mkdtemp(join(tmpdir(), 'lindu-folder-recovery-receive-'))
+    const senderStoreDirectory = await mkdtemp(join(tmpdir(), 'lindu-folder-sender-store-'))
+    const receiverStoreDirectory = await mkdtemp(join(tmpdir(), 'lindu-folder-receiver-store-'))
+    temporaryDirectories.push(
+      sourceRoot,
+      receiveDirectory,
+      senderStoreDirectory,
+      receiverStoreDirectory,
+    )
+    await mkdir(sourcePath)
+    const content = Buffer.alloc(DEFAULT_FILE_CHUNK_SIZE_BYTES * 2 + 19, 0x42)
+    await writeFile(join(sourcePath, 'large.bin'), content)
+    const source = await createSource(sourcePath, 'v'.repeat(43))
+    const protector = new TestSecretProtector()
+    const senderStore = new RecoverableTransfersStore(senderStoreDirectory, protector)
+    const receiverStore = new RecoverableTransfersStore(receiverStoreDirectory, protector)
+    const { sender, receiver, senderManager, receiverManager, server } = await createConnectedPair(
+      source,
+      receiveDirectory,
+      {
+        sender: senderStore,
+        receiver: receiverStore,
+      },
+    )
+    const offerPromise = waitForOffer(receiver)
+    const senderPaused = waitForStatus(sender, 'paused')
+    const receiverPaused = waitForStatus(receiver, 'paused')
+    let pauseRequested = false
+    const unsubscribe = sender.subscribeTasks((task) => {
+      if (
+        pauseRequested ||
+        task.status !== 'transferring' ||
+        task.transferredBytes < DEFAULT_FILE_CHUNK_SIZE_BYTES
+      ) {
+        return
+      }
+      pauseRequested = true
+      void sender.pause(task.transferId)
+    })
+    await sender.offerFolder(source.selection.selectionToken)
+    const offer = await offerPromise
+    await receiver.respondToOffer(offer.transferId, 'accept')
+    await senderPaused
+    await receiverPaused
+    unsubscribe()
+    await sender.shutdown(true)
+    await receiver.shutdown(true)
+
+    const restoredSender = new FolderTransferCoordinator(
+      senderManager,
+      new TestFolderAccess([], receiveDirectory),
+      () => true,
+      new SessionHistory(),
+      senderStore,
+    )
+    const restoredReceiver = new FolderTransferCoordinator(
+      receiverManager,
+      new TestFolderAccess([], receiveDirectory),
+      () => true,
+      new SessionHistory(),
+      receiverStore,
+    )
+    coordinators.push(restoredSender, restoredReceiver)
+    server.setRequestHandler((request, response) =>
+      restoredReceiver.handleHttpRequest(request, response),
+    )
+    await restoredSender.restoreRecoverableTransfers(senderStore.load())
+    await restoredReceiver.restoreRecoverableTransfers(receiverStore.load())
+    expect(restoredSender.getTasks()).toEqual([
+      expect.objectContaining({ transferId: offer.transferId, status: 'recoverable' }),
+    ])
+    expect(restoredReceiver.getTasks()).toEqual([
+      expect.objectContaining({ transferId: offer.transferId, status: 'recoverable' }),
+    ])
+
+    const senderCompleted = waitForStatus(restoredSender, 'completed')
+    const receiverCompleted = waitForStatus(restoredReceiver, 'completed')
+    await restoredSender.resume(offer.transferId)
+    await senderCompleted
+    await receiverCompleted
+    await expect(
+      readFile(join(receiveDirectory, basename(sourcePath), 'large.bin')),
+    ).resolves.toEqual(content)
+  }, 20_000)
 
   it('creates an empty folder tree without opening an upload request', async () => {
     const sourceRoot = await mkdtemp(join(tmpdir(), 'lindu-empty-source-'))

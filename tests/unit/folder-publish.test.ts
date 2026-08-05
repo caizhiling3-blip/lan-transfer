@@ -14,6 +14,7 @@ import { transferIdSchema } from '@shared/types'
 const temporaryDirectories: string[] = []
 const TRANSFER_ID = transferIdSchema.parse('11111111-1111-4111-8111-111111111111')
 const OTHER_TRANSFER_ID = transferIdSchema.parse('22222222-2222-4222-8222-222222222222')
+const PROTECTED_TRANSFER_ID = transferIdSchema.parse('33333333-3333-4333-8333-333333333333')
 
 afterEach(async () => {
   await Promise.all(
@@ -58,12 +59,14 @@ describe('folder publishing', () => {
     const oldTime = new Date(now - TEMPORARY_FILE_MAX_AGE_MS - 1_000)
     const staleStaging = join(receiveDirectory, `.lindu-folder-${TRANSFER_ID}.part`)
     const recentStaging = join(receiveDirectory, `.lindu-folder-${OTHER_TRANSFER_ID}.part`)
+    const protectedStaging = join(receiveDirectory, `.lindu-folder-${PROTECTED_TRANSFER_ID}.part`)
     const invalidStaging = join(receiveDirectory, '.lindu-folder-invalid.part')
     const ownedDirectory = join(receiveDirectory, 'Incomplete')
     const mismatchedDirectory = join(receiveDirectory, 'Keep me')
     await Promise.all([
       mkdir(staleStaging),
       mkdir(recentStaging),
+      mkdir(protectedStaging),
       mkdir(invalidStaging),
       mkdir(ownedDirectory),
       mkdir(mismatchedDirectory),
@@ -74,6 +77,7 @@ describe('folder publishing', () => {
     await writeFile(mismatchedMarker, TRANSFER_ID)
     await Promise.all([
       utimes(staleStaging, oldTime, oldTime),
+      utimes(protectedStaging, oldTime, oldTime),
       utimes(invalidStaging, oldTime, oldTime),
       utimes(ownedMarker, oldTime, oldTime),
       utimes(ownedDirectory, oldTime, oldTime),
@@ -81,11 +85,14 @@ describe('folder publishing', () => {
       utimes(mismatchedDirectory, oldTime, oldTime),
     ])
 
-    await expect(cleanupStaleFolderArtifacts(receiveDirectory, now)).resolves.toEqual({
+    await expect(
+      cleanupStaleFolderArtifacts(receiveDirectory, now, new Set([protectedStaging])),
+    ).resolves.toEqual({
       stagingDirectories: 1,
       incompleteDirectories: 1,
     })
     await expect(stat(staleStaging)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(protectedStaging)).resolves.toBeDefined()
     await expect(stat(ownedDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(stat(recentStaging)).resolves.toBeDefined()
     await expect(stat(invalidStaging)).resolves.toBeDefined()

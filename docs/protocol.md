@@ -1,6 +1,6 @@
 # 通信协议
 
-> 当前运行时使用协议 v3。设备握手使用 Ed25519/X25519，proof 后的 WebSocket 控制消息与 HTTP 固定文件块均使用 AES-256-GCM；协议失败不会回退 v2。文件正文具备会话内机密性与完整性，并支持暂停及短时断线续传；跨应用重启恢复将在阶段 8 完成。
+> 当前运行时使用协议 v3。设备握手使用 Ed25519/X25519，proof 后的 WebSocket 控制消息与 HTTP 固定文件块均使用 AES-256-GCM；协议失败不会回退 v2。文件正文具备会话内机密性与完整性，并支持暂停、短时断线续传和应用重启恢复。
 
 ## 协议 v3 shared 契约
 
@@ -110,6 +110,8 @@ Content-Length: <plaintext-length + 16-byte-authentication-tag>
 `file:cancel` 不带 fileId 时取消整个任务，携带 fileId 时只取消该文件。已完成文件不回滚。重试不是协议内恢复操作，而是发送方创建全新的 `file:offer`，不得复用原 transferId、fileId 或 upload token。
 
 `transfer:pause`、`transfer:resume-request` 与 `transfer:resume-state` 只在加密控制通道内发送。接收端以已通过 AEAD 认证并落盘的 chunk bitmap 为恢复事实来源，并用严格升序、互不重叠的半开 verified range 返回；发送端重新校验文件大小、摘要、块参数和 range 后，只调度缺失块。用户暂停会保留临时内容；非主动断线进入最多两分钟的自动重连窗口，可信身份一致时不再次弹出连接审批。身份变化、状态不一致或窗口过期均失败关闭，旧上传授权不复用。
+
+应用重启不会复用旧 connectionId、会话密钥、sequence、密文或上传 token。双方只从各自经操作系统保护的本地记录恢复任务身份、源/接收授权和 verified bitmap；重新连接仍完整执行协议 v3 身份认证并派生新会话密钥，然后通过相同的 `transfer:resume-request/state` 协商。发送源摘要复核通过前不发送任何块，接收端完整摘要通过前仍不发布文件或文件夹。
 
 ## 1.2 文件夹消息
 

@@ -18,6 +18,7 @@ export const mapFileError = (error: unknown): ErrorCode => {
     if (error.message === 'FILE_INTEGRITY_FAILED') return 'FILE_INTEGRITY_FAILED'
     if (error.message === 'CHUNK_INVALID') return 'CHUNK_INVALID'
     if (error.message === 'SOURCE_FILE_CHANGED') return 'SOURCE_FILE_CHANGED'
+    if (error.message === 'RESUME_STATE_INVALID') return 'RESUME_STATE_INVALID'
     if (error.message === 'FILE_TOO_LARGE') return 'FILE_TOO_LARGE'
     if (error.message === 'SAVE_DIRECTORY_INVALID') return 'SAVE_DIRECTORY_INVALID'
     if (error.message === 'DISK_SPACE_INSUFFICIENT') return 'DISK_SPACE_INSUFFICIENT'
@@ -47,17 +48,19 @@ const delay = (milliseconds: number): Promise<void> =>
 const isTransientFileLockError = (error: unknown): boolean =>
   isNodeError(error) && ['EBUSY', 'EMFILE', 'ENFILE', 'EPERM'].includes(error.code ?? '')
 
-const TEMPORARY_FILE_PATTERN = /^\.lan-transfer-[0-9a-f-]{36}\.part$/iu
+const TEMPORARY_FILE_PATTERN = /^\.lan-transfer-(?:[0-9a-f-]{36}-)?[0-9a-f-]{36}\.part$/iu
 
 export const cleanupStaleTemporaryFiles = async (
   directoryPath: string,
   now = Date.now(),
+  protectedPaths: ReadonlySet<string> = new Set(),
 ): Promise<number> => {
   let removed = 0
   const entries = await readdir(directoryPath, { withFileTypes: true })
   for (const entry of entries) {
     if (!entry.isFile() || !TEMPORARY_FILE_PATTERN.test(entry.name)) continue
     const filePath = resolve(directoryPath, entry.name)
+    if (protectedPaths.has(filePath)) continue
     const metadata = await lstat(filePath)
     if (metadata.isSymbolicLink() || now - metadata.mtimeMs < TEMPORARY_FILE_MAX_AGE_MS) continue
     await unlink(filePath)

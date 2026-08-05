@@ -11,6 +11,9 @@ export const registerPairingIpcHandlers = (
   pairingCoordinator: PairingCoordinator,
   trustedDevices: TrustedDevicesStore,
   onTrustedDevicesChanged: () => void,
+  onTrustRevoked: (
+    deviceId?: Parameters<TrustedDevicesStore['revoke']>[0],
+  ) => Promise<void> = async () => undefined,
 ): void => {
   registerIpcHandler('pairing:get-pending', getWindow, () => ({
     ok: true,
@@ -25,13 +28,15 @@ export const registerPairingIpcHandlers = (
     ok: true,
     data: trustedDevices.listSummaries(),
   }))
-  registerIpcHandler('trusted-devices:revoke', getWindow, ({ deviceId }) => {
+  registerIpcHandler('trusted-devices:revoke', getWindow, async ({ deviceId }) => {
     trustedDevices.revoke(deviceId)
+    await onTrustRevoked(deviceId)
     onTrustedDevicesChanged()
     return { ok: true, data: trustedDevices.listSummaries() }
   })
-  registerIpcHandler('trusted-devices:clear', getWindow, () => {
+  registerIpcHandler('trusted-devices:clear', getWindow, async () => {
     trustedDevices.clear()
+    await onTrustRevoked()
     onTrustedDevicesChanged()
     return { ok: true, data: undefined }
   })
