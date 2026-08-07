@@ -28,7 +28,7 @@ pnpm package:win
 输出位置：
 
 - `release/win-unpacked/Lindu.exe`：免安装冒烟测试入口
-- `release/Lindu-Setup-0.4.0-x64.exe`：v0.4.0 NSIS 安装包
+- `release/Lindu-Setup-0.5.0-x64.exe`：v0.5.0 NSIS 安装包
 
 当前无原生 Node 扩展的配置已在 macOS 开发机成功生成 Windows NSIS 包。若后续加入原生扩展或构建机提示缺少兼容工具链，应改在 Windows x64 环境构建。跨平台产物即使生成成功，也不能替代 Windows 上的安装、快捷方式、卸载、文件锁和防火墙测试。
 
@@ -68,8 +68,8 @@ pnpm package:win
 - 可执行文件：`邻渡`
 - 应用分类：Utilities
 - 最低系统版本：macOS 12
-- Apple Silicon：`Lindu-0.4.0-arm64.dmg`
-- Intel：`Lindu-0.4.0-x64.dmg`
+- Apple Silicon：`Lindu-0.5.0-arm64.dmg`
+- Intel：`Lindu-0.5.0-x64.dmg`
 - 图标：`build/icon.icns`，包含 16–1024 像素资源
 - 安装界面：把邻渡拖入 Applications
 
@@ -92,7 +92,7 @@ pnpm package:mac
 1. 挂载与本机架构匹配的 DMG，把“邻渡”拖到 Applications；
 2. 从 Applications 首次启动，记录 Gatekeeper 提示；需要放行时使用 Finder 右键“打开”，或在“系统设置 > 隐私与安全性”中确认本次启动；
 3. 不使用全局关闭 Gatekeeper 的命令，也不要移除其他应用的 quarantine 属性；
-4. 检查 Dock、访达、应用切换器和诊断页中的图标、名称、`0.4.0` 版本及 Bundle ID；
+4. 检查 Dock、访达、应用切换器和诊断页中的图标、名称、`0.5.0` 版本及 Bundle ID；
 5. 验证深浅色页面、系统文件/目录选择器、通知和外部链接；
 6. 退出应用并把它移到废纸篓，再确认用户设置和历史仍保留在 Electron `userData`；
 7. 如需彻底清理测试数据，先备份并确认 `app.getPath('userData')` 的实际目录，再由测试人员手动删除。
@@ -149,6 +149,14 @@ pnpm verify:win:release -- release/win-unpacked/Lindu.exe release/Lindu-Setup-0.
 验证脚本通过 PowerShell `Get-AuthenticodeSignature` 要求签名状态为 `Valid` 且证书主题包含预期发布者，并为每个产物输出 SHA-256。自动化配置检查不能替代真实证书、时间戳、SmartScreen、安装和卸载验收。
 
 v0.5.0 阶段 7 的 `.github/workflows/release.yml` 只响应 `v*` 标签。标签必须与 `package.json` 版本精确一致；质量、macOS 和 Windows job 全部成功后，流水线下载平台产物，生成 `release-manifest.json` 与 `SHA256SUMS`，最后创建 Draft GitHub Release。构建命令显式使用 `--publish never`，防止平台 job 在验证完成前自行上传。Draft 必须经真实设备签字和人工核对后才能公开，流水线不会自动发布稳定版本。
+
+## v0.5.0 候选发布状态
+
+v0.5.0 保留协议 v3 安全传输能力，并增加正式签名配置、安全更新、安装门禁和可审计 Draft Release 流水线。阶段 0–8 的实现、自动化和当前构建机结构检查已完成；保留的 v0.4.0 包作为覆盖升级和历史数据基线。
+
+当前 Apple Silicon 构建机生成的未签名 macOS arm64 与 Windows x64 目录包分别为 Mach-O 64-bit arm64 和 PE32+ x86-64 GUI，两个 ASAR 的 SHA-256 一致。macOS Info.plist 版本为 `0.5.0`、Bundle ID 为 `com.lindu.transfer`、最低系统版本为 macOS 12。结构检查使用独立临时目录，未覆盖保留的 v0.4.0 包。
+
+以上结果不代表 Developer ID、notarization、Authenticode、SmartScreen、GitHub stable 更新、Windows/Intel Mac 运行或双机回归通过。正式发布必须完成 [v0.5.0 阶段 8 合并签字矩阵](testing.md#v050-阶段-8-合并签字矩阵)，并由同一提交的签名产物创建 Draft Release 后人工核准。
 
 ## v0.3.0 发布状态
 
