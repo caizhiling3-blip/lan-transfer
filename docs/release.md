@@ -28,7 +28,7 @@ pnpm package:win
 输出位置：
 
 - `release/win-unpacked/Lindu.exe`：免安装冒烟测试入口
-- `release/Lindu-Setup-0.3.0-x64.exe`：v0.3.0 NSIS 安装包
+- `release/Lindu-Setup-0.4.0-x64.exe`：v0.4.0 NSIS 安装包
 
 当前无原生 Node 扩展的配置已在 macOS 开发机成功生成 Windows NSIS 包。若后续加入原生扩展或构建机提示缺少兼容工具链，应改在 Windows x64 环境构建。跨平台产物即使生成成功，也不能替代 Windows 上的安装、快捷方式、卸载、文件锁和防火墙测试。
 
@@ -68,8 +68,8 @@ pnpm package:win
 - 可执行文件：`邻渡`
 - 应用分类：Utilities
 - 最低系统版本：macOS 12
-- Apple Silicon：`Lindu-0.3.0-arm64.dmg`
-- Intel：`Lindu-0.3.0-x64.dmg`
+- Apple Silicon：`Lindu-0.4.0-arm64.dmg`
+- Intel：`Lindu-0.4.0-x64.dmg`
 - 图标：`build/icon.icns`，包含 16–1024 像素资源
 - 安装界面：把邻渡拖入 Applications
 
@@ -92,7 +92,7 @@ pnpm package:mac
 1. 挂载与本机架构匹配的 DMG，把“邻渡”拖到 Applications；
 2. 从 Applications 首次启动，记录 Gatekeeper 提示；需要放行时使用 Finder 右键“打开”，或在“系统设置 > 隐私与安全性”中确认本次启动；
 3. 不使用全局关闭 Gatekeeper 的命令，也不要移除其他应用的 quarantine 属性；
-4. 检查 Dock、访达、应用切换器和诊断页中的图标、名称、`0.3.0` 版本及 Bundle ID；
+4. 检查 Dock、访达、应用切换器和诊断页中的图标、名称、`0.4.0` 版本及 Bundle ID；
 5. 验证深浅色页面、系统文件/目录选择器、通知和外部链接；
 6. 退出应用并把它移到废纸篓，再确认用户设置和历史仍保留在 Electron `userData`；
 7. 如需彻底清理测试数据，先备份并确认 `app.getPath('userData')` 的实际目录，再由测试人员手动删除。
@@ -140,6 +140,25 @@ v0.3.0 包含历史摘要精细清理、可选保留天数、最近设备备注/
 - 记录未签名包 Gatekeeper/SmartScreen 行为，正式公开分发前完成独立签名与 notarization 计划。
 
 阶段 6 在 Apple Silicon 构建机完成 `pnpm package:mac:dir` 与 `pnpm package:win:dir`：macOS 主程序为 arm64 Mach-O，Windows 主程序为 x86-64 PE32+ GUI；两个目录包均包含 ASAR。macOS Info.plist 的版本为 `0.3.0`、Bundle ID 为 `com.lindu.transfer`、最低系统版本为 macOS 12，ATS 任意加载关闭且本地网络说明存在。构建目录位于被 Git 忽略的 `release/`，这些结构检查不等于候选安装包或实机验收通过。
+
+## v0.4.0 候选发布状态
+
+v0.4.0 使用协议 v3，包含可验证设备身份、验证码配对、加密控制消息与文件块、完整文件校验、暂停/继续、可信设备断线重连和加密的重启恢复记录。v3 不降级兼容 v2。
+
+候选发布必须基于同一 Git 提交，并记录 Windows x64、macOS arm64 和 macOS x64 产物的 SHA-256。发布前至少完成：
+
+- 从合法 v0.3.0 `settings.json`、`recent-devices.json` 和 `history.json` 升级，确认既有本地数据保留；身份、可信设备与恢复 store 的损坏或未来版本必须失败关闭；
+- 在真实 Windows DPAPI 与 macOS Keychain 环境验证长期私钥受保护，安全存储不可用时不做明文降级；
+- 使用两台真实设备核对首次验证码、已信任重连、取消信任、协议降级拒绝和身份公钥变化拒绝；
+- 抓包确认文字、文件名和文件内容不以明文出现，并验证密文/tag/块索引/摘要篡改不会发布文件；
+- 完成 0 B、4 MiB、4 MiB+1、多块大文件、多文件、文件夹、同名与 Unicode 双向传输；
+- 完成暂停、断网、网络切换、应用退出和系统重启后的缺块续传，以及源变化、staging 缺失和恢复记录损坏的安全失败；
+- 搜索诊断报告与日志，确认不包含验证码、公钥原文、密钥、摘要、bitmap、路径、文件名或 token；
+- 完成安装、卸载、Gatekeeper/SmartScreen、本地网络权限和防火墙验收。
+
+当前构建机执行的自动化、生产构建和跨平台目录包检查只能记录为“实现及结构检查通过”。真实设备结果以 [v0.4.0 阶段 10 签字矩阵](testing.md#v040-阶段-10-候选包签字矩阵) 为准，未执行项保持“待签字”。
+
+阶段 10 在 Apple Silicon 构建机完成 `pnpm package:mac:dir` 与 `pnpm package:win:dir`：macOS 主程序为 arm64 Mach-O，Windows 主程序为 x86-64 PE32+ GUI，两个目录包均包含内容一致的 ASAR。macOS Info.plist 的版本为 `0.4.0`、Bundle ID 为 `com.lindu.transfer`、最低系统版本为 macOS 12，ATS 任意加载关闭且本地网络说明存在。此次检查没有运行 Windows 或 Intel Mac 可执行文件，也没有生成、安装或运行 DMG/NSIS 安装包，因此实机签字矩阵保持待签字。
 
 ## 1.2 文件夹传输发布门禁
 
