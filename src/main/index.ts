@@ -44,6 +44,7 @@ import {
   registerSettingsIpcHandlers,
   registerTextIpcHandlers,
   registerUpdateIpcHandlers,
+  setIpcAvailabilityProvider,
 } from './ipc'
 import { ServiceManager } from './server'
 import { DiagnosticsService, getDiagnosticsPlatform } from './diagnostics'
@@ -74,6 +75,10 @@ let transferQueueCoordinator: TransferQueueCoordinator | null = null
 let unsubscribeFromService: (() => void) | null = null
 let applicationUnsubscribers: readonly (() => void)[] = []
 let isQuitting = false
+let updateInstallRequested = false
+let installPreparedUpdate: (() => boolean) | null = null
+
+setIpcAvailabilityProvider(() => !isQuitting)
 
 const sendToRenderer = (channel: string, payload: unknown): void => {
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
@@ -256,6 +261,23 @@ void app.whenReady().then(async () => {
     },
   )
   const updateService = new UpdateService(autoUpdater, app.getVersion(), updateSettingsStore)
+  const transitionalConnectionStates = new Set([
+    'connecting',
+    'awaitingApproval',
+    'authenticating',
+    'pairingRequired',
+    'disconnecting',
+  ])
+  updateService.setInstallSafetyProvider(
+    () =>
+      !isQuitting &&
+      pairingCoordinator.getPending() === null &&
+      !transitionalConnectionStates.has(activeConnectionManager.getStatus().state) &&
+      !activeFileTransferCoordinator.hasActiveTransfers() &&
+      !activeFolderTransferCoordinator.hasActiveTransfers() &&
+      !activeTransferQueueCoordinator.hasPendingItems(),
+  )
+  installPreparedUpdate = () => updateService.installPreparedUpdate()
   if (app.isPackaged && (process.platform === 'darwin' || process.platform === 'win32')) {
     updateService.startAutomaticChecks()
   }
@@ -312,7 +334,17 @@ void app.whenReady().then(async () => {
     fileAccessRegistry,
     sessionHistory,
   )
-  registerUpdateIpcHandlers(() => mainWindow, updateService, updateSettingsStore)
+  registerUpdateIpcHandlers(
+    () => mainWindow,
+    updateService,
+    updateSettingsStore,
+    () => {
+      if (!updateService.prepareInstall()) return false
+      updateInstallRequested = true
+      app.quit()
+      return true
+    },
+  )
   openMainWindow()
 
   void logLifecycle
@@ -366,6 +398,7 @@ void app.whenReady().then(async () => {
       sendToRenderer(UPDATE_STATUS_CHANGED_EVENT_CHANNEL, status)
     }),
     pairingCoordinator.subscribeRequests((request) => {
+      updateService.refreshInstallReadiness()
       logger.info('device_pairing_requested', {
         requestId: request.requestId,
         peerDeviceId: request.peer.deviceId,
@@ -373,6 +406,7 @@ void app.whenReady().then(async () => {
       sendToRenderer(PAIRING_CHANGED_EVENT_CHANNEL, request)
     }),
     pairingCoordinator.subscribeCompletions((completion) => {
+      updateService.refreshInstallReadiness()
       logger.info('device_pairing_completed', {
         requestId: completion.requestId,
         outcome: completion.outcome,
@@ -390,6 +424,7 @@ void app.whenReady().then(async () => {
       })
     }),
     activeConnectionManager.subscribeStatus((status) => {
+      updateService.refreshInstallReadiness()
       if (status.state === 'connected' && status.peer !== undefined) recentDevices.add(status.peer)
       if (status.state === 'connected' && status.peer !== undefined) {
         logger.info('device_connected', {
@@ -421,12 +456,14 @@ void app.whenReady().then(async () => {
       notificationCoordinator.notifyText(message)
     }),
     activeTransferQueueCoordinator.subscribe((items) => {
+      updateService.refreshInstallReadiness()
       sendToRenderer(TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL, items)
     }),
     activeTransferQueueCoordinator.subscribeTextTasks((task) => {
       sendToRenderer(TEXT_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
     activeFileTransferCoordinator.subscribeTasks((task) => {
+      updateService.refreshInstallReadiness()
       notificationCoordinator.notifyTask(task)
       if (loggedTaskStatuses.get(task.transferId) !== task.status) {
         loggedTaskStatuses.set(task.transferId, task.status)
@@ -444,6 +481,7 @@ void app.whenReady().then(async () => {
       sendToRenderer(TRANSFER_TASK_CHANGED_EVENT_CHANNEL, task)
     }),
     activeFolderTransferCoordinator.subscribeTasks((task) => {
+      updateService.refreshInstallReadiness()
       notificationCoordinator.notifyTask(task)
       if (loggedTaskStatuses.get(task.transferId) !== task.status) {
         loggedTaskStatuses.set(task.transferId, task.status)
@@ -552,7 +590,7 @@ app.on('before-quit', (event) => {
     .finally(() => {
       unsubscribeFromService?.()
       for (const unsubscribe of applicationUnsubscribers) unsubscribe()
-      app.quit()
+      if (!updateInstallRequested || installPreparedUpdate?.() !== true) app.quit()
     })
 })
 

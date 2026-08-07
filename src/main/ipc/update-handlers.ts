@@ -10,6 +10,7 @@ export const registerUpdateIpcHandlers = (
   getWindow: WindowProvider,
   updateService: UpdateService,
   settings: UpdateSettingsStore,
+  requestInstall: () => boolean,
 ): void => {
   registerIpcHandler('update:get-settings', getWindow, () => ({
     ok: true,
@@ -21,10 +22,10 @@ export const registerUpdateIpcHandlers = (
     else updateService.stopAutomaticChecks()
     return { ok: true, data: updated }
   })
-  registerIpcHandler('update:get-status', getWindow, () => ({
-    ok: true,
-    data: updateService.getStatus(),
-  }))
+  registerIpcHandler('update:get-status', getWindow, () => {
+    updateService.refreshInstallReadiness()
+    return { ok: true, data: updateService.getStatus() }
+  })
   registerIpcHandler('update:check', getWindow, async () => ({
     ok: true,
     data: await updateService.checkForUpdates(),
@@ -37,8 +38,9 @@ export const registerUpdateIpcHandlers = (
     ok: true,
     data: updateService.cancelDownload(),
   }))
-  registerIpcHandler('update:install', getWindow, () => ({
-    ok: false,
-    error: { code: 'UPDATE_INSTALL_BLOCKED' },
-  }))
+  registerIpcHandler('update:install', getWindow, () =>
+    requestInstall()
+      ? { ok: true, data: undefined }
+      : { ok: false, error: { code: 'UPDATE_INSTALL_BLOCKED' } },
+  )
 }

@@ -62,6 +62,8 @@ export class UpdateService {
   private readonly listeners = new Set<UpdateListener>()
   private timer: TimerHandle | null = null
   private cancellationToken: CancellationToken | null = null
+  private installPrepared = false
+  private isInstallSafe: () => boolean = () => false
 
   public constructor(
     private readonly updater: AppUpdater,
@@ -156,6 +158,34 @@ export class UpdateService {
     return this.status
   }
 
+  public refreshInstallReadiness(): UpdateStatusDto {
+    if (this.status.state !== 'downloaded') return this.status
+    this.setStatus({ ...this.status, canInstall: this.isInstallSafe() })
+    return this.status
+  }
+
+  public setInstallSafetyProvider(provider: () => boolean): void {
+    this.isInstallSafe = provider
+    this.refreshInstallReadiness()
+  }
+
+  public prepareInstall(): boolean {
+    if (this.status.state !== 'downloaded' || !this.isInstallSafe()) {
+      this.refreshInstallReadiness()
+      return false
+    }
+    this.installPrepared = true
+    return true
+  }
+
+  public installPreparedUpdate(): boolean {
+    if (!this.installPrepared || this.status.state !== 'downloaded') return false
+    this.installPrepared = false
+    this.stopAutomaticChecks()
+    this.updater.quitAndInstall(false, true)
+    return true
+  }
+
   private async runAutomaticCheck(): Promise<void> {
     this.timer = null
     await this.check(false)
@@ -213,7 +243,7 @@ export class UpdateService {
         checkedAt: this.status.checkedAt,
         availableUpdate: projectUpdateInfo(info),
         downloadProgress: 100,
-        canInstall: false,
+        canInstall: this.isInstallSafe(),
       })
     } catch {
       this.setError('UPDATE_METADATA_INVALID')

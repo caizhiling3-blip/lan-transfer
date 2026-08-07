@@ -11,6 +11,11 @@ import {
 import { isTrustedIpcSenderContext } from './sender-validation'
 
 type WindowProvider = () => BrowserWindow | null
+let isApplicationAcceptingIpc = (): boolean => true
+
+export const setIpcAvailabilityProvider = (provider: () => boolean): void => {
+  isApplicationAcceptingIpc = provider
+}
 
 type IpcHandler<TChannel extends IpcInvokeChannel> = (
   request: IpcInvokeRequest<TChannel>,
@@ -40,6 +45,9 @@ export const registerIpcHandler = <TChannel extends IpcInvokeChannel>(
   handler: IpcHandler<TChannel>,
 ): void => {
   ipcMain.handle(channel, async (event, input: unknown): Promise<IpcInvokeResponse<TChannel>> => {
+    if (!isApplicationAcceptingIpc()) {
+      return { ok: false, error: { code: 'UPDATE_INSTALL_BLOCKED' } }
+    }
     if (!isTrustedIpcSender(event, getWindow())) {
       return { ok: false, error: { code: 'MESSAGE_INVALID' } }
     }

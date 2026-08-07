@@ -44,6 +44,7 @@ class FakeUpdater extends EventEmitter {
   public logger: object | null = {}
   public feed: unknown = null
   public checkResult: UpdateCheckResult | null = null
+  public installed = false
 
   public setFeedURL(feed: unknown): void {
     this.feed = feed
@@ -58,6 +59,10 @@ class FakeUpdater extends EventEmitter {
     this.emit('download-progress', { percent: 50 })
     this.emit('update-downloaded', info)
     return ['/private/installer']
+  }
+
+  public quitAndInstall(): void {
+    this.installed = true
   }
 }
 
@@ -176,5 +181,35 @@ describe('UpdateService', () => {
     )
     second.startAutomaticChecks()
     expect(immediate).toEqual([INITIAL_UPDATE_CHECK_DELAY_MS])
+  })
+
+  it('prepares installation only after an atomic safety check', async () => {
+    const updater = new FakeUpdater()
+    updater.checkResult = {
+      isUpdateAvailable: true,
+      updateInfo: createUpdateInfo(),
+      versionInfo: createUpdateInfo(),
+    }
+    let safe = false
+    const service = new UpdateService(
+      asUpdater(updater),
+      '0.4.0',
+      new UpdateSettingsStore(await createDirectory()),
+    )
+    service.setInstallSafetyProvider(() => safe)
+    await service.checkForUpdates()
+    await service.downloadUpdate()
+    expect(service.getStatus()).toMatchObject({ state: 'downloaded', canInstall: false })
+    expect(service.prepareInstall()).toBe(false)
+    expect(service.installPreparedUpdate()).toBe(false)
+
+    safe = true
+    expect(service.refreshInstallReadiness()).toMatchObject({
+      state: 'downloaded',
+      canInstall: true,
+    })
+    expect(service.prepareInstall()).toBe(true)
+    expect(service.installPreparedUpdate()).toBe(true)
+    expect(updater.installed).toBe(true)
   })
 })
