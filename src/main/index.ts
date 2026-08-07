@@ -18,6 +18,7 @@ import {
   TRANSFER_QUEUE_CHANGED_EVENT_CHANNEL,
   TRANSFER_TASK_CHANGED_EVENT_CHANNEL,
   TRUSTED_DEVICES_CHANGED_EVENT_CHANNEL,
+  UPDATE_STATUS_CHANGED_EVENT_CHANNEL,
 } from '@shared/ipc'
 
 import { createMainWindow, DeviceIdentity, TransferNotificationCoordinator } from './app'
@@ -42,6 +43,7 @@ import {
   registerServiceIpcHandlers,
   registerSettingsIpcHandlers,
   registerTextIpcHandlers,
+  registerUpdateIpcHandlers,
 } from './ipc'
 import { ServiceManager } from './server'
 import { DiagnosticsService, getDiagnosticsPlatform } from './diagnostics'
@@ -310,6 +312,7 @@ void app.whenReady().then(async () => {
     fileAccessRegistry,
     sessionHistory,
   )
+  registerUpdateIpcHandlers(() => mainWindow, updateService, updateSettingsStore)
   openMainWindow()
 
   void logLifecycle
@@ -359,6 +362,9 @@ void app.whenReady().then(async () => {
   applicationUnsubscribers = [
     () => identityStore.shutdown(),
     () => pairingCoordinator.shutdown(),
+    updateService.subscribe((status) => {
+      sendToRenderer(UPDATE_STATUS_CHANGED_EVENT_CHANNEL, status)
+    }),
     pairingCoordinator.subscribeRequests((request) => {
       logger.info('device_pairing_requested', {
         requestId: request.requestId,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onBeforeUnmount, onMounted, reactive, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, watch } from 'vue'
 
 import {
   MAX_FILE_SIZE_BYTES,
@@ -14,9 +14,11 @@ import {
 
 import { useSettingsStore } from '../stores/settings'
 import { useSecurityStore } from '../stores/security'
+import { useUpdatesStore } from '../stores/updates'
 
 const store = useSettingsStore()
 const securityStore = useSecurityStore()
+const updatesStore = useUpdatesStore()
 const form = reactive({
   deviceName: '',
   servicePort: 53_317,
@@ -26,6 +28,7 @@ const form = reactive({
   historyRetentionDays: 90,
   logRetentionDays: 30,
   receiveDirectoryDisplayPath: '',
+  automaticChecksEnabled: true,
 })
 
 watch(
@@ -45,6 +48,33 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  () => updatesStore.settings,
+  (settings) => {
+    if (settings !== null) form.automaticChecksEnabled = settings.automaticChecksEnabled
+  },
+  { immediate: true },
+)
+
+const updateStatusText = computed(() => {
+  const status = updatesStore.status
+  if (status === null) return '尚未读取更新状态'
+  const labels = {
+    idle: '尚未检查更新',
+    checking: '正在检查更新',
+    available: `发现新版本 ${status.state === 'available' ? status.availableUpdate.version : ''}`,
+    'not-available': '当前已是最新稳定版本',
+    downloading: `正在下载 ${status.state === 'downloading' ? status.downloadProgress.toFixed(0) : '0'}%`,
+    downloaded: `版本 ${status.state === 'downloaded' ? status.availableUpdate.version : ''} 已下载`,
+    error: '更新操作失败',
+  }
+  return labels[status.state]
+})
+
+const updateAutomaticChecks = (): void => {
+  void updatesStore.setAutomaticChecksEnabled(form.automaticChecksEnabled)
+}
 
 const save = async (): Promise<void> => {
   const succeeded = await store.save({
@@ -105,8 +135,14 @@ const clearTrustedDevices = async (): Promise<void> => {
   }
 }
 
-onMounted(() => void store.initialize())
-onBeforeUnmount(() => store.dispose())
+onMounted(() => {
+  void store.initialize()
+  void updatesStore.initialize()
+})
+onBeforeUnmount(() => {
+  store.dispose()
+  updatesStore.dispose()
+})
 </script>
 
 <template>
@@ -187,6 +223,70 @@ onBeforeUnmount(() => store.dispose())
       </el-form>
     </el-card>
 
+    <el-card v-loading="updatesStore.loading" shadow="never" class="settings-card">
+      <template #header>
+        <div>
+          <strong>应用更新</strong>
+          <p>更新检查只访问固定的官方 GitHub Releases，不上传局域网数据。</p>
+        </div>
+      </template>
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="自动检查稳定版本">
+          <el-switch v-model="form.automaticChecksEnabled" @change="updateAutomaticChecks" />
+          <span class="field-help">启动后延迟检查，最多每 24 小时一次。</span>
+        </el-form-item>
+      </el-form>
+      <p class="update-status">{{ updateStatusText }}</p>
+      <p
+        v-if="
+          updatesStore.status?.state === 'available' || updatesStore.status?.state === 'downloaded'
+        "
+        class="release-notes"
+      >
+        {{ updatesStore.status.availableUpdate.releaseNotes || '此版本没有公开更新摘要。' }}
+      </p>
+      <el-progress
+        v-if="updatesStore.status?.state === 'downloading'"
+        :percentage="Math.round(updatesStore.status.downloadProgress)"
+      />
+      <div class="update-actions">
+        <el-button
+          :loading="updatesStore.status?.state === 'checking'"
+          :disabled="updatesStore.status?.state === 'downloading'"
+          @click="updatesStore.check"
+        >
+          手动检查
+        </el-button>
+        <el-button
+          v-if="updatesStore.status?.state === 'available'"
+          type="primary"
+          @click="updatesStore.download"
+        >
+          下载更新
+        </el-button>
+        <el-button
+          v-if="updatesStore.status?.state === 'downloading'"
+          @click="updatesStore.cancelDownload"
+        >
+          取消下载
+        </el-button>
+        <el-button
+          v-if="updatesStore.status?.state === 'downloaded'"
+          type="primary"
+          :disabled="!updatesStore.status.canInstall"
+          @click="updatesStore.install"
+        >
+          安装并重启
+        </el-button>
+      </div>
+      <el-alert
+        v-if="updatesStore.errorMessage"
+        :title="updatesStore.errorMessage"
+        type="error"
+        :closable="false"
+      />
+    </el-card>
+
     <el-card v-loading="securityStore.loading" shadow="never" class="settings-card">
       <template #header>
         <div class="trusted-header">
@@ -258,6 +358,24 @@ onBeforeUnmount(() => store.dispose())
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.update-status {
+  margin: 0 0 12px;
+  color: var(--el-text-color-primary);
+}
+
+.release-notes {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+  color: var(--el-text-color-secondary);
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .field-help {

@@ -12,6 +12,8 @@
 
 阶段 4 自动化使用可注入 updater 覆盖固定 GitHub owner/repo、stable-only、禁止降级与静默安装、无认证请求头、每天最多一次自动检查、检查/下载状态机、进度边界和 provider 元数据脱敏。测试输入包含下载 URL、本地安装器名和摘要，renderer 投影不得出现这些字段或值；非稳定版本和非法元数据必须返回 `UPDATE_METADATA_INVALID`。开发环境不启动联网检查，正式包的真实 GitHub Release 行为留到阶段 8。
 
+阶段 5 通过 TypeScript 契约和 IPC schema 一致性验证所有更新操作都有具名 Preload 方法，设置修改只接受布尔开关，其余操作不接受 URL、路径、token 或其他参数。手动检查设置页的自动检查开关、检查中禁用、可下载、下载进度、取消、已下载摘要、错误提示和深浅色布局。阶段 6 前安装按钮必须保持禁用，直接调用安装 IPC 返回 `UPDATE_INSTALL_BLOCKED`。
+
 阶段 3 已加入 Vitest，在 Node 环境测试 shared 协议、错误码和 IPC 类型契约。
 
 每个阶段至少执行：

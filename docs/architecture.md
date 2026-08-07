@@ -217,6 +217,8 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 provider 返回的 URL、文件路径、SHA-512 和原始对象不会越过服务边界。服务只投影 stable 版本、移除 URL 和控制字符后的有限发布摘要、公开发布时间、进度与稳定错误码。下载取消使用单次 `CancellationToken`，错误只改变更新状态，不影响服务监听、设备连接或传输协调器。阶段 5 才注册 IPC handler 和 Preload API。
 
+阶段 5 注册更新 IPC handler 与 Preload 具名 API。renderer 先订阅 `update:status-changed` 再并行读取设置和状态快照，避免窗口晚于自动检查事件加载时丢失结果。设置页只能修改自动检查布尔值、触发无参数操作并展示脱敏 DTO；安装 handler 在阶段 6 前固定返回 `UPDATE_INSTALL_BLOCKED`，不会提前获得退出或安装能力。
+
 verified range 的编码和展开集中在单一安全模块。只接受安全整数、严格升序、非空且互不重叠的半开区间，并要求 end 不超过文件块数；任一违规均返回 `RESUME_STATE_INVALID`。诊断摘要只新增可恢复任务数量，报告不包含恢复 payload、路径、文件名、摘要、bitmap、指纹、公钥或 token。
 
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。

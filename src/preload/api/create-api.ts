@@ -153,6 +153,17 @@ export const createLanTransferApi = (): LanTransferApi => {
       selectReceiveDirectory: () => invoke('settings:select-receive-directory', undefined),
       onChanged: (listener) => subscribe('settings:changed', listener),
     }),
+    updates: Object.freeze({
+      getSettings: () => invoke('update:get-settings', undefined),
+      updateSettings: (automaticChecksEnabled) =>
+        invoke('update:update-settings', { automaticChecksEnabled }),
+      getStatus: () => invoke('update:get-status', undefined),
+      check: () => invoke('update:check', undefined),
+      download: () => invoke('update:download', undefined),
+      cancelDownload: () => invoke('update:cancel-download', undefined),
+      install: () => invoke('update:install', undefined),
+      onStatusChanged: (listener) => subscribe('update:status-changed', listener),
+    }),
   } satisfies LanTransferApi
 
   return Object.freeze(api)
