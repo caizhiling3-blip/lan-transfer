@@ -13,6 +13,7 @@ import {
   RecentDevicesStore,
   SessionHistory,
   SettingsStore,
+  UpdateSettingsStore,
 } from '../../src/main/storage'
 
 const temporaryDirectories: string[] = []
@@ -173,5 +174,54 @@ describe('persistent application storage', () => {
     const backupName = files.find((file) => file.startsWith('settings.json.invalid-'))
     expect(backupName).toBeDefined()
     await expect(readFile(join(directory, backupName ?? ''), 'utf8')).resolves.toContain('invalid')
+  })
+
+  it('keeps update preferences in an independent versioned store', async () => {
+    const directory = await createDirectory()
+    const first = new UpdateSettingsStore(directory)
+    expect(first.getSettings()).toEqual({ automaticChecksEnabled: true })
+    expect(first.getLastAutomaticCheckAt()).toBeNull()
+
+    first.update({ automaticChecksEnabled: false })
+    first.recordAutomaticCheck(123_456)
+
+    const second = new UpdateSettingsStore(directory)
+    expect(second.getSettings()).toEqual({ automaticChecksEnabled: false })
+    expect(second.getLastAutomaticCheckAt()).toBe(123_456)
+    const stored = JSON.parse(await readFile(join(directory, 'updates.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(stored).toEqual({
+      schemaVersion: 1,
+      automaticChecksEnabled: false,
+      lastAutomaticCheckAt: 123_456,
+    })
+    expect(stored).not.toHaveProperty('deviceId')
+    expect(stored).not.toHaveProperty('url')
+    expect(stored).not.toHaveProperty('token')
+  })
+
+  it('backs up unknown update settings versions before restoring safe defaults', async () => {
+    const directory = await createDirectory()
+    await writeFile(
+      join(directory, 'updates.json'),
+      JSON.stringify({
+        schemaVersion: 2,
+        automaticChecksEnabled: false,
+        lastAutomaticCheckAt: null,
+        updateUrl: 'https://untrusted.example/update',
+      }),
+      'utf8',
+    )
+
+    const store = new UpdateSettingsStore(directory)
+    expect(store.getSettings()).toEqual({ automaticChecksEnabled: true })
+    const files = await readdir(directory)
+    const backupName = files.find((file) => file.startsWith('updates.json.invalid-'))
+    expect(backupName).toBeDefined()
+    await expect(readFile(join(directory, backupName ?? ''), 'utf8')).resolves.toContain(
+      'untrusted.example',
+    )
   })
 })

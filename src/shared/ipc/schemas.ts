@@ -264,6 +264,13 @@ export const ipcInvokeRequestSchemas = {
   'settings:get': noRequestSchema,
   'settings:update': updateSettingsRequestSchema,
   'settings:select-receive-directory': noRequestSchema,
+  'update:get-settings': noRequestSchema,
+  'update:update-settings': z.object({ automaticChecksEnabled: z.boolean() }).strict(),
+  'update:get-status': noRequestSchema,
+  'update:check': noRequestSchema,
+  'update:download': noRequestSchema,
+  'update:cancel-download': noRequestSchema,
+  'update:install': noRequestSchema,
 } as const satisfies Readonly<Record<IpcInvokeChannel, z.ZodType>>
 
 export const parseIpcInvokeRequest = <TChannel extends IpcInvokeChannel>(

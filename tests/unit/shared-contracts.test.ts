@@ -36,5 +36,9 @@ describe('IPC contracts', () => {
       | { readonly ok: false; readonly error: { readonly code: string } }
     >()
     expectTypeOf<'settings:changed'>().toExtend<IpcEventChannel>()
+    expectTypeOf<IpcInvokeRequest<'update:update-settings'>>().toEqualTypeOf<{
+      readonly automaticChecksEnabled: boolean
+    }>()
+    expectTypeOf<'update:status-changed'>().toExtend<IpcEventChannel>()
   })
 })

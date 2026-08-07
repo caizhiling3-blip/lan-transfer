@@ -207,6 +207,12 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 阶段 9 增加 `transfer:get-tasks` 只读 IPC 快照，renderer 先注册事件监听再拉取快照并按 transferId 合并，避免页面挂载晚于 `did-finish-load` 时丢失重启恢复任务。任务卡会区分暂停、自动重连、状态校验和等待手动恢复；连接到错误设备时不提供继续按钮，取消可恢复任务前明确提示会删除本地进度。取消信任会断开匹配的活动会话，并删除该设备的加密恢复记录与严格归属的 staging。
 
+## v0.5.0 更新基础
+
+阶段 1 在 shared 中定义 `idle`、`checking`、`available`、`not-available`、`downloading`、`downloaded` 和 `error` 更新状态，以及只含公开版本、有限发布摘要、进度、可安装标记和稳定错误码的 renderer 投影。严格 schema 不接受下载 URL、本地路径、摘要、请求头或令牌；这些值未来仍只允许存在于固定配置和主进程更新服务中。
+
+更新偏好使用独立的 `updates.json` schemaVersion 1，只保存自动检查开关和最后自动检查时间。它不修改 settings store，使 v0.4.0 忽略该文件时仍可读取原有设置。未知版本或非法字段沿用 store 的损坏备份流程并恢复安全默认值。阶段 1 只声明具名 IPC 契约，尚不注册 handler 或 Preload API，不扩大 renderer 的实际能力。
+
 verified range 的编码和展开集中在单一安全模块。只接受安全整数、严格升序、非空且互不重叠的半开区间，并要求 end 不超过文件块数；任一违规均返回 `RESUME_STATE_INVALID`。诊断摘要只新增可恢复任务数量，报告不包含恢复 payload、路径、文件名、摘要、bitmap、指纹、公钥或 token。
 
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。

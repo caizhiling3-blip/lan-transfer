@@ -87,6 +87,14 @@ export const historyStoreSchema = z
   })
   .strict()
 
+export const updateSettingsStoreSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    automaticChecksEnabled: z.boolean(),
+    lastAutomaticCheckAt: timestampSchema.nullable(),
+  })
+  .strict()
+
 const recentDevicesStoreV1Schema = z
   .object({
     schemaVersion: z.literal(1),

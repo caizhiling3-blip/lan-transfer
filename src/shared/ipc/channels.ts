@@ -50,6 +50,13 @@ export const IPC_INVOKE_CHANNELS = [
   'settings:get',
   'settings:update',
   'settings:select-receive-directory',
+  'update:get-settings',
+  'update:update-settings',
+  'update:get-status',
+  'update:check',
+  'update:download',
+  'update:cancel-download',
+  'update:install',
 ] as const
 
 export const SERVICE_STATUS_CHANGED_EVENT_CHANNEL = 'service:status-changed' as const
@@ -64,6 +71,7 @@ export const TEXT_TASK_CHANGED_EVENT_CHANNEL = 'transfer:text-task-changed' as c
 export const FILE_OFFER_RECEIVED_EVENT_CHANNEL = 'transfer:offer-received' as const
 export const SETTINGS_CHANGED_EVENT_CHANNEL = 'settings:changed' as const
 export const DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL = 'discovery:devices-changed' as const
+export const UPDATE_STATUS_CHANGED_EVENT_CHANNEL = 'update:status-changed' as const
 
 export const IPC_EVENT_CHANNELS = [
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
@@ -78,6 +86,7 @@ export const IPC_EVENT_CHANNELS = [
   FILE_OFFER_RECEIVED_EVENT_CHANNEL,
   SETTINGS_CHANGED_EVENT_CHANNEL,
   DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL,
+  UPDATE_STATUS_CHANGED_EVENT_CHANNEL,
 ] as const
 
 export type IpcInvokeChannel = (typeof IPC_INVOKE_CHANNELS)[number]
