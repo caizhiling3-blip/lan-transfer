@@ -127,6 +127,8 @@ Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网
 - 通过 `codesign --verify --deep --strict`、`spctl --assess` 和离线 Gatekeeper 测试；
 - 再决定是否公开分发、加入自动更新或发布渠道。
 
+v0.5.0 已把上述待办纳入 [正式分发与安全更新设计](v0.5.0.md)：稳定更新源固定为 GitHub Releases，macOS 需要 Developer ID、Hardened Runtime、notarization 与 stapling，Windows 需要 Authenticode 签名。所有证书和发布凭据必须来自本机安全存储或 CI secret；阶段 0 仅冻结方案，不修改当前未签名候选包配置。
+
 ## v0.3.0 发布状态
 
 v0.3.0 包含历史摘要精细清理、可选保留天数、最近设备备注/删除/在线合并、脱敏诊断报告、日志生命周期和失败恢复建议。协议保持 v2，不改变现有局域网互通格式。
