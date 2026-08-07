@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { app, BrowserWindow, dialog, Notification, safeStorage } from 'electron'
+import { autoUpdater } from 'electron-updater'
 
 import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
@@ -54,7 +55,9 @@ import {
   SessionHistory,
   SettingsStore,
   TrustedDevicesStore,
+  UpdateSettingsStore,
 } from './storage'
+import { UpdateService } from './update'
 import { ConnectionManager } from './websocket'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
@@ -129,6 +132,7 @@ void app.whenReady().then(async () => {
     hostname(),
     app.getPath('downloads'),
   )
+  const updateSettingsStore = new UpdateSettingsStore(app.getPath('userData'))
   const historyStore = new HistoryStore(app.getPath('userData'))
   const recentDevices = new RecentDevicesStore(app.getPath('userData'))
   const identityStore = new IdentityStore(app.getPath('userData'), safeStorage)
@@ -249,6 +253,10 @@ void app.whenReady().then(async () => {
       }
     },
   )
+  const updateService = new UpdateService(autoUpdater, app.getVersion(), updateSettingsStore)
+  if (app.isPackaged && (process.platform === 'darwin' || process.platform === 'win32')) {
+    updateService.startAutomaticChecks()
+  }
   serviceManager = activeServiceManager
   connectionManager = activeConnectionManager
   fileTransferCoordinator = activeFileTransferCoordinator

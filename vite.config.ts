@@ -21,7 +21,7 @@ export default defineConfig({
           },
           build: {
             rollupOptions: {
-              external: ['electron-log', 'electron-store', 'ws'],
+              external: ['electron-log', 'electron-store', 'electron-updater', 'ws'],
             },
           },
         },

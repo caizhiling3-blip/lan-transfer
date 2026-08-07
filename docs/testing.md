@@ -10,6 +10,8 @@
 
 阶段 3 自动化检查开发配置仍允许未签名测试包，正式 Windows 配置强制签名、证书主题与更新发布者使用同一 `WIN_CSC_NAME`、只使用 SHA-256 并配置 RFC 3161 时间戳。真实 Windows 证书环境必须执行 `pnpm package:win:release`，再以 `WIN_CSC_NAME` 运行 `pnpm verify:win:release -- release/win-unpacked/Lindu.exe release/Lindu-Setup-0.5.0-x64.exe`，核对两者 Authenticode 状态、证书主题与脚本输出的 SHA-256，并完成干净系统安装、覆盖升级、卸载和 SmartScreen 签字。
 
+阶段 4 自动化使用可注入 updater 覆盖固定 GitHub owner/repo、stable-only、禁止降级与静默安装、无认证请求头、每天最多一次自动检查、检查/下载状态机、进度边界和 provider 元数据脱敏。测试输入包含下载 URL、本地安装器名和摘要，renderer 投影不得出现这些字段或值；非稳定版本和非法元数据必须返回 `UPDATE_METADATA_INVALID`。开发环境不启动联网检查，正式包的真实 GitHub Release 行为留到阶段 8。
+
 阶段 3 已加入 Vitest，在 Node 环境测试 shared 协议、错误码和 IPC 类型契约。
 
 每个阶段至少执行：

@@ -8,3 +8,9 @@ win:
   signingHashAlgorithms:
     - sha256
   rfc3161TimeStampServer: http://timestamp.digicert.com
+
+publish:
+  provider: github
+  owner: caizhiling3-blip
+  repo: lan-transfer
+  releaseType: release

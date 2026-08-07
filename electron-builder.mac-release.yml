@@ -8,3 +8,9 @@ mac:
   entitlementsInherit: build/entitlements.mac.inherit.plist
   notarize: true
   forceCodeSigning: true
+
+publish:
+  provider: github
+  owner: caizhiling3-blip
+  repo: lan-transfer
+  releaseType: release

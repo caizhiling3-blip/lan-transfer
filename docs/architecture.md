@@ -213,6 +213,10 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 更新偏好使用独立的 `updates.json` schemaVersion 1，只保存自动检查开关和最后自动检查时间。它不修改 settings store，使 v0.4.0 忽略该文件时仍可读取原有设置。未知版本或非法字段沿用 store 的损坏备份流程并恢复安全默认值。阶段 1 只声明具名 IPC 契约，尚不注册 handler 或 Preload API，不扩大 renderer 的实际能力。
 
+阶段 4 的 `UpdateService` 是更新状态的主进程事实来源。它把 `electron-updater` 固定到公开 GitHub provider `caizhiling3-blip/lan-transfer`，显式关闭预发布、降级、自动下载、退出自动安装、Web Installer 和认证请求头。开发模式及非 Windows/macOS 平台不启动自动检查；正式包启动后延迟检查，成功或失败后至少间隔 24 小时。
+
+provider 返回的 URL、文件路径、SHA-512 和原始对象不会越过服务边界。服务只投影 stable 版本、移除 URL 和控制字符后的有限发布摘要、公开发布时间、进度与稳定错误码。下载取消使用单次 `CancellationToken`，错误只改变更新状态，不影响服务监听、设备连接或传输协调器。阶段 5 才注册 IPC handler 和 Preload API。
+
 verified range 的编码和展开集中在单一安全模块。只接受安全整数、严格升序、非空且互不重叠的半开区间，并要求 end 不超过文件块数；任一违规均返回 `RESUME_STATE_INVALID`。诊断摘要只新增可恢复任务数量，报告不包含恢复 payload、路径、文件名、摘要、bitmap、指纹、公钥或 token。
 
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。
