@@ -6,7 +6,7 @@
 
 阶段 1 自动化覆盖 stable 语义版本、更新状态与错误码唯一性、状态相关字段、公开发布信息严格脱敏、更新 IPC 无参数边界，以及 `updates.json` 默认值、持久化、独立性和未知 schemaVersion 安全备份。shared channel 在阶段 1 只冻结契约，主进程 handler 与 Preload API 留到对应实现阶段，因此 renderer 尚不能发起更新操作。
 
-阶段 2 自动化检查开发配置仍禁用签名/notarization、正式 macOS 配置强制 Developer ID 签名并启用 Hardened Runtime/notarization、主应用与辅助进程使用最小 entitlements，以及凭据预检不会输出 secret 值。真实证书环境还必须执行 `pnpm package:mac:release:arm64` 与 `pnpm package:mac:release:x64`，随后对 `.app` 和 DMG 运行 `pnpm verify:mac:release -- <app-path> <dmg-path>`，并在隔离机器验证 stapled ticket、离线 Gatekeeper 和首次启动；未执行时保持待签字。
+阶段 2 自动化检查开发配置仍禁用签名/notarization、正式 macOS 配置强制 Developer ID 签名并启用 Hardened Runtime/notarization、同时生成首次安装 DMG 与自动更新 ZIP、主应用与辅助进程使用最小 entitlements，以及凭据预检不会输出 secret 值。真实证书环境还必须执行 `pnpm package:mac:release:arm64` 与 `pnpm package:mac:release:x64`，随后对 `.app` 和 DMG 运行 `pnpm verify:mac:release -- <app-path> <dmg-path>`，核对 ZIP/blockmap/`latest-mac.yml`，并在隔离机器验证 stapled ticket、离线 Gatekeeper 和首次启动；未执行时保持待签字。
 
 阶段 3 自动化检查开发配置仍允许未签名测试包，正式 Windows 配置强制签名、证书主题与更新发布者使用同一 `WIN_CSC_NAME`、只使用 SHA-256 并配置 RFC 3161 时间戳。真实 Windows 证书环境必须执行 `pnpm package:win:release`，再以 `WIN_CSC_NAME` 运行 `pnpm verify:win:release -- release/win-unpacked/Lindu.exe release/Lindu-Setup-0.5.0-x64.exe`，核对两者 Authenticode 状态、证书主题与脚本输出的 SHA-256，并完成干净系统安装、覆盖升级、卸载和 SmartScreen 签字。
 

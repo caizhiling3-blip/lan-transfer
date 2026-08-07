@@ -3,7 +3,7 @@ import { lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const ALLOWED_EXTENSIONS = new Set(['.dmg', '.exe', '.yml', '.yaml', '.blockmap'])
+const ALLOWED_EXTENSIONS = new Set(['.dmg', '.exe', '.zip', '.yml', '.yaml', '.blockmap'])
 
 const walk = (directory) =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

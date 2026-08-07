@@ -131,6 +131,8 @@ v0.5.0 已把上述待办纳入 [正式分发与安全更新设计](v0.5.0.md)�
 
 v0.5.0 阶段 2 新增独立 `electron-builder.mac-release.yml`，不会改变现有未签名开发包。正式构建前必须通过只检查变量名称的凭据预检：证书使用 `CSC_LINK` 和 `CSC_KEY_PASSWORD`；notarization 优先使用 `APPLE_API_KEY`、`APPLE_API_KEY_ID` 与 `APPLE_API_ISSUER`，也可使用 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD` 与 `APPLE_TEAM_ID`。凭据值不得出现在命令行、仓库或日志中。
 
+正式 macOS 配置同时生成 DMG 和 ZIP：DMG 用于用户首次安装，签名 ZIP 与 `latest-mac.yml` 用于应用内更新。两种架构的 ZIP、blockmap 和更新元数据必须与对应 DMG 来自同一提交；缺少 ZIP 时不得发布 macOS 自动更新。
+
 ```bash
 pnpm package:mac:release:arm64
 pnpm package:mac:release:x64

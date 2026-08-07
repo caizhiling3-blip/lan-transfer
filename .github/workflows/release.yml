@@ -69,6 +69,8 @@ jobs:
           path: |
             release/Lindu-*.dmg
             release/Lindu-*.dmg.blockmap
+            release/Lindu-*.zip
+            release/Lindu-*.zip.blockmap
             release/latest-mac.yml
 
   windows:

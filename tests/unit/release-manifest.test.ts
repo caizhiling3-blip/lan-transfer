@@ -27,6 +27,7 @@ describe('release audit manifest', () => {
     await mkdir(input)
     await mkdir(output)
     await writeFile(join(input, 'Lindu-0.5.0-arm64.dmg'), 'mac artifact')
+    await writeFile(join(input, 'Lindu-0.5.0-arm64.zip'), 'mac update artifact')
     await writeFile(join(input, 'latest-mac.yml'), 'version: 0.5.0')
     await writeFile(join(input, 'ignored.txt'), 'secret')
 
@@ -38,6 +39,7 @@ describe('release audit manifest', () => {
     expect(manifest.artifacts.map(({ name }) => name)).toEqual([
       'latest-mac.yml',
       'Lindu-0.5.0-arm64.dmg',
+      'Lindu-0.5.0-arm64.zip',
     ])
     expect(manifest.artifacts.every(({ sha256 }) => /^[a-f0-9]{64}$/u.test(sha256))).toBe(true)
     const serialized = await readFile(join(output, 'release-manifest.json'), 'utf8')

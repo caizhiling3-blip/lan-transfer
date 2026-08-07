@@ -54,6 +54,8 @@ describe('release configuration', () => {
     expect(release).toContain('hardenedRuntime: true')
     expect(release).toContain('notarize: true')
     expect(release).toContain('forceCodeSigning: true')
+    expect(release).toContain('- target: dmg')
+    expect(release).toContain('- target: zip')
     expect(entitlements).toContain('com.apple.security.network.server')
     expect(entitlements).not.toContain('com.apple.security.app-sandbox')
     expect(inheritedEntitlements).not.toContain('com.apple.security.network.server')
