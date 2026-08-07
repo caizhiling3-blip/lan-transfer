@@ -129,6 +129,16 @@ Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网
 
 v0.5.0 已把上述待办纳入 [正式分发与安全更新设计](v0.5.0.md)：稳定更新源固定为 GitHub Releases，macOS 需要 Developer ID、Hardened Runtime、notarization 与 stapling，Windows 需要 Authenticode 签名。所有证书和发布凭据必须来自本机安全存储或 CI secret；阶段 0 仅冻结方案，不修改当前未签名候选包配置。
 
+v0.5.0 阶段 2 新增独立 `electron-builder.mac-release.yml`，不会改变现有未签名开发包。正式构建前必须通过只检查变量名称的凭据预检：证书使用 `CSC_LINK` 和 `CSC_KEY_PASSWORD`；notarization 优先使用 `APPLE_API_KEY`、`APPLE_API_KEY_ID` 与 `APPLE_API_ISSUER`，也可使用 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD` 与 `APPLE_TEAM_ID`。凭据值不得出现在命令行、仓库或日志中。
+
+```bash
+pnpm package:mac:release:arm64
+pnpm package:mac:release:x64
+pnpm verify:mac:release -- release/mac-arm64/邻渡.app release/Lindu-0.5.0-arm64.dmg
+```
+
+验证命令依次检查严格代码签名、Gatekeeper execute assessment、`.app` stapled ticket，以及可选 DMG 的 stapling 与 primary signature。只有真实凭据构建和隔离机器启动完成后才能签署 macOS 正式发布结论。
+
 ## v0.3.0 发布状态
 
 v0.3.0 包含历史摘要精细清理、可选保留天数、最近设备备注/删除/在线合并、脱敏诊断报告、日志生命周期和失败恢复建议。协议保持 v2，不改变现有局域网互通格式。
