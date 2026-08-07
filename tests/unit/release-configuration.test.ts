@@ -71,4 +71,16 @@ describe('release configuration', () => {
     expect(release).toContain('- sha256')
     expect(release).toContain('rfc3161TimeStampServer: http://timestamp.digicert.com')
   })
+
+  it('keeps the release workflow tag-only, signed, audited, and draft-only', async () => {
+    const workflow = await readFile('.github/workflows/release.yml', 'utf8')
+    expect(workflow).toContain("tags:\n      - 'v*'")
+    expect(workflow).not.toContain('pull_request:')
+    expect(workflow).toContain('pnpm install --frozen-lockfile')
+    expect(workflow).toContain('create-release-manifest.mjs')
+    expect(workflow).toContain('--draft')
+    expect(workflow).toContain('--verify-tag')
+    expect(workflow).not.toContain('echo "$CSC')
+    expect(workflow).not.toContain('echo "$WIN_CSC')
+  })
 })

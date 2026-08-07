@@ -148,6 +148,8 @@ pnpm verify:win:release -- release/win-unpacked/Lindu.exe release/Lindu-Setup-0.
 
 验证脚本通过 PowerShell `Get-AuthenticodeSignature` 要求签名状态为 `Valid` 且证书主题包含预期发布者，并为每个产物输出 SHA-256。自动化配置检查不能替代真实证书、时间戳、SmartScreen、安装和卸载验收。
 
+v0.5.0 阶段 7 的 `.github/workflows/release.yml` 只响应 `v*` 标签。标签必须与 `package.json` 版本精确一致；质量、macOS 和 Windows job 全部成功后，流水线下载平台产物，生成 `release-manifest.json` 与 `SHA256SUMS`，最后创建 Draft GitHub Release。构建命令显式使用 `--publish never`，防止平台 job 在验证完成前自行上传。Draft 必须经真实设备签字和人工核对后才能公开，流水线不会自动发布稳定版本。
+
 ## v0.3.0 发布状态
 
 v0.3.0 包含历史摘要精细清理、可选保留天数、最近设备备注/删除/在线合并、脱敏诊断报告、日志生命周期和失败恢复建议。协议保持 v2，不改变现有局域网互通格式。

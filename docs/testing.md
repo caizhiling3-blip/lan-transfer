@@ -16,6 +16,8 @@
 
 阶段 6 自动化覆盖下载完成后的动态安装就绪状态、门禁失败不准备安装、门禁通过后只允许消费一次 prepared install，以及平台安装调用参数。手动测试在配对弹窗、connecting/authenticating、文件或文件夹传输、校验/发布、自动重连和队列等待期间点击安装，必须返回阻塞且任务不受影响；空闲时确认安装后所有新 IPC 应被拒绝，恢复记录与 stores 完成写入、服务正常停止后才启动安装器。
 
+阶段 7 自动化覆盖标签与 package 版本精确匹配、发布输入符号链接拒绝、允许产物筛选、稳定排序、SHA-256 与审计 JSON，以及 workflow 只由 `v*` 标签触发、使用 frozen lockfile、执行平台验证并仅创建 Draft Release。CI secrets 只映射为签名工具要求的环境变量；日志与上传 artifact 中不得出现证书、密码、notarization key 或发布令牌。
+
 阶段 3 已加入 Vitest，在 Node 环境测试 shared 协议、错误码和 IPC 类型契约。
 
 每个阶段至少执行：
