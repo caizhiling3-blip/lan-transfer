@@ -139,6 +139,15 @@ pnpm verify:mac:release -- release/mac-arm64/邻渡.app release/Lindu-0.5.0-arm6
 
 验证命令依次检查严格代码签名、Gatekeeper execute assessment、`.app` stapled ticket，以及可选 DMG 的 stapling 与 primary signature。只有真实凭据构建和隔离机器启动完成后才能签署 macOS 正式发布结论。
 
+v0.5.0 阶段 3 使用独立 `electron-builder.win-release.yml` 强制 Windows Authenticode 签名。证书使用 `WIN_CSC_LINK` 与 `WIN_CSC_KEY_PASSWORD`（也兼容 electron-builder 的 `CSC_LINK`/`CSC_KEY_PASSWORD`），`WIN_CSC_NAME` 同时限定证书主题和更新发布者名称。正式构建与验证必须在 Windows x64 环境执行：
+
+```powershell
+pnpm package:win:release
+pnpm verify:win:release -- release/win-unpacked/Lindu.exe release/Lindu-Setup-0.5.0-x64.exe
+```
+
+验证脚本通过 PowerShell `Get-AuthenticodeSignature` 要求签名状态为 `Valid` 且证书主题包含预期发布者，并为每个产物输出 SHA-256。自动化配置检查不能替代真实证书、时间戳、SmartScreen、安装和卸载验收。
+
 ## v0.3.0 发布状态
 
 v0.3.0 包含历史摘要精细清理、可选保留天数、最近设备备注/删除/在线合并、脱敏诊断报告、日志生命周期和失败恢复建议。协议保持 v2，不改变现有局域网互通格式。

@@ -30,10 +30,15 @@ describe('release configuration', () => {
       validateWindowsReleaseEnvironment({
         WIN_CSC_LINK: 'certificate',
         WIN_CSC_KEY_PASSWORD: 'password',
+        WIN_CSC_NAME: 'Lindu Publisher',
       }),
     ).toEqual([])
     expect(
-      validateWindowsReleaseEnvironment({ CSC_LINK: 'certificate', CSC_KEY_PASSWORD: 'password' }),
+      validateWindowsReleaseEnvironment({
+        CSC_LINK: 'certificate',
+        CSC_KEY_PASSWORD: 'password',
+        WIN_CSC_NAME: 'Lindu Publisher',
+      }),
     ).toEqual([])
   })
 
@@ -52,5 +57,18 @@ describe('release configuration', () => {
     expect(entitlements).toContain('com.apple.security.network.server')
     expect(entitlements).not.toContain('com.apple.security.app-sandbox')
     expect(inheritedEntitlements).not.toContain('com.apple.security.network.server')
+  })
+
+  it('forces SHA-256 Authenticode signing for Windows release artifacts', async () => {
+    const [base, release] = await Promise.all([
+      readFile('electron-builder.yml', 'utf8'),
+      readFile('electron-builder.win-release.yml', 'utf8'),
+    ])
+    expect(base).toContain('forceCodeSigning: false')
+    expect(release).toContain('forceCodeSigning: true')
+    expect(release).toContain('certificateSubjectName: ${env.WIN_CSC_NAME}')
+    expect(release).toContain('publisherName:')
+    expect(release).toContain('- sha256')
+    expect(release).toContain('rfc3161TimeStampServer: http://timestamp.digicert.com')
   })
 })

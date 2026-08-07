@@ -35,6 +35,7 @@ export const validateWindowsReleaseEnvironment = (environment) => {
   ) {
     missing.push('WIN_CSC_KEY_PASSWORD or CSC_KEY_PASSWORD')
   }
+  if (!hasValue(environment, 'WIN_CSC_NAME')) missing.push('WIN_CSC_NAME')
   return missing
 }
 

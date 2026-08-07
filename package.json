@@ -15,6 +15,8 @@
     "build": "pnpm typecheck && vite build",
     "package:win": "pnpm build && electron-builder --win nsis --x64",
     "package:win:dir": "pnpm build && electron-builder --win dir --x64",
+    "package:win:release": "node scripts/validate-release-credentials.mjs windows && pnpm build && electron-builder --config electron-builder.win-release.yml --win nsis --x64",
+    "verify:win:release": "node scripts/verify-windows-release.mjs",
     "package:mac": "pnpm build && electron-builder --mac dmg --arm64 --x64",
     "package:mac:arm64": "pnpm build && electron-builder --mac dmg --arm64",
     "package:mac:x64": "pnpm build && electron-builder --mac dmg --x64",
