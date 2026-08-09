@@ -178,16 +178,31 @@ onBeforeUnmount(() => {
           :default-active="activePage"
           @select="selectPage($event as PageKey)"
         >
-          <el-menu-item index="home">首页</el-menu-item>
-          <el-menu-item index="transfer">传输</el-menu-item>
-          <el-menu-item index="history">历史记录</el-menu-item>
-          <el-menu-item index="diagnostics">诊断</el-menu-item>
-          <el-menu-item index="settings">设置</el-menu-item>
+          <el-menu-item index="home" title="首页">
+            <span class="nav-icon" aria-hidden="true">⌂</span>
+            <span class="nav-label">首页</span>
+          </el-menu-item>
+          <el-menu-item index="transfer" title="传输">
+            <span class="nav-icon" aria-hidden="true">⇄</span>
+            <span class="nav-label">传输</span>
+          </el-menu-item>
+          <el-menu-item index="history" title="历史记录">
+            <span class="nav-icon" aria-hidden="true">◷</span>
+            <span class="nav-label">历史记录</span>
+          </el-menu-item>
+          <el-menu-item index="diagnostics" title="诊断">
+            <span class="nav-icon" aria-hidden="true">⊙</span>
+            <span class="nav-label">诊断</span>
+          </el-menu-item>
+          <el-menu-item index="settings" title="设置">
+            <span class="nav-icon" aria-hidden="true">⚙</span>
+            <span class="nav-label">设置</span>
+          </el-menu-item>
         </el-menu>
       </nav>
-      <div class="sidebar-footer">
+      <div class="sidebar-footer" title="仅在局域网内通信">
         <span class="security-indicator" aria-hidden="true"></span>
-        仅在局域网内通信
+        <span class="sidebar-footer-label">仅在局域网内通信</span>
       </div>
     </el-aside>
     <el-main
