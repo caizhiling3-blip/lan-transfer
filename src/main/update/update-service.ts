@@ -1,10 +1,17 @@
-import { CancellationToken } from 'electron-updater'
-import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater'
+import electronUpdater from 'electron-updater'
+import type {
+  AppUpdater,
+  CancellationToken as CancellationTokenType,
+  ProgressInfo,
+  UpdateInfo,
+} from 'electron-updater'
 
 import { updateReleaseInfoSchema, updateStatusSchema } from '@shared/types'
 import type { UpdateReleaseInfoDto, UpdateStatusDto } from '@shared/types'
 
 import type { UpdateSettingsStore } from '../storage'
+
+const { CancellationToken } = electronUpdater
 
 export const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000
 export const INITIAL_UPDATE_CHECK_DELAY_MS = 30_000
@@ -61,7 +68,7 @@ export class UpdateService {
   private status: UpdateStatusDto
   private readonly listeners = new Set<UpdateListener>()
   private timer: TimerHandle | null = null
-  private cancellationToken: CancellationToken | null = null
+  private cancellationToken: CancellationTokenType | null = null
   private installPrepared = false
   private isInstallSafe: () => boolean = () => false
 

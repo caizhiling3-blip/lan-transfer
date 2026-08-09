@@ -74,6 +74,17 @@ describe('release configuration', () => {
     expect(release).toContain('rfc3161TimeStampServer: http://timestamp.digicert.com')
   })
 
+  it('loads the CommonJS updater through its default export in ESM builds', async () => {
+    const [mainEntry, updateService] = await Promise.all([
+      readFile('src/main/index.ts', 'utf8'),
+      readFile('src/main/update/update-service.ts', 'utf8'),
+    ])
+    for (const source of [mainEntry, updateService]) {
+      expect(source).toContain("import electronUpdater from 'electron-updater'")
+      expect(source).not.toMatch(/import\s*\{[^}]+\}\s*from 'electron-updater'/su)
+    }
+  })
+
   it('keeps the release workflow tag-only, signed, audited, and draft-only', async () => {
     const workflow = await readFile('.github/workflows/release.yml', 'utf8')
     expect(workflow).toContain("tags:\n      - 'v*'")

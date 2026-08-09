@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { app, BrowserWindow, dialog, Notification, safeStorage } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import electronUpdater from 'electron-updater'
 
 import {
   CONNECTION_INCOMING_REQUEST_EVENT_CHANNEL,
@@ -63,6 +63,7 @@ import {
 import { UpdateService } from './update'
 import { ConnectionManager } from './websocket'
 
+const { autoUpdater } = electronUpdater
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
 let serviceManager: ServiceManager | null = null
