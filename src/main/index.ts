@@ -51,6 +51,7 @@ import { DiagnosticsService, getDiagnosticsPlatform } from './diagnostics'
 import { getActiveLogFilePath, initializeLogger, logger, LogLifecycle } from './logger'
 import { PairingCoordinator } from './pairing'
 import {
+  HistoryLocatorsStore,
   HistoryStore,
   IdentityStore,
   RecentDevicesStore,
@@ -142,6 +143,7 @@ void app.whenReady().then(async () => {
   )
   const updateSettingsStore = new UpdateSettingsStore(app.getPath('userData'))
   const historyStore = new HistoryStore(app.getPath('userData'))
+  const historyLocatorsStore = new HistoryLocatorsStore(app.getPath('userData'))
   const recentDevices = new RecentDevicesStore(app.getPath('userData'))
   const identityStore = new IdentityStore(app.getPath('userData'), safeStorage)
   const trustedDevices = new TrustedDevicesStore(app.getPath('userData'))
@@ -165,6 +167,7 @@ void app.whenReady().then(async () => {
     historyStore.load(),
     (entries) => historyStore.save(entries),
     () => settingsStore.getSettings().historyRetentionDays,
+    historyLocatorsStore,
   )
   const deviceIdentity = new DeviceIdentity(settingsStore)
   const activeServiceManager = new ServiceManager(settingsStore.getSettings().servicePort)

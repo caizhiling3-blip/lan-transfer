@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { MAX_TEXT_BYTES } from '@shared/constants'
-import type { FileId, TransferTaskDto } from '@shared/types'
+import type { FileId, HistoryEntryDto, TransferTaskDto } from '@shared/types'
 import { classifyTextContent, getUtf8ByteLength } from '@shared/utils'
 
 import FileActivityCard from '../components/transfer/FileActivityCard.vue'
@@ -13,6 +13,8 @@ import { useConnectionStore } from '../stores/connection'
 import { useFileTransferStore } from '../stores/file-transfer'
 import { useTextTransferStore } from '../stores/text-transfer'
 import { createTransferActivities } from '../utils/transfer-activity'
+
+const props = defineProps<{ targetHistoryMessage?: HistoryEntryDto | null }>()
 
 const connectionStore = useConnectionStore()
 const textTransferStore = useTextTransferStore()
@@ -24,6 +26,11 @@ const emit = defineEmits<{ navigate: [page: 'home' | 'settings'] }>()
 
 const activities = computed(() =>
   createTransferActivities(textTransferStore.messages, fileTransferStore.tasks),
+)
+const targetActivityId = computed(() =>
+  props.targetHistoryMessage === undefined || props.targetHistoryMessage === null
+    ? null
+    : `text:${props.targetHistoryMessage.id}`,
 )
 const contentBytes = computed(() => getUtf8ByteLength(content.value))
 const hasText = computed(() => content.value.trim().length > 0)
@@ -49,7 +56,16 @@ const scrollToLatest = (): void => {
   })
 }
 
+const scrollToTarget = (): void => {
+  void nextTick(() => {
+    activityList.value
+      ?.querySelector<HTMLElement>('[data-history-target="true"]')
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+
 watch(() => activities.value.at(-1)?.id, scrollToLatest)
+watch(targetActivityId, scrollToTarget)
 watch(isConnected, (connected, wasConnected) => {
   if (
     !connected &&
@@ -142,8 +158,12 @@ const retryTransfer = async (
   }
 }
 
-onMounted(() => {
-  void textTransferStore.initialize()
+onMounted(async () => {
+  await textTransferStore.initialize()
+  if (props.targetHistoryMessage !== undefined && props.targetHistoryMessage !== null) {
+    textTransferStore.ensureHistoryEntry(props.targetHistoryMessage)
+    scrollToTarget()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -185,6 +205,8 @@ onBeforeUnmount(() => {
         <template v-for="activity in activities" :key="activity.id">
           <TextActivityCard
             v-if="activity.kind === 'text'"
+            :data-history-target="activity.id === targetActivityId"
+            :class="{ 'history-target': activity.id === targetActivityId }"
             :message="activity.message"
             @copy="copyText"
             @open="openLink"
@@ -242,6 +264,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.history-target {
+  border-radius: 12px;
+  outline: 2px solid var(--app-primary);
+  outline-offset: 3px;
+}
+
 .transfer-layout {
   display: flex;
   height: 100%;

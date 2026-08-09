@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { SessionHistory } from '../../src/main/storage/session-history'
+import { type HistoryLocatorRegistry, SessionHistory } from '../../src/main/storage/session-history'
 import { deviceIdSchema } from '@shared/types'
 import type { DeviceInfo, HistoryEntryDto } from '@shared/types'
 
@@ -23,6 +23,17 @@ const addEntry = (history: SessionHistory, text: string, direction: 'send' | 're
   })
 
 describe('SessionHistory', () => {
+  const createLocators = (): HistoryLocatorRegistry & { readonly values: Map<string, string> } => {
+    const values = new Map<string, string>()
+    return {
+      values,
+      get: (historyId) => values.get(historyId) ?? null,
+      set: (historyId, path) => values.set(historyId, path),
+      delete: (historyIds) => historyIds.forEach((historyId) => values.delete(historyId)),
+      clear: () => values.clear(),
+    }
+  }
+
   it('stores newest entries first and enforces its limit', () => {
     const history = new SessionHistory(2)
     addEntry(history, 'first', 'send')
@@ -69,6 +80,27 @@ describe('SessionHistory', () => {
     history.clear()
 
     expect(history.list({ offset: 0, limit: 100 })).toEqual([])
+  })
+
+  it('keeps received paths private and removes locators with their history entries', () => {
+    const locators = createLocators()
+    const history = new SessionHistory(100, [], () => undefined, null, locators)
+    const received = history.add(
+      {
+        direction: 'receive',
+        kind: 'file',
+        peer,
+        status: 'completed',
+        displayName: 'report.pdf',
+        createdAt: Date.now(),
+      },
+      '/downloads/report.pdf',
+    )
+
+    expect(history.list({ offset: 0, limit: 10 })[0]).not.toHaveProperty('receivedPath')
+    expect(history.getReceivedPath(received.id)).toBe('/downloads/report.pdf')
+    history.delete([received.id])
+    expect(locators.values).toEqual(new Map())
   })
 
   it('reports matching statistics and deletes selected entries', () => {

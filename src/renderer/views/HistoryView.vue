@@ -12,6 +12,7 @@ import { useHistoryStore } from '../stores/history'
 const store = useHistoryStore()
 const selectedEntries = ref<HistoryEntryDto[]>([])
 const MILLISECONDS_PER_DAY = 86_400_000
+const emit = defineEmits<{ locateMessage: [entry: HistoryEntryDto] }>()
 
 const statusLabels: Readonly<Record<TransferStatus, string>> = {
   pending: '等待中',
@@ -119,6 +120,16 @@ const handleCleanupCommand = async (command: string): Promise<void> => {
 
 const formatStorageSize = (bytes: number): string =>
   bytes < 1_024 ? `${String(bytes)} B` : `${(bytes / 1_024).toFixed(1)} KiB`
+
+const canLocateReceived = (entry: HistoryEntryDto): boolean =>
+  entry.direction === 'receive' &&
+  (entry.kind === 'file' || entry.kind === 'folder') &&
+  entry.status === 'completed'
+
+const locateReceived = async (entry: HistoryEntryDto): Promise<void> => {
+  const result = await window.lanTransfer.history.locateReceived(entry.id)
+  if (!result.ok) ElMessage.error('文件或文件夹已被移动或删除，无法定位')
+}
 
 onMounted(() => void store.load(true))
 </script>
@@ -256,8 +267,24 @@ onMounted(() => void store.load(true))
             {{ new Date(row.createdAt).toLocaleString() }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="72" fixed="right">
+        <el-table-column label="操作" width="136" fixed="right">
           <template #default="{ row }: { row: HistoryEntryDto }">
+            <el-button
+              v-if="row.kind === 'text' || row.kind === 'link'"
+              link
+              type="primary"
+              @click="emit('locateMessage', row)"
+            >
+              定位
+            </el-button>
+            <el-button
+              v-else-if="canLocateReceived(row)"
+              link
+              type="primary"
+              @click="locateReceived(row)"
+            >
+              显示
+            </el-button>
             <el-button link type="danger" @click="deleteEntries([row])">删除</el-button>
           </template>
         </el-table-column>

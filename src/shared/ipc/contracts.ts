@@ -144,6 +144,7 @@ export interface IpcInvokeMap {
     undefined
   >
   readonly 'history:list': InvokeContract<HistoryFilterDto, readonly HistoryEntryDto[]>
+  readonly 'history:locate-received': InvokeContract<{ readonly historyId: string }, undefined>
   readonly 'history:get-stats': InvokeContract<
     { readonly criteria?: HistoryCleanupCriteriaDto },
     HistoryStatsDto

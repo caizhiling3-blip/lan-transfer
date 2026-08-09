@@ -120,6 +120,7 @@ export interface LanTransferApi {
   }
   readonly history: {
     list(filter: HistoryFilterDto): Promise<IpcInvokeResponse<'history:list'>>
+    locateReceived(historyId: string): Promise<IpcInvokeResponse<'history:locate-received'>>
     getStats(criteria?: HistoryCleanupCriteriaDto): Promise<IpcInvokeResponse<'history:get-stats'>>
     delete(historyIds: readonly string[]): Promise<IpcInvokeResponse<'history:delete'>>
     previewCleanup(

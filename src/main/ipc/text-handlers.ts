@@ -1,4 +1,6 @@
-import type { BrowserWindow } from 'electron'
+import { stat } from 'node:fs/promises'
+
+import { shell, type BrowserWindow } from 'electron'
 
 import type { SessionHistory } from '../storage'
 import type { ConnectionManager } from '../websocket'
@@ -34,6 +36,20 @@ export const registerTextIpcHandlers = (
     ok: true,
     data: history.list(filter),
   }))
+  registerIpcHandler('history:locate-received', getWindow, async ({ historyId }) => {
+    const receivedPath = history.getReceivedPath(historyId)
+    if (receivedPath === null) return { ok: false, error: { code: 'FILE_NOT_FOUND' } }
+    try {
+      const fileStat = await stat(receivedPath)
+      if (!fileStat.isFile() && !fileStat.isDirectory()) {
+        return { ok: false, error: { code: 'FILE_NOT_FOUND' } }
+      }
+      shell.showItemInFolder(receivedPath)
+      return { ok: true, data: undefined }
+    } catch {
+      return { ok: false, error: { code: 'FILE_NOT_FOUND' } }
+    }
+  })
   registerIpcHandler('history:get-stats', getWindow, ({ criteria }) => ({
     ok: true,
     data: history.getStats(criteria, getHistoryStorageBytes()),

@@ -87,6 +87,13 @@ export const historyStoreSchema = z
   })
   .strict()
 
+export const historyLocatorsStoreSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    locators: z.record(z.uuid(), z.string().min(1).max(32_768)),
+  })
+  .strict()
+
 export const updateSettingsStoreSchema = z
   .object({
     schemaVersion: z.literal(1),

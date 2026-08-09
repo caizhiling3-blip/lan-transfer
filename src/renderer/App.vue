@@ -2,6 +2,8 @@
 import { ElMessageBox } from 'element-plus'
 import { h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import type { HistoryEntryDto } from '@shared/types'
+
 import { useConnectionStore } from './stores/connection'
 import { useFileTransferStore } from './stores/file-transfer'
 import { useSecurityStore } from './stores/security'
@@ -21,10 +23,21 @@ const fileTransferStore = useFileTransferStore()
 const securityStore = useSecurityStore()
 const activeApprovalRequestId = ref<string | null>(null)
 const activePairingRequestId = ref<string | null>(null)
+const targetHistoryMessage = ref<HistoryEntryDto | null>(null)
 let pairingDialogGeneration = 0
 
 const formatShortFingerprint = (fingerprint: string): string =>
   (fingerprint.slice(0, 24).match(/.{1,4}/gu) ?? []).join(' ')
+
+const locateHistoryMessage = (entry: HistoryEntryDto): void => {
+  targetHistoryMessage.value = entry
+  activePage.value = 'transfer'
+}
+
+const selectPage = (page: PageKey): void => {
+  if (page === 'transfer') targetHistoryMessage.value = null
+  activePage.value = page
+}
 
 watch(
   () => fileTransferStore.incomingOffer,
@@ -163,7 +176,7 @@ onBeforeUnmount(() => {
         <el-menu
           v-model="activePage"
           :default-active="activePage"
-          @select="activePage = $event as PageKey"
+          @select="selectPage($event as PageKey)"
         >
           <el-menu-item index="home">首页</el-menu-item>
           <el-menu-item index="transfer">传输</el-menu-item>
@@ -191,8 +204,12 @@ onBeforeUnmount(() => {
           <ThemeToggle />
         </header>
         <HomeView v-if="activePage === 'home'" />
-        <TransferView v-else-if="activePage === 'transfer'" @navigate="activePage = $event" />
-        <HistoryView v-else-if="activePage === 'history'" />
+        <TransferView
+          v-else-if="activePage === 'transfer'"
+          :target-history-message="targetHistoryMessage"
+          @navigate="activePage = $event"
+        />
+        <HistoryView v-else-if="activePage === 'history'" @locate-message="locateHistoryMessage" />
         <DiagnosticsView v-else-if="activePage === 'diagnostics'" />
         <SettingsView v-else />
       </div>

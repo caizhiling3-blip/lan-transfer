@@ -43,6 +43,10 @@ export const useTextTransferStore = defineStore('textTransfer', {
     unsubscribers: [] as (() => void)[],
   }),
   actions: {
+    ensureHistoryEntry(entry: HistoryEntryDto): void {
+      if (!isTextHistoryEntry(entry) || this.messages.some(({ id }) => id === entry.id)) return
+      this.messages.push(fromHistoryEntry(entry))
+    },
     async initialize(): Promise<void> {
       this.dispose()
       this.unsubscribers = [

@@ -1,4 +1,5 @@
 export * from './history-store'
+export * from './history-locators-store'
 export * from './identity-store'
 export * from './recent-devices-store'
 export * from './recoverable-transfers-store'

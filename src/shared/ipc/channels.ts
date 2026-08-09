@@ -36,6 +36,7 @@ export const IPC_INVOKE_CHANNELS = [
   'transfer:retry',
   'transfer:show-received-file',
   'history:list',
+  'history:locate-received',
   'history:get-stats',
   'history:delete',
   'history:preview-cleanup',

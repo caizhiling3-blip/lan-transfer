@@ -1879,7 +1879,11 @@ export class FileTransferCoordinator {
       createdAt: task.createdAt,
       ...(task.errorCode === undefined ? {} : { errorCode: task.errorCode }),
     }
-    this.history.add(entry)
+    const receivedPath =
+      task.direction === 'receive' && task.status === 'completed'
+        ? this.getReceivedFilePath(task.transferId)
+        : null
+    this.history.add(entry, receivedPath ?? undefined)
     this.recordedTransfers.set(task.transferId, Date.now())
     this.pruneTransfers()
   }

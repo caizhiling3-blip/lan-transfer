@@ -334,6 +334,10 @@ describe('IPC request schemas', () => {
     ).not.toThrow()
     expect(() => parseIpcInvokeRequest('history:get-stats', {})).not.toThrow()
     expect(() => parseIpcInvokeRequest('history:delete', { historyIds: [historyId] })).not.toThrow()
+    expect(() => parseIpcInvokeRequest('history:locate-received', { historyId })).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('history:locate-received', { historyId, path: '/tmp/file' }),
+    ).toThrow()
     expect(() => parseIpcInvokeRequest('history:cleanup', { before: Date.now() })).not.toThrow()
     expect(() => parseIpcInvokeRequest('history:cleanup', {})).toThrow()
     expect(recentDeviceAliasSchema.parse('  Office PC  ')).toBe('Office PC')

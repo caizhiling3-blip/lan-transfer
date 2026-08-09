@@ -9,6 +9,7 @@ import { deviceIdSchema } from '@shared/types'
 import type { DeviceInfo } from '@shared/types'
 
 import {
+  HistoryLocatorsStore,
   HistoryStore,
   RecentDevicesStore,
   SessionHistory,
@@ -115,6 +116,17 @@ describe('persistent application storage', () => {
     limit = 1
     history.trimToLimit()
     expect(new HistoryStore(directory).load()).toHaveLength(1)
+  })
+
+  it('persists history file locators separately from renderer history summaries', async () => {
+    const directory = await createDirectory()
+    const locators = new HistoryLocatorsStore(directory)
+    const historyId = '33333333-3333-4333-8333-333333333333'
+    locators.set(historyId, '/downloads/report.pdf')
+
+    expect(new HistoryLocatorsStore(directory).get(historyId)).toBe('/downloads/report.pdf')
+    locators.delete([historyId])
+    expect(locators.get(historyId)).toBeNull()
   })
 
   it('deduplicates recent peers and keeps the latest address', async () => {

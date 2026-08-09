@@ -1969,6 +1969,10 @@ export class FolderTransferCoordinator {
   }
 
   private recordHistory(task: TransferTaskDto): void {
+    const receivedPath =
+      task.direction === 'receive' && task.status === 'completed'
+        ? this.getReceivedFolderPath(task.transferId)
+        : null
     this.retireTransfer(task.transferId)
     if (this.history === undefined || this.recordedTransfers.has(task.transferId)) return
     const entry: Omit<HistoryEntryDto, 'id'> = {
@@ -1982,7 +1986,7 @@ export class FolderTransferCoordinator {
       createdAt: task.createdAt,
       ...(task.errorCode === undefined ? {} : { errorCode: task.errorCode }),
     }
-    this.history.add(entry)
+    this.history.add(entry, receivedPath ?? undefined)
     this.recordedTransfers.set(task.transferId, Date.now())
     this.pruneIdentifierMap(this.recordedTransfers, MAX_RETIRED_TRANSFER_IDS)
   }
