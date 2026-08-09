@@ -12,13 +12,18 @@ export interface PublicIdentityDto {
   readonly fingerprint: string
 }
 
-export interface PairingRequestDto {
+interface PairingRequestBaseDto {
   readonly requestId: RequestId
   readonly peer: DeviceInfo
   readonly peerFingerprint: string
-  readonly verificationCode: string
   readonly expiresAt: number
 }
+
+export type PairingRequestDto = PairingRequestBaseDto &
+  (
+    | { readonly verificationMode: 'display'; readonly verificationCode: string }
+    | { readonly verificationMode: 'input' }
+  )
 
 export interface TrustedDeviceDto {
   readonly deviceId: DeviceId

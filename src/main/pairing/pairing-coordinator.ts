@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 
 import { PAIRING_CONFIRMATION_TIMEOUT_MS } from '@shared/constants'
 import type { ErrorCode } from '@shared/errors'
@@ -43,10 +43,22 @@ export interface LocalPairingDecision {
 interface PendingPairing {
   readonly request: PairingRequestDto
   readonly identity: PublicIdentityDto
+  readonly expectedVerificationCode: string
   localAccepted: boolean
   peerAccepted: boolean
+  invalidCodeAttempts: number
   timeout: ReturnType<typeof setTimeout>
 }
+
+export type PairingVerificationMode = PairingRequestDto['verificationMode']
+
+export type PairingResponse =
+  | { readonly decision: 'verify'; readonly verificationCode: string }
+  | { readonly decision: 'reject' }
+
+export type PairingResponseResult = 'accepted' | 'rejected' | 'codeInvalid' | 'requestInvalid'
+
+const MAX_INVALID_CODE_ATTEMPTS = 5
 
 type RequestListener = (request: PairingRequestDto) => void
 type DecisionListener = (decision: LocalPairingDecision) => void
@@ -64,6 +76,7 @@ export class PairingCoordinator {
     peer: DeviceInfo,
     peerIdentity: PublicIdentityDto,
     confirmationKey: Uint8Array,
+    verificationMode: PairingVerificationMode,
     requestId: RequestId = requestIdSchema.parse(randomUUID()),
   ): BeginPairingResult {
     this.cancel('CONNECTION_CLOSED')
@@ -81,12 +94,15 @@ export class PairingCoordinator {
     }
 
     const now = Date.now()
+    const verificationCode = createPairingVerificationCode(confirmationKey)
     const request: PairingRequestDto = {
       requestId,
       peer,
       peerFingerprint: identity.data.fingerprint,
-      verificationCode: createPairingVerificationCode(confirmationKey),
       expiresAt: now + PAIRING_CONFIRMATION_TIMEOUT_MS,
+      ...(verificationMode === 'display'
+        ? { verificationMode, verificationCode }
+        : { verificationMode }),
     }
     const timeout = setTimeout(
       () => this.finish('timeout', 'PAIRING_TIMEOUT'),
@@ -96,8 +112,10 @@ export class PairingCoordinator {
     this.pending = {
       request,
       identity: identity.data,
-      localAccepted: false,
+      expectedVerificationCode: verificationCode,
+      localAccepted: verificationMode === 'display',
       peerAccepted: false,
+      invalidCodeAttempts: 0,
       timeout,
     }
     for (const listener of this.requestListeners) listener(request)
@@ -113,18 +131,31 @@ export class PairingCoordinator {
     return trusted !== null && trusted.identity.publicKey === identity.publicKey
   }
 
-  public respond(requestId: RequestId, decision: 'accept' | 'reject'): boolean {
+  public respond(requestId: RequestId, response: PairingResponse): PairingResponseResult {
     const pending = this.pending
-    if (pending === null || pending.request.requestId !== requestId) return false
-    if (decision === 'accept' && pending.localAccepted) return true
-    for (const listener of this.decisionListeners) listener({ requestId, decision })
-    if (decision === 'reject') {
+    if (pending === null || pending.request.requestId !== requestId) return 'requestInvalid'
+    if (response.decision === 'reject') {
+      for (const listener of this.decisionListeners) listener({ requestId, decision: 'reject' })
       this.finish('rejected', 'PAIRING_REJECTED')
-      return true
+      return 'rejected'
     }
+    if (pending.request.verificationMode !== 'input' || pending.localAccepted) {
+      return 'requestInvalid'
+    }
+    const enteredCode = Buffer.from(response.verificationCode)
+    const expectedCode = Buffer.from(pending.expectedVerificationCode)
+    if (enteredCode.length !== expectedCode.length || !timingSafeEqual(enteredCode, expectedCode)) {
+      pending.invalidCodeAttempts += 1
+      if (pending.invalidCodeAttempts >= MAX_INVALID_CODE_ATTEMPTS) {
+        for (const listener of this.decisionListeners) listener({ requestId, decision: 'reject' })
+        this.finish('rejected', 'PAIRING_REJECTED')
+      }
+      return 'codeInvalid'
+    }
+    for (const listener of this.decisionListeners) listener({ requestId, decision: 'accept' })
     pending.localAccepted = true
     this.completeIfConfirmed()
-    return true
+    return 'accepted'
   }
 
   public confirmPeer(requestId: RequestId, decision: 'accept' | 'reject'): boolean {

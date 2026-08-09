@@ -256,12 +256,18 @@ describe('ConnectionManager', () => {
       throw new Error('Pairing was not started')
 
     expect(senderPairing.requestId).toBe(receiverPairing.requestId)
-    expect(senderPairing.verificationCode).toBe(receiverPairing.verificationCode)
+    expect(senderPairing.verificationMode).toBe('input')
+    expect(receiverPairing.verificationMode).toBe('display')
+    if (receiverPairing.verificationMode !== 'display') {
+      throw new Error('Receiver should display the pairing code')
+    }
+    expect(senderPairing).not.toHaveProperty('verificationCode')
     expect(senderEndpoint.manager.getStatus().state).toBe('pairingRequired')
     expect(receiverEndpoint.manager.getStatus().state).toBe('pairingRequired')
-    senderEndpoint.pairingCoordinator.respond(senderPairing.requestId, 'accept')
-    expect(senderEndpoint.manager.getStatus().state).not.toBe('connected')
-    receiverEndpoint.pairingCoordinator.respond(receiverPairing.requestId, 'accept')
+    senderEndpoint.pairingCoordinator.respond(senderPairing.requestId, {
+      decision: 'verify',
+      verificationCode: receiverPairing.verificationCode,
+    })
 
     await expect(connectionPromise).resolves.toMatchObject({ state: 'connected' })
     expect(receiverEndpoint.manager.getStatus().state).toBe('connected')

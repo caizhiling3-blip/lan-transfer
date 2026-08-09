@@ -22,6 +22,7 @@ import {
   requestIdSchema,
   transferIdSchema,
 } from '../types'
+import { pairingVerificationCodeSchema } from '../protocols'
 import { getUtf8ByteLength } from '../utils'
 import type { IpcInvokeChannel } from './channels'
 import type { IpcInvokeRequest } from './contracts'
@@ -163,9 +164,16 @@ export const ipcInvokeRequestSchemas = {
   'connection:disconnect': noRequestSchema,
   'connection:respond-to-request': respondToConnectionRequestSchema,
   'pairing:get-pending': noRequestSchema,
-  'pairing:respond': z
-    .object({ requestId: requestIdSchema, decision: z.enum(['accept', 'reject']) })
-    .strict(),
+  'pairing:respond': z.discriminatedUnion('decision', [
+    z
+      .object({
+        requestId: requestIdSchema,
+        decision: z.literal('verify'),
+        verificationCode: pairingVerificationCodeSchema,
+      })
+      .strict(),
+    z.object({ requestId: requestIdSchema, decision: z.literal('reject') }).strict(),
+  ]),
   'trusted-devices:list': noRequestSchema,
   'trusted-devices:revoke': z.object({ deviceId: deviceIdSchema }).strict(),
   'trusted-devices:clear': noRequestSchema,

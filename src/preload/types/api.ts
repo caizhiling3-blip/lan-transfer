@@ -43,7 +43,9 @@ export interface LanTransferApi {
     getPending(): Promise<IpcInvokeResponse<'pairing:get-pending'>>
     respond(
       requestId: RequestId,
-      decision: 'accept' | 'reject',
+      response:
+        | { readonly decision: 'verify'; readonly verificationCode: string }
+        | { readonly decision: 'reject' },
     ): Promise<IpcInvokeResponse<'pairing:respond'>>
     onChanged(listener: EventListener<'pairing:changed'>): Unsubscribe
   }

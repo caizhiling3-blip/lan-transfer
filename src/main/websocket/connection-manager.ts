@@ -741,6 +741,7 @@ export class ConnectionManager {
             message.payload.connectionId,
             createPairingRequestId(transcript),
             secrets,
+            'input',
             settle,
           )
         } catch {
@@ -860,6 +861,7 @@ export class ConnectionManager {
           connectionId,
           createPairingRequestId(transcript),
           secrets,
+          'display',
         )
       } catch {
         pending.socket.close(1007, 'Invalid secure proof')
@@ -904,6 +906,7 @@ export class ConnectionManager {
     connectionId: ConnectionId,
     pairingRequestId: RequestId,
     secrets: SecureSessionSecrets,
+    verificationMode: 'display' | 'input',
     settle?: () => void,
   ): void {
     if (
@@ -950,6 +953,7 @@ export class ConnectionManager {
       peer,
       peerIdentity,
       secrets.confirmationKey,
+      verificationMode,
       pairingRequestId,
     )
     for (const secret of [
@@ -974,6 +978,7 @@ export class ConnectionManager {
       return
     }
     this.setStatus({ state: 'pairingRequired', peer })
+    if (verificationMode === 'display') this.sendPairingDecision('accept')
   }
 
   private activateSecureContext(): void {

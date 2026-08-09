@@ -10,6 +10,9 @@ import {
   type DeviceIdentitySigner,
 } from '../../src/main/websocket/connection-manager'
 
+const displayedPairingCodes = new Map<string, string>()
+const pendingPairingVerifiers = new Map<string, (verificationCode: string) => void>()
+
 export class MemoryTrustedDevices implements TrustedDeviceRegistry {
   private readonly devices = new Map<DeviceId, TrustedDeviceDto>()
 
@@ -56,7 +59,23 @@ export const createAutoPairingConnectionManager = (
 ): ConnectionManager => {
   const { manager, pairingCoordinator } = createSecureConnectionEndpoint(getLocalDevice)
   pairingCoordinator.subscribeRequests((request) => {
-    pairingCoordinator.respond(request.requestId, 'accept')
+    if (request.verificationMode === 'display') {
+      const verifier = pendingPairingVerifiers.get(request.requestId)
+      if (verifier !== undefined) {
+        pendingPairingVerifiers.delete(request.requestId)
+        verifier(request.verificationCode)
+      } else {
+        displayedPairingCodes.set(request.requestId, request.verificationCode)
+      }
+      return
+    }
+    const verify = (verificationCode: string): void => {
+      displayedPairingCodes.delete(request.requestId)
+      pairingCoordinator.respond(request.requestId, { decision: 'verify', verificationCode })
+    }
+    const verificationCode = displayedPairingCodes.get(request.requestId)
+    if (verificationCode === undefined) pendingPairingVerifiers.set(request.requestId, verify)
+    else verify(verificationCode)
   })
   return manager
 }

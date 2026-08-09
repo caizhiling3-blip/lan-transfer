@@ -65,7 +65,7 @@ export const createLanTransferApi = (): LanTransferApi => {
     }),
     pairing: Object.freeze({
       getPending: () => invoke('pairing:get-pending', undefined),
-      respond: (requestId, decision) => invoke('pairing:respond', { requestId, decision }),
+      respond: (requestId, response) => invoke('pairing:respond', { requestId, ...response }),
       onChanged: (listener) => subscribe('pairing:changed', listener),
     }),
     trustedDevices: Object.freeze({

@@ -21,6 +21,7 @@ const fileTransferStore = useFileTransferStore()
 const securityStore = useSecurityStore()
 const activeApprovalRequestId = ref<string | null>(null)
 const activePairingRequestId = ref<string | null>(null)
+let pairingDialogGeneration = 0
 
 const formatShortFingerprint = (fingerprint: string): string =>
   (fingerprint.slice(0, 24).match(/.{1,4}/gu) ?? []).join(' ')
@@ -32,11 +33,67 @@ watch(
   },
 )
 
+const showPairingDialog = (
+  request: NonNullable<typeof securityStore.pendingPairing>,
+  hasInvalidCode = false,
+): void => {
+  const dialogGeneration = ++pairingDialogGeneration
+  activePairingRequestId.value = request.requestId
+  const identityDetails = h('small', `设备指纹：${formatShortFingerprint(request.peerFingerprint)}`)
+  if (request.verificationMode === 'display') {
+    const message = h('div', { class: 'pairing-confirmation' }, [
+      h('p', `${request.peer.deviceName} 正在与本机建立安全连接。`),
+      h('p', '请让对方在发起连接的设备上输入此六位验证码：'),
+      h('strong', { class: 'pairing-code' }, request.verificationCode),
+      identityDetails,
+    ])
+    void ElMessageBox.confirm(message, '安全配对', {
+      confirmButtonText: '取消配对',
+      showCancelButton: false,
+      type: 'warning',
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+    })
+      .then(() => securityStore.rejectPairing(request.requestId))
+      .catch(() => undefined)
+      .finally(() => {
+        if (pairingDialogGeneration === dialogGeneration) activePairingRequestId.value = null
+      })
+    return
+  }
+
+  const message = hasInvalidCode
+    ? '验证码不正确，请核对显示验证码的设备后重新输入。'
+    : '请输入对方设备显示的六位验证码。'
+  void ElMessageBox.prompt(message, '安全配对', {
+    confirmButtonText: '验证并配对',
+    cancelButtonText: '拒绝配对',
+    inputPlaceholder: '6 位数字',
+    inputPattern: /^\d{6}$/u,
+    inputErrorMessage: '请输入 6 位数字验证码',
+    type: 'warning',
+    distinguishCancelAndClose: true,
+    closeOnClickModal: false,
+    closeOnPressEscape: false,
+  })
+    .then(async ({ value }) => {
+      const verified = await securityStore.verifyCode(request.requestId, value)
+      if (!verified && securityStore.pendingPairing?.requestId === request.requestId) {
+        showPairingDialog(request, true)
+      }
+    })
+    .catch(() => securityStore.rejectPairing(request.requestId))
+    .finally(() => {
+      if (pairingDialogGeneration === dialogGeneration) activePairingRequestId.value = null
+    })
+}
+
 watch(
   () => securityStore.pendingPairing,
   (request) => {
     if (request === null) {
       if (activePairingRequestId.value !== null) {
+        pairingDialogGeneration += 1
         ElMessageBox.close()
         activePairingRequestId.value = null
       }
@@ -44,28 +101,7 @@ watch(
     }
     if (activePairingRequestId.value === request.requestId) return
     if (activePairingRequestId.value !== null) ElMessageBox.close()
-    activePairingRequestId.value = request.requestId
-    const message = h('div', { class: 'pairing-confirmation' }, [
-      h('p', `${request.peer.deviceName} 正在与本机建立安全连接。`),
-      h('p', '请确认两台设备显示的六位验证码完全一致：'),
-      h('strong', { class: 'pairing-code' }, request.verificationCode),
-      h('small', `设备指纹：${formatShortFingerprint(request.peerFingerprint)}`),
-    ])
-    void ElMessageBox.confirm(message, '安全配对', {
-      confirmButtonText: '验证码一致',
-      cancelButtonText: '拒绝配对',
-      type: 'warning',
-      distinguishCancelAndClose: true,
-      closeOnClickModal: false,
-      closeOnPressEscape: false,
-    })
-      .then(() => securityStore.respond(request.requestId, 'accept'))
-      .catch(() => securityStore.respond(request.requestId, 'reject'))
-      .finally(() => {
-        if (activePairingRequestId.value === request.requestId) {
-          activePairingRequestId.value = null
-        }
-      })
+    showPairingDialog(request)
   },
 )
 

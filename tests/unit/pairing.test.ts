@@ -184,13 +184,18 @@ describe('pairing coordinator', () => {
     coordinator.subscribeLocalDecisions(({ decision }) => decisions.push(decision))
     coordinator.subscribeCompletions(({ outcome }) => completions.push(outcome))
 
-    const result = coordinator.begin(peer, identity, Buffer.alloc(32, 7))
+    const result = coordinator.begin(peer, identity, Buffer.alloc(32, 7), 'input')
     expect(result.state).toBe('pairingRequired')
     if (result.state !== 'pairingRequired') throw new Error('Expected a pairing request')
     expect(result.request).not.toHaveProperty('peerIdentity')
     expect(result.request.peerFingerprint).toBe(identity.fingerprint)
     expect(requests).toEqual([result.request.requestId])
-    expect(coordinator.respond(result.request.requestId, 'accept')).toBe(true)
+    expect(
+      coordinator.respond(result.request.requestId, {
+        decision: 'verify',
+        verificationCode: createPairingVerificationCode(Buffer.alloc(32, 7)),
+      }),
+    ).toBe('accepted')
     expect(trustedDevices.list()).toEqual([])
     expect(coordinator.confirmPeer(result.request.requestId, 'accept')).toBe(true)
 
@@ -209,15 +214,57 @@ describe('pairing coordinator', () => {
     const completions: string[] = []
     coordinator.subscribeCompletions(({ outcome }) => completions.push(outcome))
 
-    const rejected = coordinator.begin(peer, identity, Buffer.alloc(32, 1))
+    const rejected = coordinator.begin(peer, identity, Buffer.alloc(32, 1), 'input')
     if (rejected.state !== 'pairingRequired') throw new Error('Expected a pairing request')
     coordinator.confirmPeer(rejected.request.requestId, 'reject')
-    const expired = coordinator.begin(peer, identity, Buffer.alloc(32, 2))
+    const expired = coordinator.begin(peer, identity, Buffer.alloc(32, 2), 'input')
     expect(expired.state).toBe('pairingRequired')
     await vi.runAllTimersAsync()
 
     expect(completions).toEqual(['rejected', 'timeout'])
     expect(trustedDevices.list()).toEqual([])
+  })
+
+  it('keeps an input pairing pending after a typo and rejects repeated invalid codes', async () => {
+    const trustedDevices = new TrustedDevicesStore(await createDirectory())
+    const coordinator = new PairingCoordinator(trustedDevices)
+    const result = coordinator.begin(peer, createIdentity(), Buffer.alloc(32, 8), 'input')
+    if (result.state !== 'pairingRequired') throw new Error('Expected a pairing request')
+    const expectedCode = createPairingVerificationCode(Buffer.alloc(32, 8))
+    const wrongCode = expectedCode === '000000' ? '111111' : '000000'
+
+    expect(
+      coordinator.respond(result.request.requestId, {
+        decision: 'verify',
+        verificationCode: wrongCode,
+      }),
+    ).toBe('codeInvalid')
+    expect(coordinator.getPending()).not.toBeNull()
+    for (let attempt = 1; attempt < 5; attempt += 1) {
+      coordinator.respond(result.request.requestId, {
+        decision: 'verify',
+        verificationCode: wrongCode,
+      })
+    }
+
+    expect(coordinator.getPending()).toBeNull()
+    expect(trustedDevices.list()).toEqual([])
+  })
+
+  it('does not expose the code to an input renderer and pre-approves the display side', async () => {
+    const trustedDevices = new TrustedDevicesStore(await createDirectory())
+    const coordinator = new PairingCoordinator(trustedDevices)
+    const identity = createIdentity()
+    const input = coordinator.begin(peer, identity, Buffer.alloc(32, 9), 'input')
+    if (input.state !== 'pairingRequired') throw new Error('Expected an input request')
+    expect(input.request).not.toHaveProperty('verificationCode')
+    coordinator.cancel()
+
+    const display = coordinator.begin(peer, identity, Buffer.alloc(32, 9), 'display')
+    if (display.state !== 'pairingRequired') throw new Error('Expected a display request')
+    expect(display.request.verificationMode).toBe('display')
+    expect(coordinator.confirmPeer(display.request.requestId, 'accept')).toBe(true)
+    expect(trustedDevices.get(peer.deviceId)).not.toBeNull()
   })
 
   it('bypasses pairing for the same trusted key and rejects identity replacement', async () => {
@@ -226,8 +273,8 @@ describe('pairing coordinator', () => {
     trustedDevices.trust(peer.deviceId, identity, 100)
     const coordinator = new PairingCoordinator(trustedDevices)
 
-    expect(coordinator.begin(peer, identity, Buffer.alloc(32, 3)).state).toBe('trusted')
-    expect(coordinator.begin(peer, createIdentity(), Buffer.alloc(32, 4))).toEqual({
+    expect(coordinator.begin(peer, identity, Buffer.alloc(32, 3), 'input').state).toBe('trusted')
+    expect(coordinator.begin(peer, createIdentity(), Buffer.alloc(32, 4), 'input')).toEqual({
       state: 'rejected',
       errorCode: 'IDENTITY_MISMATCH',
     })

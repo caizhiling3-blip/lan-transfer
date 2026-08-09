@@ -44,8 +44,17 @@ export const useSecurityStore = defineStore('security', {
         this.errorMessage = ERROR_MESSAGES_ZH_CN[trustedResult.error.code]
       }
     },
-    async respond(requestId: RequestId, decision: 'accept' | 'reject'): Promise<boolean> {
-      const result = await window.lanTransfer.pairing.respond(requestId, decision)
+    async verifyCode(requestId: RequestId, verificationCode: string): Promise<boolean> {
+      const result = await window.lanTransfer.pairing.respond(requestId, {
+        decision: 'verify',
+        verificationCode,
+      })
+      if (result.ok) return true
+      this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
+      return false
+    },
+    async rejectPairing(requestId: RequestId): Promise<boolean> {
+      const result = await window.lanTransfer.pairing.respond(requestId, { decision: 'reject' })
       if (result.ok) return true
       this.errorMessage = ERROR_MESSAGES_ZH_CN[result.error.code]
       return false

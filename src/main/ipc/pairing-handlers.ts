@@ -19,11 +19,14 @@ export const registerPairingIpcHandlers = (
     ok: true,
     data: pairingCoordinator.getPending(),
   }))
-  registerIpcHandler('pairing:respond', getWindow, ({ requestId, decision }) =>
-    pairingCoordinator.respond(requestId, decision)
-      ? { ok: true, data: undefined }
-      : { ok: false, error: { code: 'MESSAGE_INVALID' } },
-  )
+  registerIpcHandler('pairing:respond', getWindow, ({ requestId, ...response }) => {
+    const result = pairingCoordinator.respond(requestId, response)
+    if (result === 'accepted' || result === 'rejected') return { ok: true, data: undefined }
+    return {
+      ok: false,
+      error: { code: result === 'codeInvalid' ? 'PAIRING_CODE_INVALID' : 'MESSAGE_INVALID' },
+    }
+  })
   registerIpcHandler('trusted-devices:list', getWindow, () => ({
     ok: true,
     data: trustedDevices.listSummaries(),

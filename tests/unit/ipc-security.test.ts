@@ -260,7 +260,21 @@ describe('IPC request schemas', () => {
     const requestId = '22222222-2222-4222-8222-222222222222'
     expect(() => parseIpcInvokeRequest('pairing:get-pending', undefined)).not.toThrow()
     expect(() =>
-      parseIpcInvokeRequest('pairing:respond', { requestId, decision: 'accept' }),
+      parseIpcInvokeRequest('pairing:respond', {
+        requestId,
+        decision: 'verify',
+        verificationCode: '123456',
+      }),
+    ).not.toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('pairing:respond', {
+        requestId,
+        decision: 'verify',
+        verificationCode: '12345',
+      }),
+    ).toThrow()
+    expect(() =>
+      parseIpcInvokeRequest('pairing:respond', { requestId, decision: 'reject' }),
     ).not.toThrow()
     expect(() =>
       parseIpcInvokeRequest('pairing:respond', { requestId, decision: 'later' }),

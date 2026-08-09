@@ -56,7 +56,12 @@ export interface IpcInvokeMap {
   >
   readonly 'pairing:get-pending': InvokeContract<undefined, PairingRequestDto | null>
   readonly 'pairing:respond': InvokeContract<
-    { readonly requestId: RequestId; readonly decision: 'accept' | 'reject' },
+    | {
+        readonly requestId: RequestId
+        readonly decision: 'verify'
+        readonly verificationCode: string
+      }
+    | { readonly requestId: RequestId; readonly decision: 'reject' },
     undefined
   >
   readonly 'trusted-devices:list': InvokeContract<undefined, readonly TrustedDeviceSummaryDto[]>

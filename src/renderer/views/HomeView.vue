@@ -67,7 +67,7 @@ const connectionPresentations: Readonly<
   pairingRequired: {
     label: '等待安全配对',
     tone: 'progress',
-    description: '请在两台设备上核对六位验证码。',
+    description: '请在发起连接的设备上输入对方显示的六位验证码。',
   },
   connected: {
     label: '已连接',
