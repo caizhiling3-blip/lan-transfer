@@ -43,13 +43,6 @@ export const ERROR_CODES = [
   'RESUME_STATE_INVALID',
   'RESUME_EXPIRED',
   'SOURCE_FILE_CHANGED',
-  'UPDATE_CHECK_FAILED',
-  'UPDATE_METADATA_INVALID',
-  'UPDATE_DOWNLOAD_FAILED',
-  'UPDATE_SIGNATURE_INVALID',
-  'UPDATE_INSTALL_BLOCKED',
-  'UPDATE_INSTALL_FAILED',
-  'UPDATE_PLATFORM_UNSUPPORTED',
 ] as const
 
 export const errorCodeSchema = z.enum(ERROR_CODES)
@@ -99,13 +92,6 @@ export const ERROR_MESSAGES_ZH_CN: Readonly<Record<ErrorCode, string>> = {
   RESUME_STATE_INVALID: '续传状态无效',
   RESUME_EXPIRED: '可恢复传输已经过期',
   SOURCE_FILE_CHANGED: '源文件在传输后发生变化',
-  UPDATE_CHECK_FAILED: '无法检查应用更新',
-  UPDATE_METADATA_INVALID: '更新信息无效或不受信任',
-  UPDATE_DOWNLOAD_FAILED: '应用更新下载失败',
-  UPDATE_SIGNATURE_INVALID: '应用更新签名验证失败',
-  UPDATE_INSTALL_BLOCKED: '当前状态不允许安装更新',
-  UPDATE_INSTALL_FAILED: '应用更新安装失败',
-  UPDATE_PLATFORM_UNSUPPORTED: '当前系统或架构不支持应用内更新',
 }
 
 export type ErrorRecoveryAction = 'reconnect' | 'settings' | 'retry' | 'reselect' | 'none'
@@ -203,28 +189,6 @@ export const ERROR_RECOVERY_ADVICE_ZH_CN: Readonly<Record<ErrorCode, ErrorRecove
   },
   RESUME_EXPIRED: { suggestion: '恢复期限已过，请重新选择内容并发送。', action: 'reselect' },
   SOURCE_FILE_CHANGED: { suggestion: '源文件已经变化，请重新选择后发送。', action: 'reselect' },
-  UPDATE_CHECK_FAILED: { suggestion: '检查网络连接后稍后重试。', action: 'none' },
-  UPDATE_METADATA_INVALID: {
-    suggestion: '更新来源未通过验证，请保留当前版本并稍后重试。',
-    action: 'none',
-  },
-  UPDATE_DOWNLOAD_FAILED: { suggestion: '检查网络和磁盘空间后重新下载。', action: 'none' },
-  UPDATE_SIGNATURE_INVALID: {
-    suggestion: '更新签名无效，请勿安装并从官方发布页核对版本。',
-    action: 'none',
-  },
-  UPDATE_INSTALL_BLOCKED: {
-    suggestion: '等待配对、传输、校验或重连任务结束后再安装。',
-    action: 'none',
-  },
-  UPDATE_INSTALL_FAILED: {
-    suggestion: '当前版本仍可使用，请重新启动后再次尝试更新。',
-    action: 'none',
-  },
-  UPDATE_PLATFORM_UNSUPPORTED: {
-    suggestion: '请从官方发布页下载适用于当前系统和架构的安装包。',
-    action: 'none',
-  },
 }
 
 export interface AppError {

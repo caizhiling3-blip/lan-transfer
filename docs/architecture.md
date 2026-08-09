@@ -193,7 +193,7 @@ v0.3.0 在该边界上增加精细历史清理、最近设备本地备注和诊�
 
 electron-builder 使用稳定 `com.lindu.transfer` 标识构建 Windows NSIS 和 macOS DMG。渲染资源统一使用相对 URL，应用 Logo 的 SVG、ICO 和 ICNS 位于 `build/`，打包输出统一进入被 Git 忽略的 `release/`。
 
-macOS 第一版分别输出 arm64 和 x64，避免 Universal 包体积及合并复杂度。测试包显式跳过代码签名、notarization 和 Hardened Runtime；正式发布必须把三者作为独立安全工作流恢复。Info.plist 声明直接局域网连接用途；1.1 使用原生 UDP 组播而非 Bonjour，因此无需声明 Bonjour service type。`afterPack` 钩子在未来签名前收紧 ATS，并移除邻渡没有使用的相机、麦克风、音频采集和蓝牙模板描述，避免打包模板扩大隐私表面。
+macOS 分别输出 arm64 和 x64，避免 Universal 包体积及合并复杂度。测试包显式跳过代码签名、notarization 和 Hardened Runtime。Info.plist 声明直接局域网连接用途；1.1 使用原生 UDP 组播而非 Bonjour，因此无需声明 Bonjour service type。`afterPack` 钩子收紧 ATS，并移除邻渡没有使用的相机、麦克风、音频采集和蓝牙模板描述，避免打包模板扩大隐私表面。
 
 ## 协议 v3 安全架构规划
 
@@ -207,19 +207,9 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 阶段 9 增加 `transfer:get-tasks` 只读 IPC 快照，renderer 先注册事件监听再拉取快照并按 transferId 合并，避免页面挂载晚于 `did-finish-load` 时丢失重启恢复任务。任务卡会区分暂停、自动重连、状态校验和等待手动恢复；连接到错误设备时不提供继续按钮，取消可恢复任务前明确提示会删除本地进度。取消信任会断开匹配的活动会话，并删除该设备的加密恢复记录与严格归属的 staging。
 
-## v0.5.0 更新基础
+## 测试包分发边界
 
-阶段 1 在 shared 中定义 `idle`、`checking`、`available`、`not-available`、`downloading`、`downloaded` 和 `error` 更新状态，以及只含公开版本、有限发布摘要、进度、可安装标记和稳定错误码的 renderer 投影。严格 schema 不接受下载 URL、本地路径、摘要、请求头或令牌；这些值未来仍只允许存在于固定配置和主进程更新服务中。
-
-更新偏好使用独立的 `updates.json` schemaVersion 1，只保存自动检查开关和最后自动检查时间。它不修改 settings store，使 v0.4.0 忽略该文件时仍可读取原有设置。未知版本或非法字段沿用 store 的损坏备份流程并恢复安全默认值。阶段 1 只声明具名 IPC 契约，尚不注册 handler 或 Preload API，不扩大 renderer 的实际能力。
-
-阶段 4 的 `UpdateService` 是更新状态的主进程事实来源。它把 `electron-updater` 固定到公开 GitHub provider `caizhiling3-blip/lan-transfer`，显式关闭预发布、降级、自动下载、退出自动安装、Web Installer 和认证请求头。开发模式及非 Windows/macOS 平台不启动自动检查；正式包启动后延迟检查，成功或失败后至少间隔 24 小时。
-
-provider 返回的 URL、文件路径、SHA-512 和原始对象不会越过服务边界。服务只投影 stable 版本、移除 URL 和控制字符后的有限发布摘要、公开发布时间、进度与稳定错误码。下载取消使用单次 `CancellationToken`，错误只改变更新状态，不影响服务监听、设备连接或传输协调器。阶段 5 才注册 IPC handler 和 Preload API。
-
-阶段 5 注册更新 IPC handler 与 Preload 具名 API。renderer 先订阅 `update:status-changed` 再并行读取设置和状态快照，避免窗口晚于自动检查事件加载时丢失结果。设置页只能修改自动检查布尔值、触发无参数操作并展示脱敏 DTO；安装 handler 在阶段 6 前固定返回 `UPDATE_INSTALL_BLOCKED`，不会提前获得退出或安装能力。
-
-阶段 6 的安装准备由 `UpdateService` 一次性标记控制。服务只在下载完成且主进程报告无配对审批、连接过渡、活动传输或队列任务时设置 `canInstall`；安装 handler 同步复核后立即触发正常退出。`registerIpcHandler` 在退出链开始后统一拒绝新请求，避免确认与关闭之间启动新任务。退出链继续以 `shutdown(true)` 保存可恢复状态、断开安全连接并停止服务，最后一次性消费 prepared install 调用平台安装器；任一步未准备成功则保持当前版本正常退出。
+桌面应用不包含应用内更新服务、更新 IPC、下载器或安装协调逻辑，也不会为版本检查访问公网。未签名安装包由 GitHub Releases 保存，官网负责读取资产并提供下载；用户下载后手动覆盖安装，Electron `userData` 中的设置与历史按既有策略保留。
 
 verified range 的编码和展开集中在单一安全模块。只接受安全整数、严格升序、非空且互不重叠的半开区间，并要求 end 不超过文件块数；任一违规均返回 `RESUME_STATE_INVALID`。诊断摘要只新增可恢复任务数量，报告不包含恢复 payload、路径、文件名、摘要、bitmap、指纹、公钥或 token。
 

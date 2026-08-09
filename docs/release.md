@@ -1,205 +1,63 @@
-# 发布指南
+# 测试包发布指南
 
-## Windows 测试包
+项目当前只生成未签名的 Windows/macOS 测试安装包，并通过 GitHub Releases 手动分发。仓库不包含代码签名、notarization、凭据校验或自动创建 Release 的流水线。
 
-阶段 12 使用 electron-builder 生成 Windows x64 应用目录和 NSIS `.exe` 安装包。第一版包未签名，只用于受控测试。
-
-打包配置：
-
-- 应用名：邻渡
-- App ID：`com.lindu.transfer`
-- 可执行文件：`Lindu.exe`
-- 目标架构：Windows x64
-- 安装方式：NSIS 安装向导，可选择仅当前用户或所有用户，并允许更改安装目录
-- 快捷方式：创建桌面快捷方式和开始菜单快捷方式
-- 卸载策略：移除程序文件和快捷方式，默认保留 Electron `userData` 中的设置与历史
-- 图标：`build/icon.ico`（256×256、32 位 RGBA），源文件为 `build/icon.svg`
-
-## 构建命令
-
-应优先在干净的 Windows 10/11 x64 构建机执行：
+## 发布前检查
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm package:win:dir
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm test
+pnpm build
+```
+
+## Windows x64
+
+```bash
 pnpm package:win
 ```
 
-输出位置：
+输出为 `release/Lindu-Setup-<version>-x64.exe`。安装包使用 NSIS，可选择安装目录，并创建桌面及开始菜单快捷方式。
 
-- `release/win-unpacked/Lindu.exe`：免安装冒烟测试入口
-- `release/Lindu-Setup-0.5.0-x64.exe`：v0.5.0 NSIS 安装包
+未签名安装包可能触发 Windows SmartScreen。下载页面必须明确标注测试版；用户只应在确认下载来源后继续运行。首次监听局域网端口时，只建议在受信任的专用网络允许 Windows Defender Firewall，默认 TCP 端口为 53317。
 
-当前无原生 Node 扩展的配置已在 macOS 开发机成功生成 Windows NSIS 包。若后续加入原生扩展或构建机提示缺少兼容工具链，应改在 Windows x64 环境构建。跨平台产物即使生成成功，也不能替代 Windows 上的安装、快捷方式、卸载、文件锁和防火墙测试。
-
-## Windows 安装验收
-
-在全新 Windows 10 和 Windows 11 x64 测试账户中分别执行：
-
-1. 检查安装包文件名、邻渡图标、产品名和版本号；记录未签名包触发的 SmartScreen 提示。
-2. 运行安装向导，分别验证默认目录和自选目录；无管理员权限时验证当前用户安装。
-3. 检查桌面快捷方式、开始菜单快捷方式和“已安装的应用”条目。
-4. 从快捷方式启动，确认首页、Logo、深浅色、设置与传输页面资源完整。
-5. 执行双机连接和文件传输，确认应用安装目录不会被当作接收目录。
-6. 卸载后检查程序目录和快捷方式已移除；再次安装后确认默认保留的设置与历史仍可读取。
-
-如测试要求彻底清理数据，应先退出应用，再删除 Electron 实际 `app.getPath('userData')` 返回的目录；不要在卸载脚本中默认删除用户历史。
-
-## Windows Defender Firewall
-
-邻渡不自动创建或修改防火墙规则。第一次监听局域网端口时，Windows 可能显示 Defender Firewall 提示：
-
-- 仅在受信任环境允许“专用网络”；不要为公共网络开放。
-- 默认服务端口为 TCP `53317`，设置修改端口后需要重新检查规则。
-- 若没有弹窗，在“Windows 安全中心 > 防火墙和网络保护 > 允许应用通过防火墙”中检查邻渡。
-- 分别验证允许、拒绝和删除规则后的表现；拒绝时应用应保持可用并显示连接失败，不能崩溃。
-- 不建议通过安装器静默添加全局入站规则，避免扩大局域网暴露面。
-
-## 未签名包与正式发布
-
-未签名测试包可能被 SmartScreen 拦截，不应分发给不知情的终端用户。正式 Windows 发布前需另行配置受信任代码签名证书、签名密钥保护、时间戳服务和签名校验流程。
-
-## macOS 测试包
-
-阶段 13 使用 electron-builder 分别生成 Apple Silicon 和 Intel DMG：
-
-- Bundle ID：`com.lindu.transfer`
-- 应用包：`邻渡.app`
-- 可执行文件：`邻渡`
-- 应用分类：Utilities
-- 最低系统版本：macOS 12
-- Apple Silicon：`Lindu-0.5.0-arm64.dmg`
-- Intel：`Lindu-0.5.0-x64.dmg`
-- 图标：`build/icon.icns`，包含 16–1024 像素资源
-- 安装界面：把邻渡拖入 Applications
-
-构建命令：
+## macOS
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm package:mac:dir
 pnpm package:mac:arm64
 pnpm package:mac:x64
-pnpm package:mac
 ```
 
-应优先在对应架构硬件或 CI matrix 上生成正式产物：Apple Silicon 构建 arm64，Intel 构建 x64。当前项目没有原生 Node 扩展，因此可以在 Apple Silicon 开发机生成并结构检查 x64 包，但本机不能证明 Intel 运行行为正确。
+输出为：
 
-## macOS 安装与 Gatekeeper 验收
+- `release/Lindu-<version>-arm64.dmg`：Apple Silicon；
+- `release/Lindu-<version>-x64.dmg`：Intel Mac。
 
-第一版 DMG 明确未签名、未 notarize，仅用于受控测试。测试步骤：
+测试包未签名且未 notarize。首次启动可能需要在 Finder 中右键应用并选择“打开”，或在“系统设置 > 隐私与安全性”中允许本次打开；不要全局关闭 Gatekeeper。
 
-1. 挂载与本机架构匹配的 DMG，把“邻渡”拖到 Applications；
-2. 从 Applications 首次启动，记录 Gatekeeper 提示；需要放行时使用 Finder 右键“打开”，或在“系统设置 > 隐私与安全性”中确认本次启动；
-3. 不使用全局关闭 Gatekeeper 的命令，也不要移除其他应用的 quarantine 属性；
-4. 检查 Dock、访达、应用切换器和诊断页中的图标、名称、`0.5.0` 版本及 Bundle ID；
-5. 验证深浅色页面、系统文件/目录选择器、通知和外部链接；
-6. 退出应用并把它移到废纸篓，再确认用户设置和历史仍保留在 Electron `userData`；
-7. 如需彻底清理测试数据，先备份并确认 `app.getPath('userData')` 的实际目录，再由测试人员手动删除。
+Info.plist 声明本地网络用途。自动发现使用 UDP 53318；组播被防火墙或网络隔离阻止时，仍可使用手动 IP/端口连接。
 
-不要把手动 Gatekeeper 放行作为正式发布流程。正式分发需要 Developer ID Application 签名、Hardened Runtime、正确 entitlements、`notarytool` notarization 和 stapling。
+## 手动发布到 GitHub
 
-## macOS 本地网络与防火墙
+1. 打开项目的 GitHub Releases 页面并创建新 Release；
+2. 使用测试版标签，例如 `v0.5.0-beta.1`；
+3. 勾选 `Set as a pre-release`，不要设为最新稳定版；
+4. 上传 Windows EXE 与两种 macOS DMG；
+5. 在说明中列出支持的平台、架构以及未签名警告；
+6. 官网下载按钮使用该 Release 资产的固定 URL。
 
-Info.plist 包含 `NSLocalNetworkUsageDescription`，说明邻渡通过局域网直连设备。1.1 使用原生 UDP4 组播自动发现，不使用 Bonjour，因此不声明 Bonjour service type。
+桌面应用不包含应用内更新功能。发布新版本后，由官网读取 GitHub Release 资产并提供下载，用户手动下载安装。
 
-打包钩子会关闭 ATS 任意网络加载、删除模板中的 localhost 例外域，并移除应用未使用的相机、麦克风、音频采集和蓝牙用途描述。局域网 HTTP/WebSocket 由受控的 Electron 主进程处理，渲染进程仍受 CSP 和安全窗口配置限制。
+## 安装验收
 
-实机验收：
+发布前至少在真实 Windows 10/11 x64、macOS arm64，以及计划继续支持时的 Intel Mac 上验证：
 
-- 首次发生局域网访问时检查本地网络权限提示，选择允许后完成双向连接；
-- 在“系统设置 > 隐私与安全性 > 本地网络”关闭邻渡权限，确认连接失败但应用不崩溃；
-- 重新允许权限并重启服务，确认连接恢复；
-- 开启 macOS 防火墙后检查传入连接提示与应用规则，分别验证允许和阻止；
-- 只在受信任网络测试，端口变更后重新检查监听和连接；
-- 检查 UDP 53318 组播发现；防火墙阻止组播时应保留手动 IP 连接回退，Windows 只应为专用网络放行；
-- 下载、文稿和桌面目录只在用户通过系统选择器授权后访问。
+- 安装、首次启动、图标、版本与资源；
+- 本地网络权限、防火墙、自动发现与手动连接；
+- 验证码配对、可信设备重连与取消信任；
+- 文字、文件、文件夹、暂停、断线及重启恢复；
+- 卸载后程序文件移除，用户设置和历史按设计保留。
 
-未签名应用的本地网络权限身份在不同构建之间可能不稳定；正式包应使用稳定 Developer ID 签名。
-
-## 正式签名发布待办
-
-- 准备 Apple Developer Program 团队和 Developer ID Application 证书；
-- 启用 Hardened Runtime，并为 Electron/V8 配置最小 entitlements；
-- 在 CI 密钥库中提供证书和 notarization 凭据，不写入仓库；
-- 对 arm64、x64 或最终选定的 Universal 架构执行签名；
-- 使用 `notarytool` 提交，等待成功后 stapling；
-- 通过 `codesign --verify --deep --strict`、`spctl --assess` 和离线 Gatekeeper 测试；
-- 再决定是否公开分发、加入自动更新或发布渠道。
-
-v0.5.0 已把上述待办纳入 [正式分发与安全更新设计](v0.5.0.md)：稳定更新源固定为 GitHub Releases，macOS 需要 Developer ID、Hardened Runtime、notarization 与 stapling，Windows 需要 Authenticode 签名。所有证书和发布凭据必须来自本机安全存储或 CI secret；阶段 0 仅冻结方案，不修改当前未签名候选包配置。
-
-v0.5.0 阶段 2 新增独立 `electron-builder.mac-release.yml`，不会改变现有未签名开发包。正式构建前必须通过只检查变量名称的凭据预检：证书使用 `CSC_LINK` 和 `CSC_KEY_PASSWORD`；notarization 优先使用 `APPLE_API_KEY`、`APPLE_API_KEY_ID` 与 `APPLE_API_ISSUER`，也可使用 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD` 与 `APPLE_TEAM_ID`。凭据值不得出现在命令行、仓库或日志中。
-
-正式 macOS 配置同时生成 DMG 和 ZIP：DMG 用于用户首次安装，签名 ZIP 与 `latest-mac.yml` 用于应用内更新。两种架构的 ZIP、blockmap 和更新元数据必须与对应 DMG 来自同一提交；缺少 ZIP 时不得发布 macOS 自动更新。
-
-```bash
-pnpm package:mac:release:arm64
-pnpm package:mac:release:x64
-pnpm verify:mac:release -- release/mac-arm64/邻渡.app release/Lindu-0.5.0-arm64.dmg
-```
-
-验证命令依次检查严格代码签名、Gatekeeper execute assessment、`.app` stapled ticket，以及可选 DMG 的 stapling 与 primary signature。只有真实凭据构建和隔离机器启动完成后才能签署 macOS 正式发布结论。
-
-v0.5.0 阶段 3 使用独立 `electron-builder.win-release.yml` 强制 Windows Authenticode 签名。证书使用 `WIN_CSC_LINK` 与 `WIN_CSC_KEY_PASSWORD`（也兼容 electron-builder 的 `CSC_LINK`/`CSC_KEY_PASSWORD`），`WIN_CSC_NAME` 同时限定证书主题和更新发布者名称。正式构建与验证必须在 Windows x64 环境执行：
-
-```powershell
-pnpm package:win:release
-pnpm verify:win:release -- release/win-unpacked/Lindu.exe release/Lindu-Setup-0.5.0-x64.exe
-```
-
-验证脚本通过 PowerShell `Get-AuthenticodeSignature` 要求签名状态为 `Valid` 且证书主题包含预期发布者，并为每个产物输出 SHA-256。自动化配置检查不能替代真实证书、时间戳、SmartScreen、安装和卸载验收。
-
-v0.5.0 阶段 7 的 `.github/workflows/release.yml` 只响应 `v*` 标签。标签必须与 `package.json` 版本精确一致；质量、macOS 和 Windows job 全部成功后，流水线下载平台产物，生成 `release-manifest.json` 与 `SHA256SUMS`，最后创建 Draft GitHub Release。构建命令显式使用 `--publish never`，防止平台 job 在验证完成前自行上传。Draft 必须经真实设备签字和人工核对后才能公开，流水线不会自动发布稳定版本。
-
-## v0.5.0 候选发布状态
-
-v0.5.0 保留协议 v3 安全传输能力，并增加正式签名配置、安全更新、安装门禁和可审计 Draft Release 流水线。阶段 0–8 的实现、自动化和当前构建机结构检查已完成；保留的 v0.4.0 包作为覆盖升级和历史数据基线。
-
-当前 Apple Silicon 构建机生成的未签名 macOS arm64 与 Windows x64 目录包分别为 Mach-O 64-bit arm64 和 PE32+ x86-64 GUI，两个 ASAR 的 SHA-256 一致。macOS Info.plist 版本为 `0.5.0`、Bundle ID 为 `com.lindu.transfer`、最低系统版本为 macOS 12。结构检查使用独立临时目录，未覆盖保留的 v0.4.0 包。
-
-以上结果不代表 Developer ID、notarization、Authenticode、SmartScreen、GitHub stable 更新、Windows/Intel Mac 运行或双机回归通过。正式发布必须完成 [v0.5.0 阶段 8 合并签字矩阵](testing.md#v050-阶段-8-合并签字矩阵)，并由同一提交的签名产物创建 Draft Release 后人工核准。
-
-## v0.3.0 发布状态
-
-v0.3.0 包含历史摘要精细清理、可选保留天数、最近设备备注/删除/在线合并、脱敏诊断报告、日志生命周期和失败恢复建议。协议保持 v2，不改变现有局域网互通格式。
-
-当前提交可作为未签名候选包构建来源，但在以下门禁完成前不得标记为正式双平台发布：
-
-- 使用同一提交在 Windows x64 和 macOS arm64（以及计划支持的 Intel Mac）生成候选包并记录 SHA-256；
-- 从 v0.2.0 的真实 `settings.json`、`recent-devices.json` 和 `history.json` 升级，确认迁移后数据完整；
-- 完成本文与 `docs/testing.md` 中 v0.3.0 实机矩阵，包括日志目录、诊断导出、权限、文件锁和防火墙；
-- 确认历史与日志清理从不删除接收目录中的真实文件；
-- 记录未签名包 Gatekeeper/SmartScreen 行为，正式公开分发前完成独立签名与 notarization 计划。
-
-阶段 6 在 Apple Silicon 构建机完成 `pnpm package:mac:dir` 与 `pnpm package:win:dir`：macOS 主程序为 arm64 Mach-O，Windows 主程序为 x86-64 PE32+ GUI；两个目录包均包含 ASAR。macOS Info.plist 的版本为 `0.3.0`、Bundle ID 为 `com.lindu.transfer`、最低系统版本为 macOS 12，ATS 任意加载关闭且本地网络说明存在。构建目录位于被 Git 忽略的 `release/`，这些结构检查不等于候选安装包或实机验收通过。
-
-## v0.4.0 候选发布状态
-
-v0.4.0 使用协议 v3，包含可验证设备身份、验证码配对、加密控制消息与文件块、完整文件校验、暂停/继续、可信设备断线重连和加密的重启恢复记录。v3 不降级兼容 v2。
-
-候选发布必须基于同一 Git 提交，并记录 Windows x64、macOS arm64 和 macOS x64 产物的 SHA-256。发布前至少完成：
-
-- 从合法 v0.3.0 `settings.json`、`recent-devices.json` 和 `history.json` 升级，确认既有本地数据保留；身份、可信设备与恢复 store 的损坏或未来版本必须失败关闭；
-- 在真实 Windows DPAPI 与 macOS Keychain 环境验证长期私钥受保护，安全存储不可用时不做明文降级；
-- 使用两台真实设备核对首次验证码、已信任重连、取消信任、协议降级拒绝和身份公钥变化拒绝；
-- 抓包确认文字、文件名和文件内容不以明文出现，并验证密文/tag/块索引/摘要篡改不会发布文件；
-- 完成 0 B、4 MiB、4 MiB+1、多块大文件、多文件、文件夹、同名与 Unicode 双向传输；
-- 完成暂停、断网、网络切换、应用退出和系统重启后的缺块续传，以及源变化、staging 缺失和恢复记录损坏的安全失败；
-- 搜索诊断报告与日志，确认不包含验证码、公钥原文、密钥、摘要、bitmap、路径、文件名或 token；
-- 完成安装、卸载、Gatekeeper/SmartScreen、本地网络权限和防火墙验收。
-
-当前构建机执行的自动化、生产构建和跨平台目录包检查只能记录为“实现及结构检查通过”。真实设备结果以 [v0.4.0 阶段 10 签字矩阵](testing.md#v040-阶段-10-候选包签字矩阵) 为准，未执行项保持“待签字”。
-
-阶段 10 在 Apple Silicon 构建机完成 `pnpm package:mac:dir` 与 `pnpm package:win:dir`：macOS 主程序为 arm64 Mach-O，Windows 主程序为 x86-64 PE32+ GUI，两个目录包均包含内容一致的 ASAR。macOS Info.plist 的版本为 `0.4.0`、Bundle ID 为 `com.lindu.transfer`、最低系统版本为 macOS 12，ATS 任意加载关闭且本地网络说明存在。此次检查没有运行 Windows 或 Intel Mac 可执行文件，也没有生成、安装或运行 DMG/NSIS 安装包，因此实机签字矩阵保持待签字。
-
-## 1.2 文件夹传输发布门禁
-
-1.2 安装包除原有文字和文件矩阵外，还必须使用同一提交构建的 Windows x64 与 macOS arm64/x64 包执行文件夹验收。至少准备：
-
-- 含中文、空格、括号、0 字节文件和多层空目录的混合文件夹；
-- 1,000 个小文件边界样本和一个超过限制的 1,001 文件拒绝样本；
-- 同名目标目录、大小写冲突、NFC/NFD 冲突和 Windows 保留名样本；
-- 可在传输中断开网络、退出应用、锁定目标文件及耗尽测试卷空间的隔离环境。
-
-发布记录必须关联 Git 提交、包 SHA-256、操作系统/架构、文件系统、网络环境和 [阶段 8 签字矩阵](testing.md#12-阶段-8-安全与双平台签字矩阵)。当前自动化和跨平台目录构建只能标记为“实现及结构检查通过”；在真实 Windows/macOS 双向测试完成前，不得写成“双平台验收通过”。
+未执行的真实设备项目不能以跨平台构建或自动化测试替代。

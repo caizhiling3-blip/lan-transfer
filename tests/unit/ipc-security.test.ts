@@ -208,37 +208,6 @@ describe('IPC request schemas', () => {
     expect(() => parseIpcInvokeRequest('settings:update', { logRetentionDays: 0 })).toThrow()
   })
 
-  it('keeps update IPC requests narrow and rejects provider-controlled fields', () => {
-    expect(() => parseIpcInvokeRequest('update:get-settings', undefined)).not.toThrow()
-    expect(() =>
-      parseIpcInvokeRequest('update:update-settings', { automaticChecksEnabled: false }),
-    ).not.toThrow()
-    expect(() => parseIpcInvokeRequest('update:update-settings', {})).toThrow()
-    expect(() =>
-      parseIpcInvokeRequest('update:update-settings', {
-        automaticChecksEnabled: true,
-        updateUrl: 'https://untrusted.example/update',
-      }),
-    ).toThrow()
-
-    for (const channel of [
-      'update:get-status',
-      'update:check',
-      'update:download',
-      'update:cancel-download',
-      'update:install',
-    ] as const) {
-      expect(() => parseIpcInvokeRequest(channel, undefined)).not.toThrow()
-      expect(() =>
-        parseIpcInvokeRequest(channel, {
-          path: '/tmp/update',
-          url: 'https://untrusted.example/update',
-          token: 'secret',
-        }),
-      ).toThrow()
-    }
-  })
-
   it('validates recent device management requests', () => {
     const deviceId = '22222222-2222-4222-8222-222222222222'
     expect(() => parseIpcInvokeRequest('recent-devices:list', undefined)).not.toThrow()

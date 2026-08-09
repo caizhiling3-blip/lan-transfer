@@ -30,8 +30,6 @@ import type {
   TransferQueueItemDto,
   TextTransferTaskDto,
   TrustedDeviceSummaryDto,
-  UpdateSettingsDto,
-  UpdateStatusDto,
 } from '../types'
 
 interface InvokeContract<TRequest, TResponse> {
@@ -173,16 +171,6 @@ export interface IpcInvokeMap {
     AppSettingsDto
   >
   readonly 'settings:select-receive-directory': InvokeContract<undefined, SelectedDirectoryDto>
-  readonly 'update:get-settings': InvokeContract<undefined, UpdateSettingsDto>
-  readonly 'update:update-settings': InvokeContract<
-    { readonly automaticChecksEnabled: boolean },
-    UpdateSettingsDto
-  >
-  readonly 'update:get-status': InvokeContract<undefined, UpdateStatusDto>
-  readonly 'update:check': InvokeContract<undefined, UpdateStatusDto>
-  readonly 'update:download': InvokeContract<undefined, UpdateStatusDto>
-  readonly 'update:cancel-download': InvokeContract<undefined, UpdateStatusDto>
-  readonly 'update:install': InvokeContract<undefined, undefined>
 }
 
 export interface TextReceivedDto {
@@ -225,7 +213,6 @@ export interface IpcEventMap {
   readonly 'transfer:offer-received': TransferOfferReceivedDto
   readonly 'settings:changed': AppSettingsDto
   readonly 'discovery:devices-changed': readonly DiscoveredDeviceDto[]
-  readonly 'update:status-changed': UpdateStatusDto
 }
 
 export type IpcInvokeRequest<TChannel extends keyof IpcInvokeMap> =

@@ -24,6 +24,7 @@ describe('IPC contracts', () => {
   it('contains no duplicate channels', () => {
     const allChannels = [...IPC_INVOKE_CHANNELS, ...IPC_EVENT_CHANNELS]
     expect(new Set(allChannels).size).toBe(allChannels.length)
+    expect(allChannels.every((channel) => !channel.startsWith('update:'))).toBe(true)
   })
 
   it('keeps request, response, and event channel types narrow', () => {
@@ -36,9 +37,5 @@ describe('IPC contracts', () => {
       | { readonly ok: false; readonly error: { readonly code: string } }
     >()
     expectTypeOf<'settings:changed'>().toExtend<IpcEventChannel>()
-    expectTypeOf<IpcInvokeRequest<'update:update-settings'>>().toEqualTypeOf<{
-      readonly automaticChecksEnabled: boolean
-    }>()
-    expectTypeOf<'update:status-changed'>().toExtend<IpcEventChannel>()
   })
 })

@@ -155,16 +155,4 @@ export interface LanTransferApi {
     selectReceiveDirectory(): Promise<IpcInvokeResponse<'settings:select-receive-directory'>>
     onChanged(listener: EventListener<'settings:changed'>): Unsubscribe
   }
-  readonly updates: {
-    getSettings(): Promise<IpcInvokeResponse<'update:get-settings'>>
-    updateSettings(
-      automaticChecksEnabled: boolean,
-    ): Promise<IpcInvokeResponse<'update:update-settings'>>
-    getStatus(): Promise<IpcInvokeResponse<'update:get-status'>>
-    check(): Promise<IpcInvokeResponse<'update:check'>>
-    download(): Promise<IpcInvokeResponse<'update:download'>>
-    cancelDownload(): Promise<IpcInvokeResponse<'update:cancel-download'>>
-    install(): Promise<IpcInvokeResponse<'update:install'>>
-    onStatusChanged(listener: EventListener<'update:status-changed'>): Unsubscribe
-  }
 }

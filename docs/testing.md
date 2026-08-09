@@ -1,45 +1,12 @@
 # 测试指南
 
-## v0.5.0 正式分发与安全更新
+## v0.5.0 测试分发
 
-阶段 0 只冻结正式分发、更新信任链、联网隐私、凭据和验收边界，不新增自动化。
+自动化必须确认 shared IPC、Preload、renderer 和主进程不再暴露应用内更新能力，生产依赖不包含 `electron-updater`。
 
-阶段 1 自动化覆盖 stable 语义版本、更新状态与错误码唯一性、状态相关字段、公开发布信息严格脱敏、更新 IPC 无参数边界，以及 `updates.json` 默认值、持久化、独立性和未知 schemaVersion 安全备份。shared channel 在阶段 1 只冻结契约，主进程 handler 与 Preload API 留到对应实现阶段，因此 renderer 尚不能发起更新操作。
+项目只生成未签名测试包，不测试代码签名、notarization、签名凭据或自动创建 GitHub Release。手动发布应使用 pre-release，并在真实 Windows/macOS 上检查 SmartScreen、Gatekeeper、安装、启动、局域网权限、传输和卸载。
 
-阶段 2 自动化检查开发配置仍禁用签名/notarization、正式 macOS 配置强制 Developer ID 签名并启用 Hardened Runtime/notarization、同时生成首次安装 DMG 与自动更新 ZIP、主应用与辅助进程使用最小 entitlements，以及凭据预检不会输出 secret 值。真实证书环境还必须执行 `pnpm package:mac:release:arm64` 与 `pnpm package:mac:release:x64`，随后对 `.app` 和 DMG 运行 `pnpm verify:mac:release -- <app-path> <dmg-path>`，核对 ZIP/blockmap/`latest-mac.yml`，并在隔离机器验证 stapled ticket、离线 Gatekeeper 和首次启动；未执行时保持待签字。
-
-阶段 3 自动化检查开发配置仍允许未签名测试包，正式 Windows 配置强制签名、证书主题与更新发布者使用同一 `WIN_CSC_NAME`、只使用 SHA-256 并配置 RFC 3161 时间戳。真实 Windows 证书环境必须执行 `pnpm package:win:release`，再以 `WIN_CSC_NAME` 运行 `pnpm verify:win:release -- release/win-unpacked/Lindu.exe release/Lindu-Setup-0.5.0-x64.exe`，核对两者 Authenticode 状态、证书主题与脚本输出的 SHA-256，并完成干净系统安装、覆盖升级、卸载和 SmartScreen 签字。
-
-阶段 4 自动化使用可注入 updater 覆盖固定 GitHub owner/repo、stable-only、禁止降级与静默安装、无认证请求头、每天最多一次自动检查、检查/下载状态机、进度边界和 provider 元数据脱敏。测试输入包含下载 URL、本地安装器名和摘要，renderer 投影不得出现这些字段或值；非稳定版本和非法元数据必须返回 `UPDATE_METADATA_INVALID`。发布配置回归同时要求 ESM 主进程通过默认导入加载 CommonJS `electron-updater`，避免具名导入在打包后导致启动失败。开发环境不启动联网检查，正式包的真实 GitHub Release 行为留到阶段 8。
-
-阶段 5 通过 TypeScript 契约和 IPC schema 一致性验证所有更新操作都有具名 Preload 方法，设置修改只接受布尔开关，其余操作不接受 URL、路径、token 或其他参数。手动检查设置页的自动检查开关、检查中禁用、可下载、下载进度、取消、已下载摘要、错误提示和深浅色布局。阶段 6 前安装按钮必须保持禁用，直接调用安装 IPC 返回 `UPDATE_INSTALL_BLOCKED`。
-
-阶段 6 自动化覆盖下载完成后的动态安装就绪状态、门禁失败不准备安装、门禁通过后只允许消费一次 prepared install，以及平台安装调用参数。手动测试在配对弹窗、connecting/authenticating、文件或文件夹传输、校验/发布、自动重连和队列等待期间点击安装，必须返回阻塞且任务不受影响；空闲时确认安装后所有新 IPC 应被拒绝，恢复记录与 stores 完成写入、服务正常停止后才启动安装器。
-
-阶段 7 自动化覆盖标签与 package 版本精确匹配、发布输入符号链接拒绝、允许产物筛选、稳定排序、SHA-256 与审计 JSON，以及 workflow 只由 `v*` 标签触发、使用 frozen lockfile、执行平台验证并仅创建 Draft Release。CI secrets 只映射为签名工具要求的环境变量；日志与上传 artifact 中不得出现证书、密码、notarization key 或发布令牌。
-
-### v0.5.0 阶段 8 合并签字矩阵
-
-保留的 v0.4.0 包用于建立升级前基线和真实 userData；最终 v0.5.0 签名候选包集中执行 v0.4.0 安全传输回归与 v0.5.0 分发更新验收，但两组结果分别签字。所有平台产物必须来自同一提交并记录 SHA-256、系统版本、CPU、文件系统、网络、日期和执行人。
-
-| 验收项                       | macOS arm64 | macOS x64 | Windows x64 | 通过标准                                   |
-| ---------------------------- | ----------- | --------- | ----------- | ------------------------------------------ |
-| v0.4.0 安装与基线数据        | 待签字      | 待签字    | 待签字      | 设置、历史、可信设备和恢复任务样本可用     |
-| v0.4.0 → v0.5.0 覆盖升级     | 待签字      | 待签字    | 待签字      | 身份、信任、历史、接收文件和恢复状态保持   |
-| v0.4.0 安全配对与抓包回归    | 待签字      | 待签字    | 待签字      | 验证码、签名、AEAD、降级和重放门禁通过     |
-| v0.4.0 文件/文件夹与恢复回归 | 待签字      | 待签字    | 待签字      | 边界块、暂停、断网、重启和完整性通过       |
-| 平台代码签名与发布者         | 待签字      | 待签字    | 待签字      | 系统工具验证签名、时间戳及预期发布者       |
-| notarization / SmartScreen   | 待签字      | 待签字    | 待签字      | stapled ticket 或 Windows 信任行为符合文档 |
-| stable 更新检查与元数据      | 待签字      | 待签字    | 待签字      | 只发现更高稳定版本，不接受降级或篡改元数据 |
-| 下载、取消与离线失败隔离     | 待签字      | 待签字    | 待签字      | 进度准确；失败不影响局域网连接与传输       |
-| 活动任务安装门禁             | 待签字      | 待签字    | 待签字      | 配对、传输、校验、重连和队列期间不能安装   |
-| 空闲安装、安全退出与重启     | 待签字      | 待签字    | 待签字      | stores/恢复记录刷新且服务停止后才安装      |
-| Draft Release 审计           | 待签字      | 待签字    | 待签字      | 同一提交、SHA-256、更新元数据和产物完整    |
-| 安装、首次启动与卸载         | 待签字      | 待签字    | 待签字      | 权限、防火墙、userData 和平台行为符合指南  |
-
-当前构建机的自动化和未签名目录包检查只能记录为“实现及结构检查通过”。真实证书、notarization、SmartScreen、更新服务器、Windows/Intel Mac 运行和双机传输未实际执行时，上表必须保持“待签字”。
-
-阶段 8 当前自动化共有 35 个测试文件、276 项测试通过。未签名结构检查在独立临时目录生成 macOS arm64 Mach-O 与 Windows x64 PE32+ GUI，两个包包含 SHA-256 完全一致的 ASAR；macOS Info.plist 的版本为 `0.5.0`、Bundle ID 为 `com.lindu.transfer`、最低版本为 macOS 12，ATS 任意加载关闭且本地网络说明存在。该检查没有运行 Windows 包、Intel Mac 包、DMG、NSIS、正式签名配置或真实更新服务，上表保持待签字。
+发布新版本后检查官网能读取正确的 EXE/DMG 资产。应用自身不得发起版本检查、下载或安装请求；用户手动覆盖安装后，既有设置、身份、可信设备、历史和可恢复任务应继续保留。
 
 阶段 3 已加入 Vitest，在 Node 环境测试 shared 协议、错误码和 IPC 类型契约。
 
