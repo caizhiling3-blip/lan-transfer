@@ -65,6 +65,7 @@ export interface HistoryEntryDto {
   readonly textPreview?: string
   readonly createdAt: number
   readonly errorCode?: ErrorCode
+  readonly locationAvailable?: boolean
 }
 
 export interface HistoryFilterDto {

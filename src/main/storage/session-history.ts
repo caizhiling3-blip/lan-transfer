@@ -73,7 +73,15 @@ export class SessionHistory {
       ...(filter.query === undefined ? {} : { query: filter.query }),
     }
     const filtered = this.entries.filter((entry) => matchesCriteria(entry, criteria))
-    return filtered.slice(filter.offset, filter.offset + filter.limit)
+    return filtered
+      .slice(filter.offset, filter.offset + filter.limit)
+      .map((entry) =>
+        entry.direction === 'receive' &&
+        (entry.kind === 'file' || entry.kind === 'folder') &&
+        entry.status === 'completed'
+          ? { ...entry, locationAvailable: (this.locators?.get(entry.id) ?? null) !== null }
+          : entry,
+      )
   }
 
   public getStats(criteria: HistoryCleanupCriteriaDto = {}, storageBytes = 0): HistoryStatsDto {

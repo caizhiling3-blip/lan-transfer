@@ -58,9 +58,10 @@ const scrollToLatest = (): void => {
 
 const scrollToTarget = (): void => {
   void nextTick(() => {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     activityList.value
       ?.querySelector<HTMLElement>('[data-history-target="true"]')
-      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      ?.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' })
   })
 }
 
@@ -266,8 +267,28 @@ onBeforeUnmount(() => {
 <style scoped>
 .history-target {
   border-radius: 12px;
-  outline: 2px solid var(--app-primary);
   outline-offset: 3px;
+  animation: history-target-highlight 3s ease-out forwards;
+}
+
+@keyframes history-target-highlight {
+  0%,
+  25% {
+    outline: 2px solid var(--app-primary);
+    box-shadow: 0 0 0 5px var(--app-primary-soft);
+  }
+
+  100% {
+    outline: 2px solid transparent;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-target {
+    outline: 2px solid var(--app-primary);
+    animation: none;
+  }
 }
 
 .transfer-layout {

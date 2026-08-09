@@ -10,6 +10,7 @@ export interface TextMessageItem {
   readonly createdAt: number
   readonly status: 'completed' | 'failed'
   readonly errorCode?: ErrorCode
+  readonly isHistorySummary?: boolean
 }
 
 export type TransferActivity =

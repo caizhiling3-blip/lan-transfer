@@ -22,6 +22,12 @@ const formatTime = (timestamp: number): string => new Date(timestamp).toLocaleTi
     <p class="message-content">{{ message.content }}</p>
     <div class="activity-actions">
       <el-tag v-if="message.contentType === 'link'" size="small" effect="plain">链接</el-tag>
+      <el-tooltip
+        v-if="message.isHistorySummary"
+        content="历史记录只保留文字摘要，较长内容可能不完整"
+      >
+        <el-tag size="small" type="info" effect="plain">历史摘要</el-tag>
+      </el-tooltip>
       <el-tag v-if="message.status === 'failed'" size="small" type="danger">发送失败</el-tag>
       <el-button text size="small" @click="$emit('copy', message.content)">复制</el-button>
       <el-button

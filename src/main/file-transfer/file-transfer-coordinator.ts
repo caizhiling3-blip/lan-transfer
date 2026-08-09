@@ -1881,7 +1881,9 @@ export class FileTransferCoordinator {
     }
     const receivedPath =
       task.direction === 'receive' && task.status === 'completed'
-        ? this.getReceivedFilePath(task.transferId)
+        ? task.files.length > 1
+          ? (this.incoming.get(task.transferId)?.directoryPath ?? null)
+          : this.getReceivedFilePath(task.transferId)
         : null
     this.history.add(entry, receivedPath ?? undefined)
     this.recordedTransfers.set(task.transferId, Date.now())

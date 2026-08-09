@@ -98,9 +98,27 @@ describe('SessionHistory', () => {
     )
 
     expect(history.list({ offset: 0, limit: 10 })[0]).not.toHaveProperty('receivedPath')
+    expect(history.list({ offset: 0, limit: 10 })[0]?.locationAvailable).toBe(true)
     expect(history.getReceivedPath(received.id)).toBe('/downloads/report.pdf')
     history.delete([received.id])
     expect(locators.values).toEqual(new Map())
+  })
+
+  it('marks legacy received history without a locator as unavailable', () => {
+    const historyId = '33333333-3333-4333-8333-333333333333'
+    const history = new SessionHistory(100, [
+      {
+        id: historyId,
+        direction: 'receive',
+        kind: 'folder',
+        peer,
+        status: 'completed',
+        displayName: 'Archive',
+        createdAt: Date.now(),
+      },
+    ])
+
+    expect(history.list({ offset: 0, limit: 10 })[0]?.locationAvailable).toBe(false)
   })
 
   it('reports matching statistics and deletes selected entries', () => {

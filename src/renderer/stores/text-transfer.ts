@@ -22,6 +22,7 @@ const fromHistoryEntry = (
   contentType: entry.kind,
   createdAt: entry.createdAt,
   status: entry.status === 'completed' ? 'completed' : 'failed',
+  isHistorySummary: true,
   ...(entry.errorCode === undefined ? {} : { errorCode: entry.errorCode }),
 })
 

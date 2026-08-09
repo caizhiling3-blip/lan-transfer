@@ -44,7 +44,12 @@ export const registerTextIpcHandlers = (
       if (!fileStat.isFile() && !fileStat.isDirectory()) {
         return { ok: false, error: { code: 'FILE_NOT_FOUND' } }
       }
-      shell.showItemInFolder(receivedPath)
+      if (fileStat.isDirectory()) {
+        const errorMessage = await shell.openPath(receivedPath)
+        if (errorMessage !== '') return { ok: false, error: { code: 'FILE_NOT_FOUND' } }
+      } else {
+        shell.showItemInFolder(receivedPath)
+      }
       return { ok: true, data: undefined }
     } catch {
       return { ok: false, error: { code: 'FILE_NOT_FOUND' } }

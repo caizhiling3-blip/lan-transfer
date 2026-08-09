@@ -121,7 +121,7 @@ const handleCleanupCommand = async (command: string): Promise<void> => {
 const formatStorageSize = (bytes: number): string =>
   bytes < 1_024 ? `${String(bytes)} B` : `${(bytes / 1_024).toFixed(1)} KiB`
 
-const canLocateReceived = (entry: HistoryEntryDto): boolean =>
+const isReceivedContent = (entry: HistoryEntryDto): boolean =>
   entry.direction === 'receive' &&
   (entry.kind === 'file' || entry.kind === 'folder') &&
   entry.status === 'completed'
@@ -267,7 +267,7 @@ onMounted(() => void store.load(true))
             {{ new Date(row.createdAt).toLocaleString() }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="136" fixed="right">
+        <el-table-column label="操作" width="210" fixed="right">
           <template #default="{ row }: { row: HistoryEntryDto }">
             <el-button
               v-if="row.kind === 'text' || row.kind === 'link'"
@@ -275,16 +275,24 @@ onMounted(() => void store.load(true))
               type="primary"
               @click="emit('locateMessage', row)"
             >
-              定位
+              定位消息
             </el-button>
-            <el-button
-              v-else-if="canLocateReceived(row)"
-              link
-              type="primary"
-              @click="locateReceived(row)"
+            <el-tooltip
+              v-else-if="isReceivedContent(row)"
+              :disabled="row.locationAvailable === true"
+              content="此记录没有保存位置信息，可能来自升级前的版本"
             >
-              显示
-            </el-button>
+              <span>
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="row.locationAvailable !== true"
+                  @click="locateReceived(row)"
+                >
+                  {{ row.kind === 'folder' ? '打开文件夹' : '在文件夹中显示' }}
+                </el-button>
+              </span>
+            </el-tooltip>
             <el-button link type="danger" @click="deleteEntries([row])">删除</el-button>
           </template>
         </el-table-column>
