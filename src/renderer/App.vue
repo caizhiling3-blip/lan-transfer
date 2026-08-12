@@ -6,6 +6,7 @@ import type { HistoryEntryDto } from '@shared/types'
 
 import { useConnectionStore } from './stores/connection'
 import { useFileTransferStore } from './stores/file-transfer'
+import { useMobileUploadStore } from './stores/mobile-upload'
 import { useSecurityStore } from './stores/security'
 import ThemeToggle from './components/ThemeToggle.vue'
 import linduLogo from '../../build/icon.svg?no-inline'
@@ -20,6 +21,7 @@ type PageKey = 'home' | 'transfer' | 'history' | 'diagnostics' | 'settings'
 const activePage = ref<PageKey>('home')
 const connectionStore = useConnectionStore()
 const fileTransferStore = useFileTransferStore()
+const mobileUploadStore = useMobileUploadStore()
 const securityStore = useSecurityStore()
 const activeApprovalRequestId = ref<string | null>(null)
 const activePairingRequestId = ref<string | null>(null)
@@ -41,6 +43,13 @@ const selectPage = (page: PageKey): void => {
 
 watch(
   () => fileTransferStore.incomingOffer,
+  (offer) => {
+    if (offer !== null) activePage.value = 'transfer'
+  },
+)
+
+watch(
+  () => mobileUploadStore.offer,
   (offer) => {
     if (offer !== null) activePage.value = 'transfer'
   },
@@ -152,12 +161,14 @@ onMounted(() => {
   void connectionStore.initialize()
   void securityStore.initialize()
   fileTransferStore.initialize()
+  mobileUploadStore.initialize()
 })
 
 onBeforeUnmount(() => {
   connectionStore.dispose()
   securityStore.dispose()
   fileTransferStore.dispose()
+  mobileUploadStore.dispose()
 })
 </script>
 

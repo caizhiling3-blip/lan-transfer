@@ -8,6 +8,8 @@ export const fileIdSchema = z.uuid().brand<'FileId'>()
 export const requestIdSchema = z.uuid().brand<'RequestId'>()
 export const manifestIdSchema = z.uuid().brand<'ManifestId'>()
 export const queueItemIdSchema = z.uuid().brand<'QueueItemId'>()
+export const mobileUploadSessionIdSchema = z.uuid().brand<'MobileUploadSessionId'>()
+export const mobileUploadBatchIdSchema = z.uuid().brand<'MobileUploadBatchId'>()
 
 export type DeviceId = z.infer<typeof deviceIdSchema>
 export type MessageId = z.infer<typeof messageIdSchema>
@@ -17,3 +19,5 @@ export type FileId = z.infer<typeof fileIdSchema>
 export type RequestId = z.infer<typeof requestIdSchema>
 export type ManifestId = z.infer<typeof manifestIdSchema>
 export type QueueItemId = z.infer<typeof queueItemIdSchema>
+export type MobileUploadSessionId = z.infer<typeof mobileUploadSessionIdSchema>
+export type MobileUploadBatchId = z.infer<typeof mobileUploadBatchIdSchema>

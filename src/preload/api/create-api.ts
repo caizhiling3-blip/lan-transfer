@@ -140,6 +140,23 @@ export const createLanTransferApi = (): LanTransferApi => {
       cleanup: (criteria) => invoke('history:cleanup', criteria),
       clear: () => invoke('history:clear', undefined),
     }),
+    mobileUpload: Object.freeze({
+      createSession: () => invoke('mobile-upload:create-session', undefined),
+      getSession: () => invoke('mobile-upload:get-session', undefined),
+      closeSession: () => invoke('mobile-upload:close-session', undefined),
+      respondToOffer: (batchId, decision) =>
+        invoke('mobile-upload:respond-to-offer', { batchId, decision }),
+      cancel: (batchId) => invoke('mobile-upload:cancel', { batchId }),
+      showReceived: (batchId) => invoke('mobile-upload:show-received', { batchId }),
+      publishDownloads: (selectionTokens) =>
+        invoke('mobile-upload:publish-downloads', { selectionTokens }),
+      getDownloads: () => invoke('mobile-upload:get-downloads', undefined),
+      clearDownloads: () => invoke('mobile-upload:clear-downloads', undefined),
+      onSessionChanged: (listener) => subscribe('mobile-upload:session-changed', listener),
+      onOfferReceived: (listener) => subscribe('mobile-upload:offer-received', listener),
+      onTaskChanged: (listener) => subscribe('mobile-upload:task-changed', listener),
+      onDownloadsChanged: (listener) => subscribe('mobile-upload:downloads-changed', listener),
+    }),
     diagnostics: Object.freeze({
       getSummary: () => invoke('diagnostics:get-summary', undefined),
       exportReport: () => invoke('diagnostics:export-report', undefined),

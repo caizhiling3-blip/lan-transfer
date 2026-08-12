@@ -1,5 +1,10 @@
 import type { ErrorCode } from '@shared/errors'
-import type { DeviceInfo, TransferDirection, TransferTaskDto } from '@shared/types'
+import type {
+  DeviceInfo,
+  MobileUploadTaskDto,
+  TransferDirection,
+  TransferTaskDto,
+} from '@shared/types'
 
 export interface TextMessageItem {
   readonly id: string
@@ -25,4 +30,10 @@ export type TransferActivity =
       readonly id: string
       readonly createdAt: number
       readonly task: TransferTaskDto
+    }
+  | {
+      readonly kind: 'mobile'
+      readonly id: string
+      readonly createdAt: number
+      readonly task: MobileUploadTaskDto
     }

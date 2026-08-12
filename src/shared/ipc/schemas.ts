@@ -19,6 +19,7 @@ import {
   deviceIdSchema,
   fileIdSchema,
   queueItemIdSchema,
+  mobileUploadBatchIdSchema,
   requestIdSchema,
   transferIdSchema,
 } from '../types'
@@ -236,6 +237,20 @@ export const ipcInvokeRequestSchemas = {
   'transfer:show-received-file': z
     .object({ transferId: transferIdSchema, fileId: fileIdSchema.optional() })
     .strict(),
+  'mobile-upload:create-session': noRequestSchema,
+  'mobile-upload:get-session': noRequestSchema,
+  'mobile-upload:close-session': noRequestSchema,
+  'mobile-upload:respond-to-offer': z
+    .object({
+      batchId: mobileUploadBatchIdSchema,
+      decision: z.enum(['accept', 'reject']),
+    })
+    .strict(),
+  'mobile-upload:cancel': z.object({ batchId: mobileUploadBatchIdSchema }).strict(),
+  'mobile-upload:show-received': z.object({ batchId: mobileUploadBatchIdSchema }).strict(),
+  'mobile-upload:publish-downloads': offerFilesRequestSchema,
+  'mobile-upload:get-downloads': noRequestSchema,
+  'mobile-upload:clear-downloads': noRequestSchema,
   'history:list': z
     .object({
       direction: z.enum(['send', 'receive']).optional(),

@@ -1,10 +1,11 @@
-import type { TransferTaskDto } from '@shared/types'
+import type { MobileUploadTaskDto, TransferTaskDto } from '@shared/types'
 
 import type { TextMessageItem, TransferActivity } from '../types/transfer-activity'
 
 export const createTransferActivities = (
   messages: readonly TextMessageItem[],
   tasks: readonly TransferTaskDto[],
+  mobileTasks: readonly MobileUploadTaskDto[] = [],
 ): readonly TransferActivity[] =>
   [
     ...messages.map((message): TransferActivity => ({
@@ -17,6 +18,12 @@ export const createTransferActivities = (
       kind: 'file',
       id: `file:${task.transferId}`,
       createdAt: task.createdAt,
+      task,
+    })),
+    ...mobileTasks.map((task): TransferActivity => ({
+      kind: 'mobile',
+      id: `mobile:${task.batchId}`,
+      createdAt: task.receivedAt,
       task,
     })),
   ].sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))

@@ -13,6 +13,11 @@ import type {
   HistoryStatsDto,
   IncomingConnectionRequestDto,
   MessageId,
+  MobileUploadBatchId,
+  MobileDownloadBatchDto,
+  MobileUploadOfferDto,
+  MobileUploadSessionDto,
+  MobileUploadTaskDto,
   LogStatsDto,
   OperationResult,
   PairingRequestDto,
@@ -141,6 +146,27 @@ export interface IpcInvokeMap {
     { readonly transferId: TransferId; readonly fileId?: FileId },
     undefined
   >
+  readonly 'mobile-upload:create-session': InvokeContract<undefined, MobileUploadSessionDto>
+  readonly 'mobile-upload:get-session': InvokeContract<undefined, MobileUploadSessionDto | null>
+  readonly 'mobile-upload:close-session': InvokeContract<undefined, undefined>
+  readonly 'mobile-upload:respond-to-offer': InvokeContract<
+    { readonly batchId: MobileUploadBatchId; readonly decision: 'accept' | 'reject' },
+    MobileUploadTaskDto
+  >
+  readonly 'mobile-upload:cancel': InvokeContract<
+    { readonly batchId: MobileUploadBatchId },
+    MobileUploadTaskDto
+  >
+  readonly 'mobile-upload:show-received': InvokeContract<
+    { readonly batchId: MobileUploadBatchId },
+    undefined
+  >
+  readonly 'mobile-upload:publish-downloads': InvokeContract<
+    { readonly selectionTokens: readonly string[] },
+    MobileDownloadBatchDto
+  >
+  readonly 'mobile-upload:get-downloads': InvokeContract<undefined, MobileDownloadBatchDto | null>
+  readonly 'mobile-upload:clear-downloads': InvokeContract<undefined, undefined>
   readonly 'history:list': InvokeContract<HistoryFilterDto, readonly HistoryEntryDto[]>
   readonly 'history:locate-received': InvokeContract<{ readonly historyId: string }, undefined>
   readonly 'history:get-stats': InvokeContract<
@@ -211,6 +237,10 @@ export interface IpcEventMap {
   readonly 'transfer:text-task-changed': TextTransferTaskDto
   readonly 'transfer:text-received': TextReceivedDto
   readonly 'transfer:offer-received': TransferOfferReceivedDto
+  readonly 'mobile-upload:session-changed': MobileUploadSessionDto | null
+  readonly 'mobile-upload:offer-received': MobileUploadOfferDto | null
+  readonly 'mobile-upload:task-changed': MobileUploadTaskDto
+  readonly 'mobile-upload:downloads-changed': MobileDownloadBatchDto | null
   readonly 'settings:changed': AppSettingsDto
   readonly 'discovery:devices-changed': readonly DiscoveredDeviceDto[]
 }

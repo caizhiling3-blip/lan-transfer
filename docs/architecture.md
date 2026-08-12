@@ -213,6 +213,16 @@ v0.4.0 在主进程增加 identity、pairing、secure-session、chunk-transfer �
 
 verified range 的编码和展开集中在单一安全模块。只接受安全整数、严格升序、非空且互不重叠的半开区间，并要求 end 不超过文件块数；任一违规均返回 `RESUME_STATE_INVALID`。诊断摘要只新增可恢复任务数量，报告不包含恢复 payload、路径、文件名、摘要、bitmap、指纹、公钥或 token。
 
+## 手机浏览器上传架构规划
+
+v0.6.0 在既有本地 HTTP 服务上增加独立的 `/mobile/` 页面和 API 路由，由 `MobileUploadCoordinator` 维护短时内存会话、来源绑定、PC 审批、分块授权与接收任务。移动浏览器不接入桌面 `/v1/ws`、设备发现、长期身份、可信设备或 v3 恢复存储；现有 WebSocket Origin 拒绝规则保持不变。
+
+二维码 URL 使用公开 sessionId 定位页面，256 bit 随机密钥仅放在 fragment，因而不随初始页面请求发送。局域网 HTTP 属于非安全浏览器上下文，不能依赖仅在 HTTPS 中开放的 Web Crypto `subtle` 或 `randomUUID`；固定移动页面改用兼容的 UUID 生成，并把 fragment 密钥、时间戳和 nonce 放入自定义认证 header。服务不启用 CORS 或 OPTIONS 预检，跨站网页不能携带该 header；PC 主进程还校验显式 Origin、来源 IP、时间窗、nonce 和密钥。局域网 HTTP 仍不提供可信服务器身份或内容机密性，因此 UI 必须明确要求受信任网络。
+
+创建二维码时必须即时重新读取当前非 internal IPv4，不能使用服务启动时缓存的地址。电脑在家庭 Wi-Fi、手机热点、有线网络之间切换后无需重启服务，但必须重新创建二维码，确保 URL 使用切换后的当前网卡地址。
+
+移动文件落盘复用现有安全文件名、接收目录授权、磁盘预检、独占临时文件和不覆盖发布原则，但使用独立任务 DTO 与 HTTP 授权，不能把浏览器认证材料转换为桌面 v3 会话密钥。renderer 只通过具名 IPC 创建/关闭会话并审批批次，不获得路径、移动认证密钥或临时文件信息。完整设计见 [v0.6.0 手机浏览器上传设计](v0.6.0-mobile-upload.md)。
+
 阶段 2 的 `IdentityStore` 是长期设备密钥的唯一事实来源。它只接受操作系统 `safeStorage` 保护的 PKCS#8 私钥，启动时使用私钥重新派生 SPKI 公钥并与已存公开身份及 SHA-256 指纹三方核对；任一不一致都失败关闭。`TrustedDevicesStore` 与最近设备列表分离：删除最近连接记录不会取消信任，可信记录也不能因网络消息中的同 deviceId 新公钥而自动覆盖。两类 store 都只运行在主进程，Preload 和 renderer 没有读取密钥文件或可信 store 的通用接口。
 
 阶段 3 的 key-agreement 模块只返回内存中的 X25519 私钥对象、公开 DER 和 nonce。规范 transcript 使用固定数组顺序绑定协议版本、双方角色、deviceId、nonce、临时公钥和长期公钥，避免对象键顺序形成不同派生结果。`PairingCoordinator` 是首次信任审批的事实来源：UI 只投影短指纹、六位验证码和截止时间，双方确认前不写 store；已信任设备只有相同公钥才可免配对刷新验证时间。可信设备 IPC 返回不含公钥的摘要，取消信任与最近设备删除保持独立。

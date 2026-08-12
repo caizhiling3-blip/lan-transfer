@@ -43,6 +43,10 @@ export const ERROR_CODES = [
   'RESUME_STATE_INVALID',
   'RESUME_EXPIRED',
   'SOURCE_FILE_CHANGED',
+  'MOBILE_SESSION_EXPIRED',
+  'MOBILE_REQUEST_UNAUTHORIZED',
+  'MOBILE_OFFER_CONFLICT',
+  'MOBILE_UPLOAD_UNAVAILABLE',
 ] as const
 
 export const errorCodeSchema = z.enum(ERROR_CODES)
@@ -92,6 +96,10 @@ export const ERROR_MESSAGES_ZH_CN: Readonly<Record<ErrorCode, string>> = {
   RESUME_STATE_INVALID: '续传状态无效',
   RESUME_EXPIRED: '可恢复传输已经过期',
   SOURCE_FILE_CHANGED: '源文件在传输后发生变化',
+  MOBILE_SESSION_EXPIRED: '手机上传会话已过期',
+  MOBILE_REQUEST_UNAUTHORIZED: '手机上传请求未通过验证',
+  MOBILE_OFFER_CONFLICT: '已有手机上传请求正在等待处理',
+  MOBILE_UPLOAD_UNAVAILABLE: '手机上传服务当前不可用',
 }
 
 export type ErrorRecoveryAction = 'reconnect' | 'settings' | 'retry' | 'reselect' | 'none'
@@ -189,6 +197,16 @@ export const ERROR_RECOVERY_ADVICE_ZH_CN: Readonly<Record<ErrorCode, ErrorRecove
   },
   RESUME_EXPIRED: { suggestion: '恢复期限已过，请重新选择内容并发送。', action: 'reselect' },
   SOURCE_FILE_CHANGED: { suggestion: '源文件已经变化，请重新选择后发送。', action: 'reselect' },
+  MOBILE_SESSION_EXPIRED: { suggestion: '请在电脑上重新生成二维码。', action: 'none' },
+  MOBILE_REQUEST_UNAUTHORIZED: {
+    suggestion: '请关闭页面，重新扫描电脑上当前显示的二维码。',
+    action: 'none',
+  },
+  MOBILE_OFFER_CONFLICT: { suggestion: '请先在电脑上处理当前手机上传请求。', action: 'none' },
+  MOBILE_UPLOAD_UNAVAILABLE: {
+    suggestion: '确认本地服务正在运行，并让手机与电脑连接同一 Wi-Fi。',
+    action: 'none',
+  },
 }
 
 export interface AppError {

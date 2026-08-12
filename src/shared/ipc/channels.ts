@@ -35,6 +35,15 @@ export const IPC_INVOKE_CHANNELS = [
   'transfer:resume',
   'transfer:retry',
   'transfer:show-received-file',
+  'mobile-upload:create-session',
+  'mobile-upload:get-session',
+  'mobile-upload:close-session',
+  'mobile-upload:respond-to-offer',
+  'mobile-upload:cancel',
+  'mobile-upload:show-received',
+  'mobile-upload:publish-downloads',
+  'mobile-upload:get-downloads',
+  'mobile-upload:clear-downloads',
   'history:list',
   'history:locate-received',
   'history:get-stats',
@@ -65,6 +74,10 @@ export const TEXT_TASK_CHANGED_EVENT_CHANNEL = 'transfer:text-task-changed' as c
 export const FILE_OFFER_RECEIVED_EVENT_CHANNEL = 'transfer:offer-received' as const
 export const SETTINGS_CHANGED_EVENT_CHANNEL = 'settings:changed' as const
 export const DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL = 'discovery:devices-changed' as const
+export const MOBILE_UPLOAD_SESSION_CHANGED_EVENT_CHANNEL = 'mobile-upload:session-changed' as const
+export const MOBILE_UPLOAD_OFFER_RECEIVED_EVENT_CHANNEL = 'mobile-upload:offer-received' as const
+export const MOBILE_UPLOAD_TASK_CHANGED_EVENT_CHANNEL = 'mobile-upload:task-changed' as const
+export const MOBILE_DOWNLOADS_CHANGED_EVENT_CHANNEL = 'mobile-upload:downloads-changed' as const
 
 export const IPC_EVENT_CHANNELS = [
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
@@ -79,6 +92,10 @@ export const IPC_EVENT_CHANNELS = [
   FILE_OFFER_RECEIVED_EVENT_CHANNEL,
   SETTINGS_CHANGED_EVENT_CHANNEL,
   DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL,
+  MOBILE_UPLOAD_SESSION_CHANGED_EVENT_CHANNEL,
+  MOBILE_UPLOAD_OFFER_RECEIVED_EVENT_CHANNEL,
+  MOBILE_UPLOAD_TASK_CHANGED_EVENT_CHANNEL,
+  MOBILE_DOWNLOADS_CHANGED_EVENT_CHANNEL,
 ] as const
 
 export type IpcInvokeChannel = (typeof IPC_INVOKE_CHANNELS)[number]

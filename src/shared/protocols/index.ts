@@ -1,4 +1,5 @@
 export * from './parse'
+export * from './mobile-upload'
 export * from './schemas'
 export * from './types'
 export * from './discovery'

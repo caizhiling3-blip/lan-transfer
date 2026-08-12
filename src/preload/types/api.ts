@@ -8,6 +8,7 @@ import type {
   OperatingSystem,
   DeviceId,
   QueueItemId,
+  MobileUploadBatchId,
   RequestId,
   TransferId,
 } from '@shared/index'
@@ -128,6 +129,28 @@ export interface LanTransferApi {
     ): Promise<IpcInvokeResponse<'history:preview-cleanup'>>
     cleanup(criteria: HistoryCleanupCriteriaDto): Promise<IpcInvokeResponse<'history:cleanup'>>
     clear(): Promise<IpcInvokeResponse<'history:clear'>>
+  }
+  readonly mobileUpload: {
+    createSession(): Promise<IpcInvokeResponse<'mobile-upload:create-session'>>
+    getSession(): Promise<IpcInvokeResponse<'mobile-upload:get-session'>>
+    closeSession(): Promise<IpcInvokeResponse<'mobile-upload:close-session'>>
+    respondToOffer(
+      batchId: MobileUploadBatchId,
+      decision: 'accept' | 'reject',
+    ): Promise<IpcInvokeResponse<'mobile-upload:respond-to-offer'>>
+    cancel(batchId: MobileUploadBatchId): Promise<IpcInvokeResponse<'mobile-upload:cancel'>>
+    showReceived(
+      batchId: MobileUploadBatchId,
+    ): Promise<IpcInvokeResponse<'mobile-upload:show-received'>>
+    publishDownloads(
+      selectionTokens: readonly string[],
+    ): Promise<IpcInvokeResponse<'mobile-upload:publish-downloads'>>
+    getDownloads(): Promise<IpcInvokeResponse<'mobile-upload:get-downloads'>>
+    clearDownloads(): Promise<IpcInvokeResponse<'mobile-upload:clear-downloads'>>
+    onSessionChanged(listener: EventListener<'mobile-upload:session-changed'>): Unsubscribe
+    onOfferReceived(listener: EventListener<'mobile-upload:offer-received'>): Unsubscribe
+    onTaskChanged(listener: EventListener<'mobile-upload:task-changed'>): Unsubscribe
+    onDownloadsChanged(listener: EventListener<'mobile-upload:downloads-changed'>): Unsubscribe
   }
   readonly diagnostics: {
     getSummary(): Promise<IpcInvokeResponse<'diagnostics:get-summary'>>

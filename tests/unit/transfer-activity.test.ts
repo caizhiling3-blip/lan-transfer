@@ -9,8 +9,14 @@ import {
   getTransferCompletionSummary,
   getTransferPercentage,
 } from '../../src/renderer/utils/transfer-activity'
-import type { DeviceInfo, TransferTaskDto } from '../../src/shared/types'
-import { deviceIdSchema, fileIdSchema, transferIdSchema } from '../../src/shared/types'
+import type { DeviceInfo, MobileUploadTaskDto, TransferTaskDto } from '../../src/shared/types'
+import {
+  deviceIdSchema,
+  fileIdSchema,
+  mobileUploadBatchIdSchema,
+  mobileUploadSessionIdSchema,
+  transferIdSchema,
+} from '../../src/shared/types'
 
 const peer: DeviceInfo = {
   deviceId: deviceIdSchema.parse('10000000-0000-4000-8000-000000000001'),
@@ -59,6 +65,33 @@ describe('transfer activity view model', () => {
 
     expect(activities.map(({ kind }) => kind)).toEqual(['file', 'text'])
     expect(activities.map(({ id }) => id)).toEqual([`file:${task.transferId}`, 'text:message-1'])
+  })
+
+  it('places mobile browser batches in the same chronological timeline', () => {
+    const file = {
+      fileId: fileIdSchema.parse('30000000-0000-4000-8000-000000000003'),
+      displayName: 'phone.jpg',
+      size: 10,
+      mimeType: 'image/jpeg',
+    }
+    const mobileTask: MobileUploadTaskDto = {
+      sessionId: mobileUploadSessionIdSchema.parse('60000000-0000-4000-8000-000000000006'),
+      batchId: mobileUploadBatchIdSchema.parse('70000000-0000-4000-8000-000000000007'),
+      sourceAddress: '192.168.1.9',
+      files: [file],
+      fileItems: [{ ...file, status: 'transferring', transferredBytes: 5 }],
+      totalBytes: 10,
+      transferredBytes: 5,
+      receivedAt: 150,
+      updatedAt: 160,
+      status: 'transferring',
+    }
+
+    const activities = createTransferActivities([], [], [mobileTask])
+
+    expect(activities).toMatchObject([
+      { kind: 'mobile', id: `mobile:${mobileTask.batchId}`, createdAt: 150 },
+    ])
   })
 
   it('formats byte values and handles zero-byte progress', () => {

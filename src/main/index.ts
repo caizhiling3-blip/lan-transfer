@@ -9,6 +9,10 @@ import {
   CONNECTION_STATE_CHANGED_EVENT_CHANNEL,
   DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL,
   FILE_OFFER_RECEIVED_EVENT_CHANNEL,
+  MOBILE_UPLOAD_OFFER_RECEIVED_EVENT_CHANNEL,
+  MOBILE_UPLOAD_SESSION_CHANGED_EVENT_CHANNEL,
+  MOBILE_UPLOAD_TASK_CHANGED_EVENT_CHANNEL,
+  MOBILE_DOWNLOADS_CHANGED_EVENT_CHANNEL,
   PAIRING_CHANGED_EVENT_CHANNEL,
   SERVICE_STATUS_CHANGED_EVENT_CHANNEL,
   SETTINGS_CHANGED_EVENT_CHANNEL,
@@ -38,14 +42,16 @@ import {
   registerPairingIpcHandlers,
   registerFileTransferIpcHandlers,
   registerRuntimeIpcHandlers,
+  registerMobileUploadIpcHandlers,
   registerServiceIpcHandlers,
   registerSettingsIpcHandlers,
   registerTextIpcHandlers,
 } from './ipc'
-import { ServiceManager } from './server'
+import { getLanIpv4Addresses, ServiceManager } from './server'
 import { DiagnosticsService, getDiagnosticsPlatform } from './diagnostics'
 import { getActiveLogFilePath, initializeLogger, logger, LogLifecycle } from './logger'
 import { PairingCoordinator } from './pairing'
+import { MobileUploadCoordinator } from './mobile-upload'
 import {
   HistoryLocatorsStore,
   HistoryStore,
@@ -67,6 +73,7 @@ let folderTransferCoordinator: FolderTransferCoordinator | null = null
 let discoveryManager: DiscoveryManager | null = null
 let transferPowerSaveController: TransferPowerSaveController | null = null
 let transferQueueCoordinator: TransferQueueCoordinator | null = null
+let mobileUploadCoordinator: MobileUploadCoordinator | null = null
 let unsubscribeFromService: (() => void) | null = null
 let applicationUnsubscribers: readonly (() => void)[] = []
 let isQuitting = false
@@ -198,6 +205,15 @@ void app.whenReady().then(async () => {
     activeFolderTransferCoordinator,
     sessionHistory,
   )
+  const activeMobileUploadCoordinator = new MobileUploadCoordinator(
+    () => {
+      const status = activeServiceManager.getStatus()
+      if (status.state !== 'running') return []
+      return getLanIpv4Addresses().map((address) => `http://${address}:${String(status.port)}`)
+    },
+    fileAccessRegistry,
+    sessionHistory,
+  )
   const diagnosticsService = new DiagnosticsService(
     async () => {
       const historyStats = sessionHistory.getStats({}, historyStore.getStorageBytes())
@@ -259,6 +275,7 @@ void app.whenReady().then(async () => {
   discoveryManager = activeDiscoveryManager
   transferPowerSaveController = activeTransferPowerSaveController
   transferQueueCoordinator = activeTransferQueueCoordinator
+  mobileUploadCoordinator = activeMobileUploadCoordinator
 
   registerFoundationIpcHandlers(() => mainWindow)
   registerServiceIpcHandlers(() => mainWindow, activeServiceManager, settingsStore)
@@ -297,6 +314,11 @@ void app.whenReady().then(async () => {
     activeFileTransferCoordinator,
     activeFolderTransferCoordinator,
     activeTransferQueueCoordinator,
+  )
+  registerMobileUploadIpcHandlers(
+    () => mainWindow,
+    activeMobileUploadCoordinator,
+    activeServiceManager,
   )
   registerSettingsIpcHandlers(
     () => mainWindow,
@@ -347,7 +369,10 @@ void app.whenReady().then(async () => {
     } else if (status.state === 'error') {
       logger.warn('service_failed', { port: status.port, errorCode: status.errorCode })
     }
-    if (status.state !== 'running') activeDiscoveryManager.stop()
+    if (status.state !== 'running') {
+      activeDiscoveryManager.stop()
+      activeMobileUploadCoordinator.closeSession()
+    }
     sendToRenderer(SERVICE_STATUS_CHANGED_EVENT_CHANNEL, status)
   })
   const loggedTaskStatuses = new Map<string, string>()
@@ -455,6 +480,18 @@ void app.whenReady().then(async () => {
     activeDiscoveryManager.subscribe((devices) => {
       sendToRenderer(DISCOVERY_DEVICES_CHANGED_EVENT_CHANNEL, devices)
     }),
+    activeMobileUploadCoordinator.subscribe((session) => {
+      sendToRenderer(MOBILE_UPLOAD_SESSION_CHANGED_EVENT_CHANNEL, session)
+    }),
+    activeMobileUploadCoordinator.subscribeOffers((offer) => {
+      sendToRenderer(MOBILE_UPLOAD_OFFER_RECEIVED_EVENT_CHANNEL, offer)
+    }),
+    activeMobileUploadCoordinator.subscribeTasks((task) => {
+      sendToRenderer(MOBILE_UPLOAD_TASK_CHANGED_EVENT_CHANNEL, task)
+    }),
+    activeMobileUploadCoordinator.subscribeDownloads((downloads) => {
+      sendToRenderer(MOBILE_DOWNLOADS_CHANGED_EVENT_CHANNEL, downloads)
+    }),
     activeFileTransferCoordinator.subscribeOffers((offer) => {
       logger.info('file_offer_received', {
         transferId: offer.transferId,
@@ -482,7 +519,8 @@ void app.whenReady().then(async () => {
   activeServiceManager.setRequestHandler(
     (request, response) =>
       activeFolderTransferCoordinator.handleHttpRequest(request, response) ||
-      activeFileTransferCoordinator.handleHttpRequest(request, response),
+      activeFileTransferCoordinator.handleHttpRequest(request, response) ||
+      activeMobileUploadCoordinator.handleHttpRequest(request, response),
   )
   void activeServiceManager.start()
 
@@ -533,6 +571,7 @@ app.on('before-quit', (event) => {
   discoveryManager?.stop()
   transferPowerSaveController?.stop()
   transferQueueCoordinator?.shutdown()
+  mobileUploadCoordinator?.shutdown()
   void fileTransferCoordinator
     .shutdown(true)
     .then(() => folderTransferCoordinator?.shutdown(true))

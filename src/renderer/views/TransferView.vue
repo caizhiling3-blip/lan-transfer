@@ -3,15 +3,18 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { MAX_TEXT_BYTES } from '@shared/constants'
-import type { FileId, HistoryEntryDto, TransferTaskDto } from '@shared/types'
+import type { FileId, HistoryEntryDto, MobileUploadTaskDto, TransferTaskDto } from '@shared/types'
 import { classifyTextContent, getUtf8ByteLength } from '@shared/utils'
 
 import FileActivityCard from '../components/transfer/FileActivityCard.vue'
 import TextActivityCard from '../components/transfer/TextActivityCard.vue'
 import TransferComposer from '../components/transfer/TransferComposer.vue'
+import MobileUploadPanel from '../components/transfer/MobileUploadPanel.vue'
+import MobileUploadActivityCard from '../components/transfer/MobileUploadActivityCard.vue'
 import { useConnectionStore } from '../stores/connection'
 import { useFileTransferStore } from '../stores/file-transfer'
 import { useTextTransferStore } from '../stores/text-transfer'
+import { useMobileUploadStore } from '../stores/mobile-upload'
 import { createTransferActivities } from '../utils/transfer-activity'
 
 const props = defineProps<{ targetHistoryMessage?: HistoryEntryDto | null }>()
@@ -19,13 +22,18 @@ const props = defineProps<{ targetHistoryMessage?: HistoryEntryDto | null }>()
 const connectionStore = useConnectionStore()
 const textTransferStore = useTextTransferStore()
 const fileTransferStore = useFileTransferStore()
+const mobileUploadStore = useMobileUploadStore()
 const content = ref('')
 const activityList = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{ navigate: [page: 'home' | 'settings'] }>()
 
 const activities = computed(() =>
-  createTransferActivities(textTransferStore.messages, fileTransferStore.tasks),
+  createTransferActivities(
+    textTransferStore.messages,
+    fileTransferStore.tasks,
+    mobileUploadStore.tasks,
+  ),
 )
 const targetActivityId = computed(() =>
   props.targetHistoryMessage === undefined || props.targetHistoryMessage === null
@@ -110,6 +118,15 @@ const showReceivedFile = async (
   if (!result.ok) ElMessage.error('文件已被移动或删除，无法在文件夹中显示')
 }
 
+const showMobileReceived = async (batchId: MobileUploadTaskDto['batchId']): Promise<void> => {
+  const result = await window.lanTransfer.mobileUpload.showReceived(batchId)
+  if (!result.ok) ElMessage.error('文件已被移动或删除，无法在文件夹中显示')
+}
+
+const cancelMobileUpload = async (batchId: MobileUploadTaskDto['batchId']): Promise<void> => {
+  await window.lanTransfer.mobileUpload.cancel(batchId)
+}
+
 const addDroppedItems = (items: readonly File[]): void => {
   if (!isConnected.value) {
     ElMessage.warning('请先连接设备')
@@ -192,9 +209,14 @@ onBeforeUnmount(() => {
             <strong>与设备互传</strong>
             <span>文字、链接和文件按时间排列</span>
           </div>
-          <el-tag :type="isConnected ? 'success' : 'info'">
-            {{ isConnected ? `已连接 ${connectionStore.status.peer?.deviceName ?? ''}` : '未连接' }}
-          </el-tag>
+          <div class="transfer-header-actions">
+            <MobileUploadPanel />
+            <el-tag :type="isConnected ? 'success' : 'info'">
+              {{
+                isConnected ? `已连接 ${connectionStore.status.peer?.deviceName ?? ''}` : '未连接'
+              }}
+            </el-tag>
+          </div>
         </div>
       </template>
 
@@ -211,6 +233,12 @@ onBeforeUnmount(() => {
             :message="activity.message"
             @copy="copyText"
             @open="openLink"
+          />
+          <MobileUploadActivityCard
+            v-else-if="activity.kind === 'mobile'"
+            :task="activity.task"
+            @cancel="cancelMobileUpload(activity.task.batchId)"
+            @show-received="showMobileReceived(activity.task.batchId)"
           />
           <FileActivityCard
             v-else
@@ -269,6 +297,12 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   outline-offset: 3px;
   animation: history-target-highlight 3s ease-out forwards;
+}
+
+.transfer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 @keyframes history-target-highlight {
